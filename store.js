@@ -159,6 +159,11 @@ const Store = (() => {
       for (const p of all('param')) if (!p.group && p.active) put(p.id, 'param', { ...strip(p), active: 0 });
       seedParams();
     }
+    // Earlier roles: Ward SR is now SR, Night SR is now JR.
+    for (const u of all('user')) {
+      const role = { ward_sr: 'sr', night_sr: 'jr' }[u.role];
+      if (role) put(u.id, 'user', { ...strip(u), role });
+    }
     const beds = getSetting('beds');
     if (!/^6C\//m.test(beds)) put('setting:beds', 'setting', { value: beds.replace(/\s*$/, '') + '\n' + ICU_BEDS });
     // 6A goes up to bed 26 (as in the department's sheet).
@@ -251,8 +256,9 @@ const Store = (() => {
     const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; }) + '$');
     routes.push({ method, re, keys, roles, handler });
   }
-  const ANY = null, PUBLIC = 'public', EDITORS = ['admin', 'ward_sr'], ADMIN = ['admin'];
-  const ROLES = ['admin', 'ward_sr', 'night_sr'];
+  // SR and JR edit everything; consultants view and add their round notes; admin is an SR who also runs the Admin page.
+  const ANY = null, PUBLIC = 'public', EDITORS = ['admin', 'sr', 'jr'], ADMIN = ['admin'];
+  const ROLES = ['admin', 'sr', 'jr', 'consultant'];
   const failedLogins = new Map();
   const SESSION_HOURS = 12;
 
@@ -403,7 +409,7 @@ const Store = (() => {
     return { ok: true };
   });
 
-  route('PUT', '/api/rounds/:id/:date', ANY, ({ body, params: p }) => {
+  route('PUT', '/api/rounds/:id/:date', EDITORS, ({ body, params: p }) => {
     const a = getAdmission(p.id);
     if (!isDate(p.date)) throw new HttpError(400, 'Bad date');
     const vals = {};
@@ -421,7 +427,7 @@ const Store = (() => {
     }
     return out;
   }
-  route('POST', '/api/ot/:id', ANY, ({ body, params: p }) => {
+  route('POST', '/api/ot/:id', EDITORS, ({ body, params: p }) => {
     const a = getAdmission(p.id);
     const text = str(body.text, 3000);
     if (!text) throw new HttpError(400, 'Type something first');

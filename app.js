@@ -1,7 +1,7 @@
 // Ward Register front end. Plain JavaScript, no libraries, works offline.
 'use strict';
 
-const ROLE_NAMES = { admin: 'Admin', ward_sr: 'Ward SR', night_sr: 'Night SR' };
+const ROLE_NAMES = { admin: 'Admin (SR)', sr: 'SR', jr: 'JR', consultant: 'Consultant' };
 const OUTCOMES = ['Discharged', 'LAMA', 'Referred', 'Transferred to other unit', 'Expired'];
 const S = { user: null, meta: null, date: null, filters: { ward: '', emptyOnly: false, q: '' }, dirty: new Set() };
 
@@ -59,7 +59,7 @@ function addDays(d, n) {
 const dayNo = (a, date) => (a.admit_date ? String(daysBetween(a.admit_date, date) + 1) : '');
 function daysBetween(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5); }
 
-const canEdit = () => S.user && (S.user.role === 'admin' || S.user.role === 'ward_sr');
+const canEdit = () => S.user && ['admin', 'sr', 'jr'].includes(S.user.role);
 const paramMap = () => Object.fromEntries(S.meta.params.map((p) => [p.key, p]));
 const isIcu = (bed) => !!bed && (S.meta.icuBeds || []).includes(bed);
 
@@ -153,7 +153,8 @@ async function remoteUpdate() {
   const busy = S.dirty.size || document.getElementById('modal-root').childNodes.length ||
     (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && document.activeElement.type !== 'checkbox');
   if (!Sync.configured()) return;
-  if (!S.user) { await refreshState(); return; }
+  // On the sign-in screen, keep what's being typed; only a ward still waiting for its first account needs a redraw.
+  if (!S.user) { if (S.setupNeeded) await refreshState(); return; }
   if (busy) { updatesWaiting = true; drawSyncChip(Sync.status()); return; }
   updatesWaiting = false;
   S.meta = await api('GET', '/api/meta');
@@ -199,7 +200,7 @@ function render() {
   else if (route === 'patient') patientView(main, arg);
   else if (route === 'print') printView(main, arg || S.date);
   else if (route === 'census') censusView(main);
-  else if (route === 'rounds') roundsView(main);
+  else if (route === 'rounds' && canEdit()) roundsView(main);
   else if (route === 'notes') notesView(main, decodeURIComponent(arg || ''));
   else if (route === 'admin' && S.user.role === 'admin') adminView(main, arg || 'users');
   else if (route === 'icu') registerView(main, 'icu');
@@ -210,13 +211,13 @@ function topBar(route) {
   const link = (r, label) => h('a', { href: '#' + r, class: route === r ? 'active' : '' }, label);
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '' }), h('div', {}, h('b', {}, 'Register'), h('small', {}, 'Department of Pediatric Surgery'))),
-    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('patients', 'Status'), S.user.role === 'admin' && link('admin', 'Admin')),
+    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('patients', 'Status'), S.user.role === 'admin' && link('admin', 'Admin')),
     h('div', { class: 'me' },
       h('button', { id: 'sync-chip', class: 'sync-chip', onclick: async () => {
         if (updatesWaiting) { if (!confirmLeave()) return; updatesWaiting = false; S.dirty.clear(); S.meta = await api('GET', '/api/meta'); render(); }
         else Sync.syncNow();
       } }),
-      h('button', { class: 'link', onclick: changePasswordModal, title: 'Change password' }, `${S.user.name} · ${ROLE_NAMES[S.user.role]}`),
+      h('button', { class: 'link', onclick: changePasswordModal, title: 'Change password' }, `${S.user.name} · ${ROLE_NAMES[S.user.role] || S.user.role}`),
       h('button', { class: 'ghost small', onclick: async () => { await api('POST', '/api/logout'); S.user = null; render(); } }, 'Sign out')));
 }
 
@@ -631,6 +632,9 @@ function patientDetails(a, date) {
     (findings || (a.round && a.round.remarks)) && h('div', { class: 'today' },
       h('span', { class: 'muted small' }, `Today's round · ${a.round.filled_by || ''} ${a.round.filled_at.slice(11, 16)}`),
       findings && h('p', {}, findings), a.round.remarks && h('p', {}, h('b', {}, 'Remarks: '), a.round.remarks)),
+    !canEdit() && a.unit && h('div', { class: 'foot' },
+      h('div', { class: 'btns' },
+        h('a', { class: 'button ghost small', href: '#notes/' + encodeURIComponent(a.unit), onclick: () => document.getElementById('modal-root').replaceChildren() }, `${a.unit} round notes`))),
     canEdit() && h('div', { class: 'foot' },
       h('div', { class: 'btns' },
         h('a', { class: 'button ghost small', href: '#rounds', onclick: () => document.getElementById('modal-root').replaceChildren() }, 'Go to Rounds'),
@@ -1083,12 +1087,12 @@ async function adminUsers(body) {
   h('h3', { class: 'span4' }, 'Add a user'),
   h('label', {}, 'Name', h('input', { name: 'fullname', required: true, placeholder: 'Dr A. Sharma' })),
   h('label', {}, 'Username', h('input', { name: 'username', required: true, autocapitalize: 'none' })),
-  h('label', {}, 'Role', h('select', { name: 'role' }, Object.entries(ROLE_NAMES).map(([k, v]) => h('option', { value: k, selected: k === 'night_sr' }, v)))),
+  h('label', {}, 'Role', h('select', { name: 'role' }, Object.entries(ROLE_NAMES).map(([k, v]) => h('option', { value: k, selected: k === 'jr' }, v)))),
   h('label', {}, 'Starting password', h('input', { name: 'password', required: true, minlength: 6 })),
   err, h('button', { class: 'primary span4' }, 'Add user'));
 
   body.append(
-    h('p', { class: 'muted' }, 'Ward SR: admits, edits, moves and discharges patients and fills rounds. Night SR: fills rounds. Admin: everything, plus this page.'),
+    h('p', { class: 'muted' }, 'SR and JR: admit, edit, move and discharge patients, fill rounds and post OT notes. Consultant: sees the registers, Bed Occupancy and Status, and adds their own round notes (Bed Occupancy > their box > Round notes). Admin (SR): everything, plus this page.'),
     h('div', { class: 'tablewrap' }, h('table', { class: 'list' },
       h('thead', {}, h('tr', {}, ['Name', 'Username', 'Role', 'Active', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, users.map((u) => {
