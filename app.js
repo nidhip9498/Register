@@ -900,8 +900,7 @@ async function statusView(main) {
         h('td', {}, a.unit),
         h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'muted small' }, a.procedure_done) : null),
         h('td', {}, [podText(a, date), dayNo(a, date) && `Day ${dayNo(a, date)}`].filter(Boolean).join(' · ')),
-        h('td', {}, a.round ? [summariseVals(a.round.vals, monitorFor(a), a).split(' · ').filter(Boolean).map((t) => h('div', {}, t)), a.round.remarks && h('div', {}, h('b', {}, 'Remarks: '), a.round.remarks),
-          h('div', { class: 'muted small' }, `${a.round.filled_by || ''} ${a.round.filled_at.slice(11, 16)}`)] : h('span', { class: 'muted' }, 'Not filled yet')),
+        h('td', {}, a.round ? [summariseVals(a.round.vals, monitorFor(a), a).split(' · ').filter(Boolean).map((t) => h('div', {}, t)), a.round.remarks && h('div', {}, h('b', {}, 'Remarks: '), a.round.remarks)] : h('span', { class: 'muted' }, 'Not filled yet')),
         h('td', {}, a.instructions, a.unit_note ? h('div', {}, h('b', {}, `${a.unit}: `), a.unit_note) : null)))))))));
   }
   if (!pts.length) box.append(h('p', { class: 'muted empty-note' }, 'No patients on this date.'));
