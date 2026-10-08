@@ -1255,15 +1255,20 @@ function adminImport(body) {
   const go = h('button', { class: 'primary', disabled: true, onclick: async () => {
     go.disabled = true;
     try {
-      const r = await api('POST', '/api/import', { patients });
+      const replace = mode.querySelector('input:checked').value === 'replace';
+      if (replace && !confirm('This erases every patient now in the app, with their rounds, notes and OT entries, on every device. Then it imports the file. Continue?')) { go.disabled = false; return; }
+      const r = await api('POST', '/api/import', { patients, replace });
       S.meta = await api('GET', '/api/meta');
       result.replaceChildren(h('div', {},
-        h('p', {}, h('b', {}, `${r.added.length} patients added.`), r.skipped.length ? ` ${r.skipped.length} skipped:` : ''),
+        h('p', {}, r.removed ? `${r.removed} old patients erased. ` : '', h('b', {}, `${r.added.length} patients added.`), r.skipped.length ? ` ${r.skipped.length} skipped:` : ''),
         r.skipped.length ? h('ul', { class: 'small' }, r.skipped.map((s) => h('li', {}, s))) : null,
         h('a', { class: 'button ghost', href: '#register' }, 'Open the Ward Register')));
       toast('Import finished');
     } catch (e) { toast(e.message, true); go.disabled = false; }
   } }, 'Import patients');
+  const mode = h('div', { class: 'grid1' },
+    h('label', { class: 'inline' }, h('input', { type: 'radio', name: 'impmode', value: 'add', checked: true }), 'Add to the patients already in the app (beds already taken are skipped)'),
+    h('label', { class: 'inline' }, h('input', { type: 'radio', name: 'impmode', value: 'replace' }), h('span', {}, h('b', {}, 'Replace: '), 'erase all patients now in the app, then import this file')));
   const file = h('input', { type: 'file', accept: '.json,application/json', onchange: async () => {
     result.replaceChildren(); patients = null; go.disabled = true;
     try {
@@ -1276,8 +1281,8 @@ function adminImport(body) {
   } });
   body.append(h('div', { class: 'card grid1 look' },
     h('h3', {}, 'Import patients'),
-    h('p', { class: 'muted' }, 'Choose the import file (ward-register-import.json) made from your Google Sheet. Each patient goes into their bed. A bed that already has a patient is skipped, so nothing is overwritten.'),
-    file, go, result));
+    h('p', { class: 'muted' }, 'Choose the import file (ward-register-import.json) made from your Google Sheet. Each patient goes into their bed. Choose whether to add to the patients already here or replace them.'),
+    file, mode, go, result));
 }
 
 function adminLook(body) {

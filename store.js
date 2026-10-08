@@ -544,7 +544,15 @@ const Store = (() => {
   route('POST', '/api/import', ADMIN, ({ body }) => {
     const list = Array.isArray(body.patients) ? body.patients.slice(0, 500) : [];
     const beds = allBeds();
-    const out = { added: [], skipped: [] };
+    const out = { added: [], skipped: [], removed: 0 };
+    // Replace: erase every patient now in the app (with their rounds, notes, OT entries and bed moves) before importing.
+    if (body.replace) {
+      for (const r of [...R.values()]) {
+        if (!r.data) continue;
+        if (r.type === 'admission') { put(r.id, 'admission', null); out.removed++; }
+        else if (['round', 'note', 'ot', 'move'].includes(r.type)) put(r.id, r.type, null);
+      }
+    }
     for (const p of list) {
       const bed = str(p.bed, 30);
       if (!beds.includes(bed)) { out.skipped.push(`${bed} (not in the bed list)`); continue; }
@@ -554,7 +562,7 @@ const Store = (() => {
       put('adm:' + uuid(), 'admission', { ...f, bed, discharge_date: null, outcome: '', created_by: currentUser.id, updated_at: stamp() });
       out.added.push(bed);
     }
-    audit('import patients', `${out.added.length} added, ${out.skipped.length} skipped`);
+    audit('import patients', `${body.replace ? out.removed + ' erased, ' : ''}${out.added.length} added, ${out.skipped.length} skipped`);
     return out;
   });
 
