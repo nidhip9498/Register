@@ -240,7 +240,16 @@ input.narrow { width: 70px; }
   .printsec { break-inside: auto; margin-bottom: 8px; }
   .emptyrow td { color: #999; }
   .census { grid-template-columns: repeat(4, 1fr); }
+  .printonly { display: block !important; }
+  .occgrid { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+  .occgrid th, .occgrid td, .occlist th { font-size: 12px; color: #000; }
+  .occcount td { font-weight: 700; border-top: 2px solid #000 !important; }
+  .occlist { width: 100%; border-collapse: collapse; }
+  .occlist td.blank { width: 32%; height: 34px; }
+  .occlisthead { margin-top: 10px; }
 }
+.printonly { display: none; }
+label.inline { display: inline-flex; align-items: center; gap: .4rem; margin: 0; font-weight: 400; }
 
 /* Bed grid: red border = occupied, green border = empty */
 :root { --occupied: #d92d20; --free: #12b76a; }

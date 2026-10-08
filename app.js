@@ -1020,9 +1020,40 @@ async function censusView(main) {
     h('span', { class: 'ccount' }, of ? `${n} / ${of}` : String(n)),
     h('small', { class: 'muted' }, of ? 'beds occupied / allotted' : 'beds occupied'));
 
+  // Print sheet: one column of beds per consultant with occupied / allotted, then one consultant's patients with space for instructions.
+  const units = S.meta.units;
+  let listUnit = units.some((u) => u.name === 'SA') ? 'SA' : (units[0] && units[0].name) || '';
+  const sheet = h('div', { class: 'printonly occsheet' });
+  const drawSheet = () => {
+    const cols = units.map((u) => ({ title: u.name, beds: ward.filter((a) => a.unit === u.name && !emergency.has(a.bed_on_date)).map((a) => a.bed_on_date), of: u.beds }));
+    cols.push({ title: 'Emergency', beds: emerg.map((a) => a.bed_on_date + (a.unit ? ' - ' + a.unit : '')), of: 0 });
+    const rows = Math.max(1, ...cols.map((c) => c.beds.length));
+    const mine = ward.filter((a) => a.unit === listUnit && !emergency.has(a.bed_on_date));
+    const mineEm = emerg.filter((a) => a.unit === listUnit);
+    const mineIcu = icu.filter((a) => a.unit === listUnit);
+    const list = (pts, head) => pts.length ? h('div', {}, head && h('h3', {}, head), h('table', { class: 'list print occlist' },
+      h('thead', {}, h('tr', {}, ['Bed', 'Name', 'Age / Sex', 'Diagnosis', 'Surgery', 'POD', 'Instructions'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, pts.map((a) => h('tr', {},
+        h('td', {}, h('b', {}, a.bed_on_date)), h('td', {}, a.name), h('td', {}, ageSex(a, date)), h('td', {}, a.diagnosis),
+        h('td', {}, a.procedure_done), h('td', {}, podText(a, date).replace('POD ', '')), h('td', { class: 'blank' })))))) : null;
+    sheet.replaceChildren(
+      h('h2', {}, 'Bed Occupancy · ', fmtDay(date)),
+      h('table', { class: 'print occgrid' },
+        h('thead', {}, h('tr', {}, cols.map((c) => h('th', {}, c.title)))),
+        h('tbody', {},
+          Array.from({ length: rows }, (_, i) => h('tr', {}, cols.map((c) => h('td', {}, c.beds[i] || '')))),
+          h('tr', { class: 'occcount' }, cols.map((c) => h('td', {}, c.of ? `${c.beds.length > c.of ? '⚠ ' : ''}${c.beds.length}/${c.of}` : String(c.beds.length)))))),
+      listUnit && h('h2', { class: 'occlisthead' }, `${listUnit} · ${mine.length + mineEm.length + mineIcu.length} patients`),
+      listUnit && (mine.length + mineEm.length + mineIcu.length ? h('div', {}, list(mine), list(mineEm, 'In emergency beds'), list(mineIcu, 'ICU (6C)')) : h('p', {}, 'No patients.')));
+  };
+  drawSheet();
+  const pick = h('select', { onchange: (e) => { listUnit = e.target.value; drawSheet(); } },
+    units.map((u) => h('option', { value: u.name, selected: u.name === listUnit }, u.name)));
+
   main.append(
     h('div', { class: 'toolbar' }, h('h2', {}, 'Bed Occupancy · ', fmtDay(date)),
-      h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
+      h('div', { class: 'actions' }, h('label', { class: 'inline' }, 'Print list for ', pick), h('button', { class: 'primary', onclick: () => window.print() }, 'Print'))),
+    sheet,
     h('p', { class: 'muted' }, `6B and 6A: ${ward.length} of ${wardBeds.length} beds occupied. Emergency beds (${S.meta.emergencyBeds.join(', ')}) are counted separately. Click a box to see the patients.`),
     h('div', { class: 'cgrid' },
       S.meta.units.map((u) => {
@@ -1031,6 +1062,7 @@ async function censusView(main) {
       }),
       box('Emergency', emerg.length, 0, () => occupancyPanel('Emergency beds', emerg, [], date), 'emerg'),
       noUnit.length ? box('No consultant set', noUnit.length, 0, () => occupancyPanel('No consultant set', noUnit, [], date)) : null));
+  main.querySelectorAll(':scope > :not(.occsheet)').forEach((el) => el.classList.add('noprint'));
 }
 
 // Details of every patient in one consultant's beds (or the emergency beds), with their ICU babies listed separately below.
