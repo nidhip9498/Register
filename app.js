@@ -1026,7 +1026,8 @@ async function censusView(main) {
   const sheet = h('div', { class: 'printonly occsheet' });
   const drawSheet = () => {
     const cols = units.map((u) => ({ title: u.name, beds: ward.filter((a) => a.unit === u.name && !emergency.has(a.bed_on_date)).map((a) => a.bed_on_date), of: u.beds }));
-    cols.push({ title: 'Emergency', beds: emerg.map((a) => a.bed_on_date + (a.unit ? ' - ' + a.unit : '')), of: 0 });
+    const emBeds = S.meta.emergencyBeds.map((b) => { const a = emerg.find((x) => x.bed_on_date === b); return `${b} - ${a ? a.unit || '?' : ''}`; });
+    cols.push({ title: 'Emergency', beds: emBeds, n: emerg.length, of: S.meta.emergencyBeds.length });
     const rows = Math.max(1, ...cols.map((c) => c.beds.length));
     const mine = ward.filter((a) => a.unit === listUnit && !emergency.has(a.bed_on_date));
     const mineEm = emerg.filter((a) => a.unit === listUnit);
@@ -1042,7 +1043,7 @@ async function censusView(main) {
         h('thead', {}, h('tr', {}, cols.map((c) => h('th', {}, c.title)))),
         h('tbody', {},
           Array.from({ length: rows }, (_, i) => h('tr', {}, cols.map((c) => h('td', {}, c.beds[i] || '')))),
-          h('tr', { class: 'occcount' }, cols.map((c) => h('td', {}, c.of ? `${c.beds.length > c.of ? '⚠ ' : ''}${c.beds.length}/${c.of}` : String(c.beds.length)))))),
+          h('tr', { class: 'occcount' }, cols.map((c) => { const n = c.n ?? c.beds.length; return h('td', {}, c.of ? `${n > c.of ? '⚠ ' : ''}${n}/${c.of}` : String(n)); })))),
       listUnit && h('h2', { class: 'occlisthead' }, `${listUnit} · ${mine.length + mineEm.length + mineIcu.length} patients`),
       listUnit && (mine.length + mineEm.length + mineIcu.length ? h('div', {}, list(mine), list(mineEm, 'In emergency beds'), list(mineIcu, 'ICU (6C)')) : h('p', {}, 'No patients.')));
   };
@@ -1060,7 +1061,7 @@ async function censusView(main) {
         const pts = ward.filter((a) => a.unit === u.name && !emergency.has(a.bed_on_date));
         return box(u.name, pts.length, u.beds, () => occupancyPanel(u.name, pts, icu.filter((a) => a.unit === u.name), date, true));
       }),
-      box('Emergency', emerg.length, 0, () => occupancyPanel('Emergency beds', emerg, [], date), 'emerg'),
+      box('Emergency', emerg.length, S.meta.emergencyBeds.length, () => occupancyPanel('Emergency beds', emerg, [], date), 'emerg'),
       noUnit.length ? box('No consultant set', noUnit.length, 0, () => occupancyPanel('No consultant set', noUnit, [], date)) : null));
   main.querySelectorAll(':scope > :not(.occsheet)').forEach((el) => el.classList.add('noprint'));
 }

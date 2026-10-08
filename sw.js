@@ -1,6 +1,6 @@
 // Keeps the app's own files on the device so it opens with no signal.
 // Patient data is not stored here; it lives in the app's local database.
-const VERSION = 'ward-register-v16';
+const VERSION = 'ward-register-v17';
 const FILES = ['./', 'index.html', 'app.js', 'store.js', 'sync.js', 'style.css', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
