@@ -97,12 +97,24 @@ function podText(a, date) {
   return pods.length === 1 && pods[0] === 0 ? 'Op day' : 'POD ' + pods.join('/');
 }
 
-function summariseVals(vals, monitorKeys) {
-  const pm = paramMap();
-  const keys = [...new Set([...(monitorKeys || []), ...Object.keys(vals || {})])];
+// A patient's own extra fields, as { key, label, type, unit }. Older records stored just the name.
+function extrasOf(a) {
+  return (a.extra_fields || []).map((x) => (typeof x === 'string' ? { label: x, type: 'text', unit: '' } : x))
+    .map((e) => ({ ...e, key: 'x:' + e.label }));
+}
+const unitOf = (k, a) => {
+  const p = paramMap()[k];
+  if (p) return p.type === 'number' ? p.unit : '';
+  const e = a && extrasOf(a).find((x) => x.key === k);
+  return e ? e.unit : '';
+};
+
+// "Fever: No · Urine output: 480 ml · Right stent output: 30 ml"
+function summariseVals(vals, monitorKeys, a) {
+  const keys = [...new Set([...(monitorKeys || []), ...(a ? extrasOf(a).map((e) => e.key) : []), ...Object.keys(vals || {})])];
   return keys.filter((k) => vals && vals[k]).map((k) => {
-    const p = pm[k];
-    return `${fieldLabel(k)}: ${vals[k]}${p && p.unit && p.type === 'number' ? ' ' + p.unit : ''}`;
+    const unit = unitOf(k, a);
+    return `${fieldLabel(k)}: ${vals[k]}${unit ? ' ' + unit : ''}`;
   }).join(' · ');
 }
 
@@ -183,7 +195,7 @@ function render() {
   drawSyncChip(Sync.status());
   const main = h('main', {});
   app.append(main);
-  if (route === 'patients') patientsView(main);
+  if (route === 'patients') statusView(main);
   else if (route === 'patient') patientView(main, arg);
   else if (route === 'print') printView(main, arg || S.date);
   else if (route === 'census') censusView(main);
@@ -457,7 +469,9 @@ function patientCard(a, date, refresh) {
   const pm = paramMap();
   const chosen = monitorFor(a).map((k) => pm[k]).filter(Boolean);
   const checks = chosen.filter((p) => p.type === 'yesno');
-  const values = [...chosen.filter((p) => p.type !== 'yesno'), ...(a.extra_fields || []).map((l) => ({ key: 'x:' + l, label: l, type: 'text', unit: '' }))];
+  const extras = extrasOf(a);
+  checks.push(...extras.filter((e) => e.type === 'yesno'));
+  const values = [...chosen.filter((p) => p.type !== 'yesno'), ...extras.filter((e) => e.type !== 'yesno')];
   const vals = (a.round && a.round.vals) || {};
   const prev = (a.prev_round && a.prev_round.vals) || {};
   const discharged = a.discharge_date && a.discharge_date < date;
@@ -531,7 +545,7 @@ function patientCard(a, date, refresh) {
     setStatus();
     updateCalc();
   } else if (a.round) {
-    add(h('p', { class: 'small' }, summariseVals(a.round.vals, a.monitor)), a.round.remarks && h('p', { class: 'small' }, a.round.remarks));
+    add(h('p', { class: 'small' }, summariseVals(a.round.vals, a.monitor, a)), a.round.remarks && h('p', { class: 'small' }, a.round.remarks));
   }
   return card;
 }
@@ -589,7 +603,7 @@ async function roundsView(main) {
 function patientDetails(a, date) {
   const pod = podText(a, date);
   const surgeries = [a.surgery_date, a.surgery_date2, a.surgery_date3].filter(Boolean);
-  const findings = a.round ? summariseVals(a.round.vals, monitorFor(a)) : '';
+  const findings = a.round ? summariseVals(a.round.vals, monitorFor(a), a) : '';
   const icu = isIcu(a.bed_on_date || a.bed);
   const big = (label, value, cls = '') => value ? h('div', { class: 'bigfact ' + cls }, h('span', {}, label), h('b', {}, value)) : null;
   return h('article', { class: 'details' },
@@ -655,6 +669,26 @@ function bedSelect(name, selected, filter = () => true) {
       .map((s) => h('optgroup', { label: s.name }, s.beds.map((b) => h('option', { value: b, selected: b === selected }, b)))));
 }
 
+// Extra round fields for one patient: a name and what kind of entry (ml, cm, Yes / No…). Add as many as needed.
+const EXTRA_KINDS = [['ml', 'Amount (ml)'], ['cm', 'Measure (cm)'], ['ml/kg/hr', 'Rate (ml/kg/hr)'], ['number', 'Number'], ['yesno', 'Yes / No'], ['text', 'Text']];
+function extraEditor(extras) {
+  const list = h('div', { class: 'xlist' });
+  const addRow = (e = { label: '', type: 'number', unit: 'ml' }) => {
+    const kind = e.type === 'number' ? (e.unit || 'number') : e.type;
+    const kinds = EXTRA_KINDS.some(([k]) => k === kind) ? EXTRA_KINDS : [...EXTRA_KINDS, [kind, `Amount (${kind})`]];
+    const row = h('div', { class: 'xrow' },
+      h('input', { class: 'xlabel', value: e.label, placeholder: 'e.g. Gastrostomy output', 'aria-label': 'Field name' }),
+      h('select', { class: 'xtype', 'aria-label': 'Kind of entry' }, kinds.map(([k, v]) => h('option', { value: k, selected: k === kind }, v))),
+      h('button', { type: 'button', class: 'ghost small', onclick: () => row.remove() }, 'Remove'));
+    list.append(row);
+    return row;
+  };
+  extras.forEach(addRow);
+  return h('fieldset', { class: 'span2 extras' }, h('legend', {}, 'Extra fields for this patient'),
+    list,
+    h('button', { type: 'button', class: 'ghost small', onclick: () => addRow().querySelector('input').focus() }, '+ Add a field'));
+}
+
 function admitModal(bed, a, opts = {}) {
   const editing = !!a;
   a = a || { monitor: [], admit_date: S.date };
@@ -672,8 +706,7 @@ function admitModal(bed, a, opts = {}) {
     chooser = [
       h('fieldset', { class: 'span2 monitor' }, h('legend', {}, 'Yes / No checks on the round'), gp.filter((p) => p.type === 'yesno').map(tick)),
       h('fieldset', { class: 'span2 monitor' }, h('legend', {}, 'Values to fill in'), gp.filter((p) => p.type !== 'yesno').map(tick)),
-      h('label', { class: 'span2' }, 'Extra fields for this patient (one per line, e.g. Drain 1 output)',
-        h('textarea', { name: 'extra_fields', rows: 2 }, (a.extra_fields || []).join('\n'))),
+      extraEditor(extrasOf(a)),
     ];
   }
 
@@ -716,7 +749,10 @@ function admitModal(bed, a, opts = {}) {
     };
     if (editing) {
       payload.monitor = [...form.querySelectorAll('input[name=monitor]:checked')].map((c) => c.value);
-      payload.extra_fields = v('extra_fields').split('\n').map((s) => s.trim()).filter(Boolean);
+      payload.extra_fields = [...form.querySelectorAll('.xrow')].map((r) => {
+        const kind = r.querySelector('.xtype').value;
+        return { label: r.querySelector('.xlabel').value.trim(), type: ['yesno', 'text'].includes(kind) ? kind : 'number', unit: ['yesno', 'text', 'number'].includes(kind) ? '' : kind };
+      }).filter((e) => e.label);
       payload.fields_set = true;
     }
     if (editing) await api('PUT', '/api/admissions/' + a.id, payload);
@@ -791,7 +827,7 @@ async function patientView(main, id) {
   let a;
   try { a = await api('GET', '/api/admissions/' + id); } catch (e) { main.append(h('p', { class: 'error' }, e.message)); return; }
   const pm = paramMap();
-  const keys = [...new Set([...monitorFor(a), ...(a.extra_fields || []).map((l) => 'x:' + l), ...a.rounds.flatMap((r) => Object.keys(r.vals))])];
+  const keys = [...new Set([...monitorFor(a), ...extrasOf(a).map((e) => e.key), ...a.rounds.flatMap((r) => Object.keys(r.vals))])];
   const icu = isIcu(a.bed);
   const end = a.discharge_date || S.meta.today;
   const rows = [...new Set([...a.rounds.map((r) => r.date), ...a.notes.map((n) => n.date)])].sort()
@@ -821,7 +857,7 @@ async function patientView(main, id) {
     a.ot.length ? [h('h3', {}, 'OT findings & instructions'), h('div', { class: 'card ot' }, otList(a.ot, () => render()))] : null,
     h('h3', {}, 'Daily rounds'),
     rows.length ? h('div', { class: 'tablewrap' }, h('table', { class: 'hist' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Date'), a.surgery_date && h('th', {}, 'POD'), keys.map((k) => h('th', {}, fieldLabel(k) + (pm[k] && pm[k].unit ? ` (${pm[k].unit})` : ''))), h('th', {}, 'Remarks'), h('th', {}, `${a.unit || 'Consultant'} notes`), h('th', {}, 'By'))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Date'), a.surgery_date && h('th', {}, 'POD'), keys.map((k) => h('th', {}, fieldLabel(k) + (unitOf(k, a) ? ` (${unitOf(k, a)})` : ''))), h('th', {}, 'Remarks'), h('th', {}, `${a.unit || 'Consultant'} notes`), h('th', {}, 'By'))),
       h('tbody', {}, rows.map((r) => h('tr', {},
         h('td', {}, fmtDate(r.date)),
         a.surgery_date && h('td', {}, podText(a, r.date).replace('POD ', '')),
@@ -830,9 +866,53 @@ async function patientView(main, id) {
 }
 function fact(label, value) { return value ? [h('dt', {}, label), h('dd', {}, value)] : null; }
 
+// ---------- Status: everyone's round entries for the day, 6B then 6A then 6C ----------
+
+async function statusView(main) {
+  const date = S.date;
+  const go = (d) => { S.date = d; render(); };
+  main.append(
+    h('div', { class: 'toolbar' },
+      h('div', { class: 'datenav' },
+        h('button', { class: 'ghost', onclick: () => go(addDays(date, -1)), 'aria-label': 'Previous day' }, '‹'),
+        h('input', { type: 'date', value: date, onchange: (e) => e.target.value && go(e.target.value) }),
+        h('button', { class: 'ghost', onclick: () => go(addDays(date, 1)), 'aria-label': 'Next day' }, '›'),
+        date !== S.meta.today && h('button', { class: 'ghost small', onclick: () => go(S.meta.today) }, 'Today')),
+      h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
+    h('h2', { class: 'daytitle' }, 'Status · ', fmtDay(date)));
+  const box = h('div', { class: 'register' }, h('p', { class: 'loading' }, 'Loading…'));
+  main.append(box);
+  const data = await api('GET', '/api/register?date=' + date);
+  const order = S.meta.sections.flatMap((s) => s.beds);
+  const pts = data.admissions.filter((a) => a.discharge_date !== date).sort((x, y) => order.indexOf(x.bed_on_date) - order.indexOf(y.bed_on_date));
+  const filled = pts.filter((a) => a.round).length;
+  box.replaceChildren(h('p', { class: 'muted' }, `Round entries filled for ${filled} of ${pts.length} patients. Click a name for their full record.`));
+  // Same layout as the printed register: every section in bed order, with the morning round and short notes.
+  const byBed = {};
+  for (const a of pts) (byBed[a.bed_on_date] = byBed[a.bed_on_date] || []).push(a);
+  for (const sec of S.meta.sections) {
+    if (!sec.beds.some((b) => byBed[b])) continue;
+    box.append(h('section', { class: 'printsec' }, h('h3', {}, sec.name), h('div', { class: 'tablewrap' }, h('table', { class: 'list status print' },
+      h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'Consultant', 'Diagnosis / Surgery', 'POD · Day', 'Morning round', 'Short notes'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, sec.beds.flatMap((bed) => (byBed[bed] || []).map((a) => h('tr', {},
+        h('td', {}, h('span', { class: 'bedno' }, bed)),
+        h('td', {}, h('a', { href: '#patient/' + a.id, class: 'pname' }, a.name), h('div', { class: 'muted small' }, ageSex(a, date))),
+        h('td', {}, a.unit),
+        h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'muted small' }, a.procedure_done) : null),
+        h('td', {}, [podText(a, date), dayNo(a, date) && `Day ${dayNo(a, date)}`].filter(Boolean).join(' · ')),
+        h('td', {}, a.round ? [summariseVals(a.round.vals, monitorFor(a), a).split(' · ').filter(Boolean).map((t) => h('div', {}, t)), a.round.remarks && h('div', {}, h('b', {}, 'Remarks: '), a.round.remarks),
+          h('div', { class: 'muted small' }, `${a.round.filled_by || ''} ${a.round.filled_at.slice(11, 16)}`)] : h('span', { class: 'muted' }, 'Not filled yet')),
+        h('td', {}, a.instructions, a.unit_note ? h('div', {}, h('b', {}, `${a.unit}: `), a.unit_note) : null)))))))));
+  }
+  if (!pts.length) box.append(h('p', { class: 'muted empty-note' }, 'No patients on this date.'));
+  const search = h('section', { class: 'noprint' }, h('h3', {}, 'Find any patient, including discharged'));
+  main.append(search);
+  patientSearch(search);
+}
+
 // ---------- Patients list (search / discharged) ----------
 
-function patientsView(main) {
+function patientSearch(main) {
   const q = h('input', { type: 'search', placeholder: 'Name, UHID, diagnosis or bed' });
   const from = h('input', { type: 'date' });
   const to = h('input', { type: 'date' });
@@ -846,8 +926,7 @@ function patientsView(main) {
         h('td', {}, fmtDate(r.admit_date)), h('td', {}, r.discharge_date ? `${fmtDate(r.discharge_date)} · ${r.outcome}` : h('span', { class: 'badge new' }, 'In ward'))))))) :
       h('p', { class: 'muted' }, 'No patients found.'));
   };
-  main.append(h('h2', {}, 'Status'),
-    h('p', { class: 'muted' }, 'Every patient, in the ward or discharged. Click a name to see their full record and daily rounds.'),
+  main.append(
     h('form', { class: 'toolbar', onsubmit: (e) => { e.preventDefault(); run(); } },
       q, h('label', { class: 'inline' }, 'In ward between ', from), h('label', { class: 'inline' }, 'and ', to), h('button', { class: 'primary' }, 'Search')),
     out);
@@ -875,7 +954,7 @@ async function printView(main, date) {
             h('td', {}, a.unit),
             h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'muted' }, a.procedure_done) : null),
             h('td', {}, stayBadges(a, date).map((b) => b.textContent).join(', ')),
-            h('td', {}, a.round ? summariseVals(a.round.vals, monitorFor(a)) : '', a.round && a.round.remarks ? h('div', {}, a.round.remarks) : null),
+            h('td', {}, a.round ? summariseVals(a.round.vals, monitorFor(a), a) : '', a.round && a.round.remarks ? h('div', {}, a.round.remarks) : null),
             h('td', {}, a.instructions, a.unit_note ? h('div', {}, h('b', {}, `${a.unit}: `), a.unit_note) : null)));
         }))))));
 }

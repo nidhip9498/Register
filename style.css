@@ -342,3 +342,10 @@ input.narrow { width: 70px; }
 .brand small { font-weight: 500; font-size: .72rem; color: var(--muted); }
 .auth .subtitle { text-align: center; margin: -.6rem 0 0; }
 .instr { white-space: pre-line; }
+fieldset.extras { border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
+.xlist { display: flex; flex-direction: column; gap: .4rem; width: 100%; }
+.xrow { display: grid; grid-template-columns: 1fr 180px auto; gap: .4rem; width: 100%; }
+table.status td { font-size: .88rem; }
+table.status td:nth-child(6) { min-width: 300px; } table.status td:nth-child(5) { white-space: nowrap; }
+@media (max-width: 640px) { .xrow { grid-template-columns: 1fr 1fr; } .xrow button { grid-column: span 2; } }
+table.status td:last-child { white-space: pre-line; }

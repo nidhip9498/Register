@@ -210,6 +210,20 @@ const Store = (() => {
     const group = getIcuBeds().includes(bed) ? 'icu' : 'ward';
     return params().filter((p) => p.active && p.group === group).map((p) => p.key);
   };
+  // Extra round fields for one patient, e.g. { label: 'Right stent output', type: 'number', unit: 'ml' }.
+  // Older records stored just the name; those are free-text fields.
+  function extraFields(list) {
+    const seen = new Set(), out = [];
+    for (const x of list) {
+      const e = typeof x === 'string' ? { label: x, type: 'text', unit: '' } : (x || {});
+      const label = str(e.label, 60);
+      if (!label || seen.has(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      const type = ['number', 'yesno', 'text'].includes(e.type) ? e.type : 'text';
+      out.push({ label, type, unit: type === 'number' ? str(e.unit, 20) : '' });
+    }
+    return out.slice(0, 20);
+  }
   function admissionFields(body) {
     const f = {
       name: str(body.name, 120), ip_no: str(body.ip_no, 40), age: str(body.age, 30), sex: str(body.sex, 10),
@@ -220,7 +234,7 @@ const Store = (() => {
       unit: str(body.unit, 60), admit_date: isDate(body.admit_date) ? body.admit_date : null, // may be left blank
       monitor: Array.isArray(body.monitor) ? body.monitor.map((k) => str(k, 40)).filter(Boolean) : defaultMonitor(body.bed),
       fields_set: !!body.fields_set,
-      extra_fields: Array.isArray(body.extra_fields) ? [...new Set(body.extra_fields.map((k) => str(k, 60)).filter(Boolean))].slice(0, 20) : [],
+      extra_fields: Array.isArray(body.extra_fields) ? extraFields(body.extra_fields) : [],
       instructions: str(body.instructions, 2000), // shown as "Short notes"
       dob: isDate(body.dob) ? body.dob : null, birth_weight: str(body.birth_weight, 20), gestation: str(body.gestation, 20),
       current_weight: str(body.current_weight, 20), weight: str(body.weight, 20),
