@@ -349,3 +349,5 @@ table.status td { font-size: .88rem; }
 table.status td:nth-child(6) { min-width: 300px; } table.status td:nth-child(5) { white-space: nowrap; }
 @media (max-width: 640px) { .xrow { grid-template-columns: 1fr 1fr; } .xrow button { grid-column: span 2; } }
 table.status td:last-child { white-space: pre-line; }
+.trouble { background: var(--warn-soft); border-radius: 8px; padding: .5rem .7rem; font-size: .88rem; }
+.trouble p { margin: 0 0 .4rem; }

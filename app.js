@@ -269,21 +269,51 @@ function connectView() {
 
 function loginView() {
   const err = h('p', { class: 'error' });
+  const help = h('div', {});
+  const btn = h('button', { class: 'primary', type: 'submit' }, 'Sign in');
   const form = h('form', { class: 'card auth', onsubmit: async (e) => {
     e.preventDefault();
+    err.textContent = ''; help.replaceChildren();
+    const creds = { username: form.username.value, password: form.password.value };
     try {
-      S.user = await api('POST', '/api/login', { username: form.username.value, password: form.password.value });
+      try { S.user = await api('POST', '/api/login', creds); }
+      catch (x) {
+        // A new account may have been made on another device: fetch the latest from the ward and try once more.
+        if (x.status !== 401) throw x;
+        btn.disabled = true; btn.textContent = 'Checking for new accounts…';
+        await Sync.syncNow();
+        btn.disabled = false; btn.textContent = 'Sign in';
+        try { S.user = await api('POST', '/api/login', creds); }
+        catch (y) {
+          const st = Sync.status();
+          if (st.state === 'error' || st.state === 'offline') help.replaceChildren(syncTrouble(st));
+          throw y;
+        }
+      }
       S.meta = await api('GET', '/api/meta');
       render();
-    } catch (x) { err.textContent = x.message; }
+    } catch (x) { err.textContent = x.message; btn.disabled = false; btn.textContent = 'Sign in'; }
   } },
   h('img', { src: 'icon.svg', alt: '', class: 'logo' }),
   h('h1', {}, 'Register'), h('p', { class: 'muted subtitle' }, 'Department of Pediatric Surgery'),
   h('label', {}, 'Username', h('input', { name: 'username', autocomplete: 'username', autocapitalize: 'none', required: true })),
   h('label', {}, 'Password', h('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
-  err,
-  h('button', { class: 'primary', type: 'submit' }, 'Sign in'));
+  err, help, btn);
   return h('div', { class: 'center' }, form);
+}
+
+// Shown on the sign-in screen when this device can't fetch the ward's latest entries.
+function syncTrouble(st) {
+  const waiting = st.waiting;
+  return h('div', { class: 'trouble' },
+    st.state === 'offline'
+      ? h('p', {}, 'This device is offline, so it can\'t check for accounts made on other devices. Connect to the internet and try again.')
+      : [h('p', {}, `This device can't reach the ward: ${st.error}.`),
+        /passcode/i.test(st.error || '') && h('p', {}, 'The ward passcode has changed since this device joined. Connect it again with the new passcode.'),
+        h('button', { type: 'button', class: 'ghost small', onclick: async () => {
+          if (waiting && !confirm(`${waiting} changes on this device have not been sent and will be lost. Continue?`)) return;
+          await Store.wipe(); location.reload();
+        } }, 'Connect this device to the ward again')]);
 }
 
 function setupView() {
