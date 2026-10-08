@@ -121,7 +121,14 @@ function summariseVals(vals, monitorKeys, a) {
 // ---------- Boot and routing ----------
 
 async function boot() {
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    // When a new version of the app has been saved on this device, switch to it straight away.
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !boot.reloading && !S.dirty.size) { boot.reloading = true; location.reload(); }
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
+  }
   await Store.load();
   if (!(await Sync.restore())) return render();
   await Store.restoreSession();

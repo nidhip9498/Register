@@ -1,10 +1,10 @@
 // Keeps the app's own files on the device so it opens with no signal.
 // Patient data is not stored here; it lives in the app's local database.
-const VERSION = 'ward-register-v13';
+const VERSION = 'ward-register-v14';
 const FILES = ['./', 'index.html', 'app.js', 'store.js', 'sync.js', 'style.css', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -17,7 +17,7 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(caches.open(VERSION).then(async (c) => {
     const saved = await c.match(e.request, { ignoreSearch: true });
-    const fresh = fetch(e.request).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; });
+    const fresh = fetch(e.request, { cache: 'no-cache' }).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; });
     if (saved) { fresh.catch(() => {}); return saved; }
     return fresh.catch(() => c.match('index.html'));
   }));
