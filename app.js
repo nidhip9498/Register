@@ -393,7 +393,7 @@ async function registerView(main, mode) {
     const here = data.admissions.filter((a) => mine(a.bed_on_date));
     summary.replaceChildren(
       stat('Patients', here.filter((a) => a.discharge_date !== date).length),
-      stat('Empty beds', allBeds.filter((b) => !inBed(b).length).length),
+      (() => { const empty = allBeds.filter((b) => !inBed(b).length); const el = stat('Empty beds', empty.length); el.classList.add('clickable'); el.title = 'Show the empty beds'; el.onclick = () => emptyBedsPanel(empty, date); return el; })(),
       stat('Admitted today', here.filter((a) => a.admit_date === date).length),
       stat('Discharged today', here.filter((a) => a.discharge_date === date).length));
 
@@ -449,6 +449,22 @@ async function registerView(main, mode) {
 }
 
 function stat(label, n, cls) { return h('div', { class: 'stat ' + (cls && n ? cls : '') }, h('b', {}, n), h('span', {}, label)); }
+
+// List of empty beds, one column per ward (6B, 6A).
+function emptyBedsPanel(beds, date) {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  const wards = [...new Set(beds.map(wardOf))];
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
+    h('div', { class: 'modal card panel' },
+      h('div', { class: 'mhead' }, h('h2', {}, `Empty beds · ${beds.length}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+      h('p', { class: 'muted' }, fmtDay(date), canEdit() ? ' · Click a bed to admit a patient to it.' : ''),
+      beds.length ? h('div', { class: 'emptycols' }, wards.map((w) => {
+        const list = beds.filter((b) => wardOf(b) === w);
+        return h('div', {}, h('h3', {}, `${w} · ${list.length}`),
+          h('ul', {}, list.map((b) => h('li', {}, canEdit() ? h('a', { href: 'javascript:void 0', onclick: () => { close(); admitModal(b); } }, b) : b))));
+      })) : h('p', {}, 'No empty beds.'))));
+}
 
 function emptyBed(bed) {
   return h('div', { class: 'bed empty' },

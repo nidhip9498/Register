@@ -360,3 +360,10 @@ table.status td:nth-child(6) { min-width: 300px; } table.status td:nth-child(5) 
 table.status td:last-child { white-space: pre-line; }
 .trouble { background: var(--warn-soft); border-radius: 8px; padding: .5rem .7rem; font-size: .88rem; }
 .trouble p { margin: 0 0 .4rem; }
+
+.stat.clickable { cursor: pointer; }
+.stat.clickable:hover { border-color: var(--accent, #1f7a7a); }
+.emptycols { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+.emptycols h3 { margin: .2rem 0 .4rem; }
+.emptycols ul { list-style: none; padding: 0; margin: 0; }
+.emptycols li { padding: .3rem 0; border-bottom: 1px solid var(--line); font-weight: 600; }
