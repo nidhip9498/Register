@@ -205,7 +205,7 @@ function render() {
   app.append(main);
   if (route === 'patients') statusView(main);
   else if (route === 'patient') patientView(main, arg);
-  else if (route === 'print') printView(main, arg || S.date);
+  else if (route === 'print') printView(main, arg || S.date, location.hash.split('/')[2] || '');
   else if (route === 'census') censusView(main);
   else if (route === 'rounds' && canEdit()) roundsView(main);
   else if (route === 'notes') notesView(main, decodeURIComponent(arg || ''));
@@ -375,7 +375,7 @@ async function registerView(main, mode) {
       h('div', { class: 'filters' }, wardSel, search, emptyToggle),
       h('div', { class: 'actions' },
         canEdit() && h('button', { class: 'primary', onclick: () => admitModal(null, null, { icu: icuMode }) }, icuMode ? '+ Admit to ICU' : '+ Admit'),
-        h('a', { class: 'button ghost', href: '#print/' + date }, 'Print'))),
+        wards.map((w) => h('a', { class: 'button ghost', href: `#print/${date}/${w}` }, 'Print ' + w)))),
     h('h2', { class: 'daytitle' }, icuMode ? 'ICU Register · ' : 'Ward Register · ', fmtDay(date)));
 
   const summary = h('div', { class: 'summary' });
@@ -991,14 +991,16 @@ function patientSearch(main) {
 
 // ---------- Printable daily register ----------
 
-async function printView(main, date) {
+// ward = '6B', '6A' or '6C' to print just that ward; blank prints everything.
+async function printView(main, date, ward) {
+  const icuWard = !!ward && (S.meta.icuBeds || []).some((b) => wardOf(b) === ward);
   const data = await api('GET', '/api/register?date=' + date);
   const byBed = {};
   for (const a of data.admissions) (byBed[a.bed_on_date] = byBed[a.bed_on_date] || []).push(a);
   main.append(
-    h('div', { class: 'toolbar noprint' }, h('a', { href: '#register', class: 'button ghost' }, '‹ Register'), h('button', { class: 'primary', onclick: () => window.print() }, 'Print')),
-    h('h2', {}, 'Ward register · ', fmtDay(date)),
-    ...S.meta.sections.map((sec) => h('section', { class: 'printsec' }, h('h3', {}, sec.name),
+    h('div', { class: 'toolbar noprint' }, h('a', { href: icuWard ? '#icu' : '#register', class: 'button ghost' }, icuWard ? '‹ ICU Register' : '‹ Ward Register'), h('button', { class: 'primary', onclick: () => window.print() }, 'Print')),
+    h('h2', {}, ward ? `${ward} · ` : '', icuWard ? 'ICU register · ' : 'Ward register · ', fmtDay(date)),
+    ...S.meta.sections.map((sec) => ({ ...sec, beds: ward ? sec.beds.filter((b) => wardOf(b) === ward) : sec.beds })).filter((sec) => sec.beds.length).map((sec) => h('section', { class: 'printsec' }, h('h3', {}, sec.name),
       h('table', { class: 'print' },
         h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'Unit', 'Diagnosis / procedure', 'Day', 'Morning round', 'Short notes'].map((t) => h('th', {}, t)))),
         h('tbody', {}, sec.beds.map((bed) => {
