@@ -775,6 +775,19 @@ const Store = (() => {
     if (query.from) lists = lists.filter((l) => l.date >= query.from);
     return lists.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : x.ot < y.ot ? -1 : 1)).map(listOut);
   });
+  // Each OT is marked Routine or Emergency; it can change, so each list keeps its own copy for printing.
+  const KINDS = ['Routine', 'Emergency'];
+  const roomKind = (ot) => { const r = get('otroom:' + ot); return (r && r.kind) || 'Routine'; };
+  route('GET', '/api/otrooms', ANY, () => Object.fromEntries(OTS.map((ot) => [ot, roomKind(ot)])));
+  route('PUT', '/api/otrooms/:ot', ANY, ({ body, params: p }) => {
+    if (!OTS.includes(p.ot)) throw new HttpError(404, 'No such OT');
+    const kind = KINDS.includes(body.kind) ? body.kind : 'Routine';
+    put('otroom:' + p.ot, 'otroom', { kind });
+    // Today's and later lists of this OT follow the change; earlier lists stay as they were printed.
+    for (const l of all('otlist')) if (l.ot === p.ot && l.date >= today() && (l.kind || 'Routine') !== kind) put(l.id, 'otlist', { ...strip(l), kind });
+    audit('mark OT', `OT ${p.ot} ${kind}`);
+    return { ok: true, kind };
+  });
   route('POST', '/api/otlists', ANY, ({ body }) => {
     const ot = str(body.ot, 4), date = body.date;
     if (!OTS.includes(ot)) throw new HttpError(400, 'Pick an OT');
@@ -784,7 +797,7 @@ const Store = (() => {
     // The surgeon starts from the last list of the same OT. KEEP OT WARM is printed on every list, so the note starts empty.
     const last = all('otlist').filter((l) => l.ot === ot).sort((x, y) => (x.date < y.date ? 1 : -1))[0];
     const id = 'otlist:' + uuid();
-    put(id, 'otlist', { ot, date, surgeon: body.surgeon != null ? str(body.surgeon, 120) : (last ? last.surgeon : ''), note: body.note != null ? str(body.note, 200) : '', created_by: currentUser.id, created_at: stamp() });
+    put(id, 'otlist', { ot, date, surgeon: body.surgeon != null ? str(body.surgeon, 120) : (last ? last.surgeon : ''), note: body.note != null ? str(body.note, 200) : '', kind: KINDS.includes(body.kind) ? body.kind : roomKind(ot), created_by: currentUser.id, created_at: stamp() });
     audit('create OT list', `OT ${ot} ${date}`);
     return listOut(get(id));
   });

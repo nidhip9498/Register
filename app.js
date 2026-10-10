@@ -1214,13 +1214,13 @@ const listCard = (l, withOt = true) => h('a', { class: 'otcard', href: '#otlist/
 
 async function otHomeView(main) {
   const today = S.meta.today;
-  const lists = await api('GET', '/api/otlists?from=' + today);
+  const [lists, kinds] = await Promise.all([api('GET', '/api/otlists?from=' + today), api('GET', '/api/otrooms')]);
   const todays = lists.filter((l) => l.date === today).sort((x, y) => (x.ot < y.ot ? -1 : 1));
   const later = lists.filter((l) => l.date > today).sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.ot < y.ot ? -1 : 1));
   main.append(
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Lists'),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal() }, '+ Create list'))),
-    h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot, kind]) => h('a', { class: 'otroom' + (kind === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot },
+    h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot]) => h('a', { class: 'otroom' + (kinds[ot] === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot },
       h('b', {}, otName(ot))))),
     otSearchBox(),
     h('h3', {}, 'Today · ', fmtDay(today)),
@@ -1230,11 +1230,18 @@ async function otHomeView(main) {
 
 async function otDatesView(main, ot) {
   const today = S.meta.today;
-  const lists = await api('GET', '/api/otlists?ot=' + encodeURIComponent(ot));
+  const [lists, kinds] = await Promise.all([api('GET', '/api/otlists?ot=' + encodeURIComponent(ot)), api('GET', '/api/otrooms')]);
+  const seg = h('div', { class: 'seg otkind' });
+  const drawKind = (kind) => seg.replaceChildren(...['Routine', 'Emergency'].map((k) => h('button', { type: 'button', class: (k === kind ? 'on' : '') + (k === 'Emergency' ? ' em' : ''), onclick: async () => {
+    if (k === kind) return;
+    try { await api('PUT', '/api/otrooms/' + ot, { kind: k }); drawKind(k); toast(`${otName(ot)} marked ${k}. Today's and later lists follow.`); } catch (e) { toast(e.message, true); }
+  } }, k)));
+  drawKind(kinds[ot] || 'Routine');
   const up = lists.filter((l) => l.date >= today).reverse(), past = lists.filter((l) => l.date < today);
   main.append(
     h('div', { class: 'toolbar' }, h('a', { class: 'button ghost', href: '#ot' }, '‹ OT Lists'), h('h2', {}, otName(ot)),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal(ot) }, '+ Create list'))),
+    h('div', { class: 'field otkindrow' }, h('span', { class: 'flabel' }, 'This OT is'), seg),
     h('h3', {}, 'Today and coming up'),
     up.length ? h('div', { class: 'otcards' }, up.map((l) => listCard(l, false))) : h('p', { class: 'muted' }, 'No lists yet.'),
     ...(lists.length ? [h('h3', {}, 'By month'), monthGroups(lists)] : []));
@@ -1303,7 +1310,7 @@ async function otListView(main, id) {
   const note = h('input', { value: extraNote, placeholder: 'Anything else to print on top', onchange: saveHead });
   const sheet = h('div', { class: 'printonly otprint' });
   const drawSheet = () => sheet.replaceChildren(
-    h('h1', {}, 'Department of Pediatric Surgery, MCH Block'), h('p', { class: 'c t2' }, 'OT List - ', h('b', {}, otName(l.ot))), h('p', { class: 'c' }, `(${shortDate(l.date)})`),
+    h('h1', {}, 'Department of Pediatric Surgery, MCH Block'), h('p', { class: 'c t2' }, `${l.kind || 'Routine'} OT List - `, h('b', {}, otName(l.ot))), h('p', { class: 'c' }, `(${shortDate(l.date)})`),
     l.surgeon && h('p', { class: 'c b' }, fullNames(l.surgeon).toUpperCase()), h('p', { class: 'c b' }, 'KEEP OT WARM'), extraNote && h('p', { class: 'c b' }, extraNote.toUpperCase()),
     h('table', {}, h('thead', {}, h('tr', {}, ['SL NO', 'WARD', 'NAME', 'AGE/SEX', 'UHID', 'DIAGNOSIS', 'SURGERY', 'CONSULTANT', 'BLOOD ARRANGE', 'SPECIAL REQ'].map((t) => h('th', {}, t)))),
       h('tbody', {}, l.entries.map((e, i) => h('tr', {}, h('td', {}, i + 1), h('td', {}, wardCol(e.bed)), h('td', {}, (e.name || '').toUpperCase()), h('td', {}, [e.age, e.sex].filter(Boolean).join('/')),

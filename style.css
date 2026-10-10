@@ -399,8 +399,10 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .otgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: .6rem; margin-bottom: 1.2rem; }
 .otroom { display: flex; flex-direction: column; gap: .15rem; padding: .9rem; border-radius: 12px; border: 1.5px solid var(--accent); background: var(--card); color: var(--text); text-decoration: none; }
 .otroom b { font-size: 1.3rem; color: var(--accent); }
-.otroom.emerg { border-color: var(--bad); }
-.otroom.emerg b { color: var(--bad); }
+.otroom.emerg { border-color: #e8890c; background: rgba(232, 137, 12, .14); }
+.otroom.emerg b { color: #d97706; }
+.otkindrow { margin: .4rem 0 .6rem; }
+.otkind button.on.em { background: #e8890c; border-color: #e8890c; color: #fff; }
 .otroom small { color: var(--muted); }
 .otcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: .6rem; margin-bottom: 1rem; }
 .otcard { display: flex; flex-direction: column; gap: .2rem; text-align: left; padding: .75rem .9rem; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); text-decoration: none; font: inherit; cursor: pointer; }
