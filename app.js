@@ -1429,6 +1429,7 @@ function otExtras(l, e, reload) {
     if (what === 'scrub') box.replaceChildren(scrubPicker(e.scrub, async (team) => {
       try { await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast('Scrub team saved'); reload(); } catch (x) { toast(x.message, true); }
     }));
+    else if (l.date > S.meta.today) box.replaceChildren(h('p', { class: 'warntext small' }, `This list is for ${fmtDay(l.date)}. The procedure done and OT findings can be added from that day onwards.`));
     else {
       // Two parts: the surgery / procedure actually done (shown in Rounds and the OT Log), and findings & instructions for the ward.
       const done = h('input', { value: e.done || e.surgery || '', placeholder: 'e.g. Laparoscopic pyeloplasty' });
@@ -1446,7 +1447,7 @@ function otExtras(l, e, reload) {
   return h('div', {},
     h('div', { class: 'ottiles' },
       h('button', { class: 'ottile', onclick: () => open('scrub') }, (e.scrub || []).length ? 'Edit scrub team' : '+ Add scrub team'),
-      canEdit() && l.date <= S.meta.today && h('button', { class: 'ottile', onclick: () => open('findings') }, '+ Add OT findings & instructions')),
+      canEdit() && h('button', { class: 'ottile', onclick: () => open('findings') }, '+ Add OT findings & instructions')),
     box);
 }
 
