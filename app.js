@@ -508,7 +508,8 @@ async function shiftsModal() {
   const msg = h('div', { class: 'error shiftmsg' });
   const status = h('p', { class: 'muted' });
 
-  const bedSelect = (val, onchange, occupiedOnly) => h('select', { disabled: !edit, onchange },
+  const locked = () => !!plan.executed_at && saved; // a carried-out list is read-only until "Start a new list"
+  const bedSelect = (val, onchange, occupiedOnly) => h('select', { disabled: !edit || locked(), onchange },
     h('option', { value: '' }, '—'),
     order.filter((b) => !occupiedOnly || inBed(b).length || b === val).map((b) => h('option', { value: b, selected: b === val }, b)));
   // What happens to whoever is already in the To bed.
@@ -516,51 +517,65 @@ async function shiftsModal() {
     if (!r.to || !inBed(r.to).length) return r.to ? { text: 'Empty' } : { text: '' };
     if (r.swap) return { text: `Swap: ${who(r.to)} goes to ${r.from || 'the From bed'}` };
     if (movingFrom.has(r.to)) return { text: `Now: ${who(r.to)} (also moving)` };
-    return { text: `${who(r.to)} stays here too until discharged`, warn: true };
+    return { text: `Waits until ${who(r.to)} is discharged`, warn: true };
   };
+  const doneNote = (r) => r.status === 'waiting' ? { text: `Waiting: moves when ${r.wait_for} is discharged`, warn: true }
+    : r.status === 'cancelled' ? { text: `Not done: ${r.note || 'cancelled'}`, warn: true }
+    : { text: r.swap && r.name2 ? `Swapped: ${r.name2}` : r.done_at ? `Moved after discharge · ${r.done_at}` : '' };
   const draw = () => {
-    const done = plan.executed_at && saved;
+    const done = !!plan.executed_at && saved;
     const movingFrom = new Set(rows.map((r) => r.from).filter(Boolean));
     tbody.replaceChildren(...rows.map((r, i) => {
-      const note = done ? { text: r.swap && r.name2 ? `Swapped: ${r.name2}` : '' } : toNote(r, movingFrom);
+      const note = done ? doneNote(r) : toNote(r, movingFrom);
       return h('tr', {},
-        h('td', {}, bedSelect(r.from, (e) => { r.from = e.target.value; changed(); }, true), h('div', { class: 'small muted' }, done ? (r.name ? `Moved: ${r.name}` : '') : r.from ? who(r.from) || 'Empty' : '')),
+        h('td', {}, bedSelect(r.from, (e) => { r.from = e.target.value; changed(); }, true), h('div', { class: 'small muted' }, done ? (r.name ? (r.status === 'done' || !r.status ? `Moved: ${r.name}` : r.name) : '') : r.from ? who(r.from) || 'Empty' : '')),
         h('td', { class: 'arrow' }, r.swap ? '⇄' : '→'),
         h('td', {}, bedSelect(r.to, (e) => { r.to = e.target.value; changed(); }), h('div', { class: 'small ' + (note.warn ? 'warntext' : 'muted') }, note.text)),
-        h('td', { class: 'swapcell' }, h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: !!r.swap, disabled: !edit, onchange: (e) => { r.swap = e.target.checked; changed(); } }), 'Swap')),
-        edit && h('td', {}, h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.splice(i, 1); if (!rows.length) rows.push({ from: '', to: '' }); changed(); } }, 'Remove')));
+        h('td', { class: 'swapcell' }, h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: !!r.swap, disabled: !edit || done, onchange: (e) => { r.swap = e.target.checked; changed(); } }), 'Swap')),
+        edit && h('td', {}, done
+          ? (r.status === 'waiting' && h('button', { type: 'button', class: 'ghost small', onclick: async () => {
+            if (!confirm(`Cancel the waiting shift ${r.from} → ${r.to}?`)) return;
+            try { await api('POST', '/api/shifts/cancel', { index: i }); shiftsModal(); } catch (e) { msg.textContent = e.message; }
+          } }, 'Cancel'))
+          : h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.splice(i, 1); if (!rows.length) rows.push({ from: '', to: '' }); changed(); } }, 'Remove')));
     }));
-    status.textContent = done ? `Carried out by ${plan.executed_by} · ${plan.executed_at}` : plan.saved_at ? `${saved ? 'Saved' : 'Last saved'} by ${plan.saved_by} · ${plan.saved_at}${saved ? '' : ' · unsaved changes'}` : 'Not saved yet';
+    const nWait = rows.filter((r) => r.status === 'waiting').length;
+    status.textContent = done ? `Carried out by ${plan.executed_by} · ${plan.executed_at}${nWait ? ` · ${nWait} waiting for a discharge` : ''}` : plan.saved_at ? `${saved ? 'Saved' : 'Last saved'} by ${plan.saved_by} · ${plan.saved_at}${saved ? '' : ' · unsaved changes'}` : 'Not saved yet';
+    save.hidden = addBtn.hidden = !edit || done;
     exec.disabled = !saved || !!plan.executed_at || !rows.some((r) => r.from && r.to);
     const list = rows.filter((r) => r.from || r.to);
     sheet.replaceChildren(h('h2', {}, 'Bed shifts · ', fmtDay(S.meta.today)),
       h('table', { class: 'print' }, h('thead', {}, h('tr', {}, ['From', 'Patient', 'To', 'Note', 'Done'].map((t) => h('th', {}, t)))),
         h('tbody', {}, list.map((r) => h('tr', {}, h('td', {}, h('b', {}, r.from)), h('td', {}, done ? r.name || '' : who(r.from)), h('td', {}, h('b', {}, r.swap ? '⇄ ' : '', r.to)),
-          h('td', {}, done ? (r.swap && r.name2 ? `Swap: ${r.name2} → ${r.from}` : '') : (toNote(r, movingFrom).text || '').replace(/^Empty$/, '')), h('td', { class: 'blank' }))))));
+          h('td', {}, done ? (r.swap && r.name2 ? `Swap: ${r.name2} → ${r.from}` : doneNote(r).text) : (toNote(r, movingFrom).text || '').replace(/^Empty$/, '')), h('td', { class: 'blank' }))))));
   };
+  const addBtn = h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.push({ from: '', to: '' }); changed(); } }, '+ Add a shift');
   const changed = () => { saved = false; msg.textContent = ''; draw(); };
   const save = h('button', { type: 'button', class: 'primary', onclick: async () => {
     try { await api('PUT', '/api/shifts', { rows: rows.filter((r) => r.from || r.to) }); toast('Bed shift list saved'); shiftsModal(); } catch (e) { msg.textContent = e.message; }
   } }, 'Save list');
   const exec = h('button', { type: 'button', class: 'danger', onclick: async () => {
     const movingFrom = new Set(rows.map((r) => r.from).filter(Boolean));
-    const sharing = rows.filter((r) => toNote(r, movingFrom).warn).map((r) => `${r.to}: ${who(r.to)}`);
-    if (!confirm('Move all these patients to their new beds now?' + (sharing.length ? `\n\nThese beds will hold two patients until one is discharged:\n${sharing.join('\n')}` : ''))) return;
-    try { const r = await api('POST', '/api/shifts/execute', { date: S.meta.today }); toast(`${r.moved} patients moved`); close(); render(); } catch (e) { msg.textContent = e.message; }
+    const later = rows.filter((r) => toNote(r, movingFrom).warn).map((r) => `${r.from} → ${r.to} (after ${who(r.to)} is discharged)`);
+    if (!confirm('Move the patients to their new beds now?' + (later.length ? `\n\nThese will wait and move by themselves after the discharge, along with any shift that needs the bed they leave:\n${later.join('\n')}` : ''))) return;
+    try { const r = await api('POST', '/api/shifts/execute', { date: S.meta.today }); toast(`${r.moved} shift${r.moved === 1 ? '' : 's'} done` + (r.waiting ? `, ${r.waiting} waiting for a discharge` : '')); close(); render(); } catch (e) { msg.textContent = e.message; }
   } }, 'Execute');
-  const fresh = h('button', { type: 'button', class: 'ghost', onclick: () => { rows = [{ from: '', to: '' }]; plan.executed_at = ''; changed(); } }, 'Start a new list');
+  const fresh = h('button', { type: 'button', class: 'ghost', onclick: () => {
+    if (rows.some((r) => r.status === 'waiting') && !confirm('Some shifts are still waiting for a discharge. A new list replaces them once you save it. Continue?')) return;
+    rows = [{ from: '', to: '' }]; plan.executed_at = ''; changed();
+  } }, 'Start a new list');
 
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
     h('div', { class: 'modal card panel shifts' },
       h('div', { class: 'mhead noprint' }, h('h2', {}, 'Bed shifts'), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       h('div', { class: 'noprint' },
-        h('p', { class: 'muted' }, 'Write the shifts the evening before and save. After the morning round, press Execute to move everyone at once. Tick Swap to exchange the two patients. Without Swap, a patient already in the To bed stays there (for example, someone going home later today) until discharged.'),
+        h('p', { class: 'muted' }, 'Write the shifts the evening before and save. After the morning round, press Execute to move everyone at once. Tick Swap to exchange the two patients. Without Swap, if the To bed still has a patient (for example, going home later today), that shift waits and happens by itself when the patient is discharged, together with any shift into the bed it frees.'),
         status,
         h('table', { class: 'list shiftlist' }, h('thead', {}, h('tr', {}, h('th', {}, 'From bed'), h('th', {}), h('th', {}, 'To bed'), h('th', {}), edit && h('th', {}))), tbody),
-        edit && h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.push({ from: '', to: '' }); changed(); } }, '+ Add a shift'),
+        addBtn,
         msg,
         h('div', { class: 'btns shiftbtns' },
-          edit && save,
+          save,
           h('button', { type: 'button', class: 'ghost', onclick: () => { document.body.classList.add('print-modal'); window.print(); document.body.classList.remove('print-modal'); } }, 'Print'),
           edit && plan.executed_at && fresh,
           edit && exec)),
@@ -971,8 +986,8 @@ function dischargeModal(a) {
     h('label', {}, 'Date', h('input', { type: 'date', name: 'date', value: S.date, required: true })),
     h('label', {}, 'Outcome', h('select', { name: 'outcome' }, OUTCOMES.map((o) => h('option', { value: o }, o)))));
   modal('Discharge', body, async (form) => {
-    await api('POST', `/api/admissions/${a.id}/discharge`, { date: form.date.value, outcome: form.outcome.value });
-    toast('Discharged');
+    const r = await api('POST', `/api/admissions/${a.id}/discharge`, { date: form.date.value, outcome: form.outcome.value });
+    toast(r.shifted ? `Discharged. ${r.shifted} waiting bed shift${r.shifted === 1 ? '' : 's'} carried out.` : 'Discharged');
     render();
   }, 'Discharge');
 }

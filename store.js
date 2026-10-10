@@ -389,7 +389,8 @@ const Store = (() => {
     if (a.admit_date && date < a.admit_date) throw new HttpError(400, 'Discharge date is before the admission date');
     put(a.id, 'admission', { ...strip(a), discharge_date: date, outcome: str(body.outcome, 60) || 'Discharged' });
     audit('discharge', `${a.name} from ${a.bed} on ${date}`);
-    return { ok: true };
+    const shifted = resumeShifts() || 0;
+    return { ok: true, shifted };
   });
 
   route('POST', '/api/admissions/:id/undo-discharge', EDITORS, ({ params: p }) => {
@@ -434,46 +435,111 @@ const Store = (() => {
     audit('save bed shift list', `${rows.length} shifts`);
     return { ok: true };
   });
+  // Work out the moves for some rows of the list. Each row is one move; a Swap row also sends the patient in the
+  // To bed back to the From bed. Problems are reported per row.
+  function planShifts(rows, idx) {
+    const problems = new Map();
+    const bad = (i, m) => problems.set(i, (problems.has(i) ? problems.get(i) + '; ' : '') + m);
+    const moves = [];
+    for (const i of idx) {
+      const r = rows[i];
+      if (!r.from || !r.to) { bad(i, 'both beds are needed'); continue; }
+      if (r.from === r.to) { bad(i, 'same bed'); continue; }
+      moves.push({ i, from: r.from, to: r.to });
+      if (r.swap && occupants(r.to).length) moves.push({ i, from: r.to, to: r.from });
+    }
+    for (const k of ['from', 'to']) {
+      const seen = new Map();
+      for (const m of moves) { if (seen.has(m[k])) { bad(m.i, k === 'from' ? `the patient in ${m.from} is moved twice (check the Swap ticks)` : `two patients are sent to ${m.to}`); bad(seen.get(m[k]), problems.get(m.i)); } else seen.set(m[k], m.i); }
+    }
+    const movers = new Map();
+    for (const m of moves) {
+      const occ = occupants(m.from);
+      if (!occ.length) bad(m.i, `${m.from} is empty`);
+      else if (occ.length > 1) bad(m.i, `${m.from} has more than one patient`);
+      else { m.adm = occ[0]; movers.set(occ[0].id, m); }
+    }
+    // A row waits while its To bed still has a patient who is not moving now (for example, going home later today),
+    // and so does any row that needs a bed a waiting patient has not left yet.
+    const waiting = new Map();
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const m of moves) {
+        if (waiting.has(m.i) || problems.has(m.i)) continue;
+        for (const o of occupants(m.to)) {
+          const mv = movers.get(o.id);
+          if (!mv) { waiting.set(m.i, o.name); changed = true; break; }
+          if (waiting.has(mv.i)) { waiting.set(m.i, waiting.get(mv.i)); changed = true; break; }
+        }
+      }
+    }
+    return { moves, problems, waiting };
+  }
+  function doMoves(moves, skip, date) {
+    for (const m of moves) {
+      if (skip(m.i)) continue;
+      put('move:' + uuid(), 'move', { admission_id: m.adm.id, from_bed: m.from, to_bed: m.to, move_date: date, moved_by: currentUser.id, at: now() });
+      put(m.adm.id, 'admission', { ...strip(m.adm), bed: m.to });
+    }
+  }
+  const nameIn = (moves, i, bed) => { const m = moves.find((x) => x.i === i && x.from === bed); return m && m.adm ? m.adm.name : ''; };
+
   route('POST', '/api/shifts/execute', EDITORS, ({ body }) => {
     const pl = shiftPlan();
     const rows = (pl.rows || []).filter((r) => r.from || r.to);
     if (!rows.length) throw new HttpError(400, 'The list is empty');
     if (pl.executed_at) throw new HttpError(400, 'This list was already carried out');
-    const problems = [];
-    for (const r of rows) if (!r.from || !r.to) problems.push(`${r.from || '?'} → ${r.to || '?'}: both beds are needed`);
-    // Each row is one move; a Swap row also sends the patient in the To bed back to the From bed.
-    const moves = [];
-    for (const r of rows) {
-      if (!r.from || !r.to) continue;
-      if (r.from === r.to) { problems.push(`${r.from} → ${r.to}: same bed`); continue; }
-      moves.push({ from: r.from, to: r.to });
-      if (r.swap && occupants(r.to).length) moves.push({ from: r.to, to: r.from });
-    }
-    const dupes = (k) => { const c = moves.map((m) => m[k]); return [...new Set(c.filter((b, i) => c.indexOf(b) !== i))]; };
-    for (const b of dupes('from')) problems.push(`The patient in ${b} is moved twice (check the Swap ticks)`);
-    for (const b of dupes('to')) problems.push(`Two patients are sent to ${b}`);
-    const movers = new Map();
-    for (const m of moves) {
-      const occ = occupants(m.from);
-      if (!occ.length) problems.push(`${m.from} is empty`);
-      else if (occ.length > 1) problems.push(`${m.from} has more than one patient`);
-      else movers.set(occ[0].id, { adm: occ[0], to: m.to });
-    }
-    if (problems.length) throw new HttpError(400, problems.join('\n'));
-    // A plain move into an occupied bed is allowed: both share it until the patient there is discharged.
-    const shared = [];
-    for (const m of moves) for (const o of occupants(m.to)) if (!movers.has(o.id)) shared.push(`${m.to} (${o.name})`);
+    const { moves, problems, waiting } = planShifts(rows, rows.map((_, i) => i));
+    if (problems.size) throw new HttpError(400, [...problems].map(([i, m]) => `${rows[i].from || '?'} → ${rows[i].to || '?'}: ${m}`).join('\n'));
     const date = isDate(body.date) ? body.date : today();
-    for (const { adm, to } of movers.values()) {
-      put('move:' + uuid(), 'move', { admission_id: adm.id, from_bed: adm.bed, to_bed: to, move_date: date, moved_by: currentUser.id, at: now() });
-      put(adm.id, 'admission', { ...strip(adm), bed: to });
-    }
+    doMoves(moves, (i) => waiting.has(i), date);
     // Keep who moved, so the list still prints correctly after the beds have changed.
-    const nameFrom = (bed) => { const m = [...movers.values()].find((x) => x.adm.bed === bed); return m ? m.adm.name : ''; };
-    const named = (pl.rows || []).map((r) => ({ ...r, name: nameFrom(r.from), name2: r.swap ? nameFrom(r.to) : '' }));
-    put('plan:shifts', 'plan', { ...strip(pl), rows: named, executed_by: currentUser.id, executed_at: stamp() });
-    audit('carry out bed shifts', [...movers.values()].map(({ adm, to }) => `${adm.name} ${adm.bed} -> ${to}`).join(', '));
-    return { moved: movers.size, shared };
+    const out = rows.map((r, i) => ({
+      ...r, name: nameIn(moves, i, r.from), name2: r.swap ? nameIn(moves, i, r.to) : '',
+      ...(waiting.has(i) ? { status: 'waiting', wait_for: waiting.get(i), ids: moves.filter((m) => m.i === i).map((m) => m.adm.id) } : { status: 'done' }),
+    }));
+    put('plan:shifts', 'plan', { ...strip(pl), rows: out, executed_by: currentUser.id, executed_at: stamp() });
+    audit('carry out bed shifts', out.map((r) => `${r.name} ${r.from} -> ${r.to}${r.status === 'waiting' ? ' (waiting)' : ''}`).join(', '));
+    return { moved: out.filter((r) => r.status === 'done').length, waiting: out.filter((r) => r.status === 'waiting').length };
+  });
+
+  // After a discharge: carry out any shifts that were waiting for a bed to empty.
+  function resumeShifts() {
+    const pl = shiftPlan();
+    const rows = (pl.rows || []).map((r) => ({ ...r }));
+    let idx = rows.map((r, i) => (r.status === 'waiting' ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) return;
+    // A patient who was moved or discharged by hand since: that shift no longer applies.
+    for (const i of idx) {
+      const r = rows[i];
+      const inPlace = (id) => { const a = get(id); return a && !a.discharge_date && (a.bed === r.from || (r.swap && a.bed === r.to)); };
+      if (!(r.ids || []).every(inPlace)) { rows[i] = { ...r, status: 'cancelled', note: 'Patient was moved or discharged by hand' }; }
+    }
+    idx = idx.filter((i) => rows[i].status === 'waiting');
+    let plan = planShifts(rows, idx);
+    for (const [i, m] of plan.problems) rows[i] = { ...rows[i], status: 'cancelled', note: m };
+    if (plan.problems.size) { idx = idx.filter((i) => !plan.problems.has(i)); plan = planShifts(rows, idx); }
+    const ready = idx.filter((i) => !plan.waiting.has(i) && !plan.problems.has(i));
+    doMoves(plan.moves, (i) => !ready.includes(i), today());
+    for (const i of ready) rows[i] = { ...rows[i], status: 'done', done_at: stamp() };
+    for (const i of idx) if (plan.waiting.has(i)) rows[i] = { ...rows[i], wait_for: plan.waiting.get(i) };
+    put('plan:shifts', 'plan', { ...strip(pl), rows });
+    if (ready.length) audit('waiting bed shifts carried out', ready.map((i) => `${rows[i].name} ${rows[i].from} -> ${rows[i].to}`).join(', '));
+    return ready.length;
+  }
+  route('POST', '/api/shifts/cancel', EDITORS, ({ body }) => {
+    const pl = shiftPlan();
+    const rows = (pl.rows || []).map((r) => ({ ...r }));
+    const i = Number(body.index);
+    if (!rows[i] || rows[i].status !== 'waiting') throw new HttpError(400, 'That shift is not waiting');
+    rows[i] = { ...rows[i], status: 'cancelled', note: 'Cancelled by ' + currentUser.name };
+    // Shifts that depended on this one now wait for whoever stays in their bed.
+    const idx = rows.map((r, j) => (r.status === 'waiting' ? j : -1)).filter((j) => j >= 0);
+    const { waiting } = planShifts(rows, idx);
+    for (const j of idx) if (waiting.has(j)) rows[j] = { ...rows[j], wait_for: waiting.get(j) };
+    put('plan:shifts', 'plan', { ...strip(pl), rows });
+    audit('cancel waiting bed shift', `${rows[i].from} -> ${rows[i].to}`);
+    return { ok: true };
   });
 
   route('PUT', '/api/rounds/:id/:date', EDITORS, ({ body, params: p }) => {
