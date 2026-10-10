@@ -707,6 +707,142 @@ const Store = (() => {
     return { ok: true };
   });
 
+  // ---------- OT lists: one list per OT per day, each with its patients (recognised by UHID) ----------
+  const OTS = ['11', '12', '13', '14', '15', '16'];
+  const otEntries = (listId) => all('otentry').filter((e) => e.list_id === listId).sort((x, y) => (x.order || 0) - (y.order || 0));
+  const getOtList = (id) => { const l = get(id); if (!l || !id.startsWith('otlist:')) throw new HttpError(404, 'List not found'); return l; };
+  // Ages like "2m", "12y", "6.5y", "2y 3m", "57d" moved on from the day they were written to another day.
+  function ageOn(age, from, to) {
+    const t = String(age || '').trim().toLowerCase();
+    // Within a month the age as written still holds; keep it exactly as typed.
+    if (!t || !isDate(from) || !isDate(to) || Math.abs(Date.parse(to) - Date.parse(from)) < 30 * 864e5) return age || '';
+    const m = t.match(/^(?:(\d+(?:\.\d+)?)\s*y(?:rs?|ears?)?)?\s*(?:(\d+(?:\.\d+)?)\s*m(?:o|onths?)?)?\s*(?:(\d+)\s*d(?:ays?)?)?$/);
+    if (!m || (!m[1] && !m[2] && !m[3])) return age;
+    const days = (+m[1] || 0) * 365.25 + (+m[2] || 0) * 30.44 + (+m[3] || 0) + (Date.parse(to) - Date.parse(from)) / 864e5;
+    return ageText(days);
+  }
+  const ageFromDob = (dob, to) => (isDate(dob) && isDate(to) ? ageText((Date.parse(to) - Date.parse(dob)) / 864e5) : '');
+  function ageText(days) {
+    if (days < 0) return '';
+    if (days < 60) return Math.floor(days) + 'd';
+    if (days < 730) return Math.floor(days / 30.44) + 'm';
+    const y = Math.floor(days / 365.25), mo = Math.floor((days - y * 365.25) / 30.44);
+    return y < 5 && mo ? `${y}y ${mo}m` : y + 'y';
+  }
+  function otEntryFields(b) {
+    return {
+      uhid: str(b.uhid, 30), name: str(b.name, 80), age: str(b.age, 20), sex: str(b.sex, 10), bed: str(b.bed, 30),
+      diagnosis: str(b.diagnosis, 600), surgery: str(b.surgery, 600), consultant: str(b.consultant, 80),
+      blood: str(b.blood, 40), special: str(b.special, 800), admission_id: str(b.admission_id, 60),
+    };
+  }
+  // The latest details known for a UHID: an earlier OT entry or an admission, with the age brought up to `date`.
+  function lookupUhid(uhid, date) {
+    const u = str(uhid, 30).toLowerCase();
+    if (!u) return null;
+    const found = [];
+    for (const e of all('otentry')) {
+      if ((e.uhid || '').toLowerCase() !== u) continue;
+      const l = get(e.list_id);
+      found.push({ at: (l && l.date) || (e.created_at || '').slice(0, 10), src: { ...e, age_on: (l && l.date) || (e.created_at || '').slice(0, 10) } });
+    }
+    for (const a of all('admission')) {
+      if ((a.ip_no || '').toLowerCase() !== u) continue;
+      const on = a.discharge_date || today();
+      found.push({ at: on, adm: a, src: { uhid: a.ip_no, name: a.name, age: a.age, sex: a.sex, diagnosis: a.diagnosis, surgery: a.procedure_done, consultant: a.unit, age_on: a.admit_date || (a.updated_at || '').slice(0, 10) || on, dob: a.dob } });
+    }
+    if (!found.length) return null;
+    found.sort((x, y) => (x.at < y.at ? 1 : -1));
+    const s = found[0].src;
+    const current = found.map((f) => f.adm).find((a) => a && !a.discharge_date);
+    return {
+      uhid: s.uhid, name: s.name || '', sex: s.sex || '', diagnosis: s.diagnosis || '', surgery: s.surgery || '', consultant: s.consultant || '',
+      age: (s.dob && ageFromDob(s.dob, date)) || ageOn(s.age, s.age_on, date),
+      bed: current ? current.bed : '', admission_id: current ? current.id : '', blood: s.blood || '', special: s.special || '',
+    };
+  }
+  const listOut = (l) => ({ ...l, count: otEntries(l.id).length });
+
+  route('GET', '/api/otlists', ANY, ({ query }) => {
+    let lists = all('otlist');
+    if (query.ot) lists = lists.filter((l) => l.ot === query.ot);
+    if (query.from) lists = lists.filter((l) => l.date >= query.from);
+    return lists.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : x.ot < y.ot ? -1 : 1)).map(listOut);
+  });
+  route('POST', '/api/otlists', ANY, ({ body }) => {
+    const ot = str(body.ot, 4), date = body.date;
+    if (!OTS.includes(ot)) throw new HttpError(400, 'Pick an OT');
+    if (!isDate(date)) throw new HttpError(400, 'Pick a date');
+    const have = all('otlist').find((l) => l.ot === ot && l.date === date);
+    if (have) return { ...listOut(have), existed: true };
+    // The heading (surgeon in charge) and note start from the last list of the same OT.
+    const last = all('otlist').filter((l) => l.ot === ot).sort((x, y) => (x.date < y.date ? 1 : -1))[0];
+    const id = 'otlist:' + uuid();
+    put(id, 'otlist', { ot, date, surgeon: body.surgeon != null ? str(body.surgeon, 80) : (last ? last.surgeon : ''), note: body.note != null ? str(body.note, 200) : (last ? last.note : ''), created_by: currentUser.id, created_at: stamp() });
+    audit('create OT list', `OT ${ot} ${date}`);
+    return listOut(get(id));
+  });
+  route('GET', '/api/otlists/:id', ANY, ({ params: p }) => {
+    const l = getOtList(p.id);
+    return { ...l, created_by: userName(l.created_by), entries: otEntries(l.id).map((e) => ({ ...e, by: userName(e.created_by) })) };
+  });
+  route('PUT', '/api/otlists/:id', ANY, ({ body, params: p }) => {
+    const l = getOtList(p.id);
+    put(l.id, 'otlist', { ...strip(l), surgeon: str(body.surgeon, 80), note: str(body.note, 200) });
+    return { ok: true };
+  });
+  route('DELETE', '/api/otlists/:id', ANY, ({ params: p }) => {
+    const l = getOtList(p.id);
+    for (const e of otEntries(l.id)) put(e.id, 'otentry', null);
+    put(l.id, 'otlist', null);
+    audit('delete OT list', `OT ${l.ot} ${l.date}`);
+    return { ok: true };
+  });
+  route('GET', '/api/uhid/:uhid', ANY, ({ params: p, query }) => lookupUhid(p.uhid, isDate(query.date) ? query.date : today()) || {});
+  route('POST', '/api/otlists/:id/entries', ANY, ({ body, params: p }) => {
+    const l = getOtList(p.id);
+    let f = otEntryFields(body);
+    // Adding a ward patient straight from their bed: fill in what the register knows.
+    if (body.admission_id && !body.name) {
+      const a = getAdmission(body.admission_id);
+      const known = (a.ip_no && lookupUhid(a.ip_no, l.date)) || {};
+      f = otEntryFields({ ...known, uhid: a.ip_no, name: a.name, sex: a.sex, bed: a.bed, diagnosis: a.diagnosis, surgery: known.surgery || a.procedure_done, consultant: a.unit,
+        age: ageFromDob(a.dob, l.date) || ageOn(a.age, a.admit_date || today(), l.date) || a.age, admission_id: a.id });
+    }
+    if (!f.name) throw new HttpError(400, 'Name is required');
+    const list = otEntries(l.id);
+    if (f.uhid && list.some((e) => (e.uhid || '').toLowerCase() === f.uhid.toLowerCase())) throw new HttpError(400, `UHID ${f.uhid} is already on this list`);
+    if (f.admission_id && list.some((e) => e.admission_id === f.admission_id)) throw new HttpError(400, `${f.name} is already on this list`);
+    const id = 'otentry:' + uuid();
+    put(id, 'otentry', { ...f, list_id: l.id, order: list.length ? Math.max(...list.map((e) => e.order || 0)) + 1 : 1, created_by: currentUser.id, created_at: stamp() });
+    audit('add to OT list', `${f.name} → OT ${l.ot} ${l.date}`);
+    return { id };
+  });
+  const getEntry = (id) => { const e = get(id); if (!e || !id.startsWith('otentry:')) throw new HttpError(404, 'Entry not found'); return e; };
+  route('PUT', '/api/otentries/:id', ANY, ({ body, params: p }) => {
+    const e = getEntry(p.id);
+    const f = otEntryFields({ ...e, ...body });
+    if (!f.name) throw new HttpError(400, 'Name is required');
+    put(e.id, 'otentry', { ...strip(e), ...f, updated_by: currentUser.id, updated_at: stamp() });
+    return { ok: true };
+  });
+  route('POST', '/api/otentries/:id/move', ANY, ({ body, params: p }) => {
+    const e = getEntry(p.id);
+    const list = otEntries(e.list_id);
+    const i = list.findIndex((x) => x.id === e.id), j = i + (body.dir === 'up' ? -1 : 1);
+    if (j < 0 || j >= list.length) return { ok: true };
+    list.forEach((x, k) => { x.order = k + 1; });
+    [list[i].order, list[j].order] = [list[j].order, list[i].order];
+    for (const x of list) put(x.id, 'otentry', strip(x));
+    return { ok: true };
+  });
+  route('DELETE', '/api/otentries/:id', ANY, ({ params: p }) => {
+    const e = getEntry(p.id);
+    put(e.id, 'otentry', null);
+    audit('remove from OT list', e.name);
+    return { ok: true };
+  });
+
   route('GET', '/api/audit', ADMIN, () => all('audit').sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 500).map((a) => ({ ...a, name: userName(a.user_id) })));
 
   // A full, unencrypted copy of the ward's data saved as a file on this device.
