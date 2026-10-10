@@ -687,7 +687,7 @@ const roleName = (n) => (n === 1 ? 'Operating surgeon' : `${ORDINALS[n - 2] || n
 const roleShort = (n) => (n === 1 ? 'operating' : `${['1st', '2nd', '3rd'][n - 2] || n - 1 + 'th'} asst`);
 const personName = (i) => { const p = [...SURGEONS, ...SR_INITIALS].find(([x]) => x === i); return p ? p[1] : i; };
 function myInitials() {
-  const name = (S.user && S.user.name || '').trim(), first = name.split(/\s+/)[0] || '';
+  const name = (S.user && S.user.name || '').trim().replace(/^dr\.?\s+/i, ''), first = name.split(/\s+/)[0] || '';
   const c = SURGEONS.find(([, n]) => squash(n).replace(/^dr/, '') === squash(name).replace(/^dr/, ''));
   if (c) return c[0];
   const r = SR_INITIALS.find(([, n]) => n.toLowerCase() === name.toLowerCase()) || SR_INITIALS.find(([, n]) => !n.includes(' ') && n.toLowerCase() === first.toLowerCase());
@@ -1483,7 +1483,8 @@ function admitFromOt(e, onDone) {
 // ---------- OT Log: each person's logbook from the scrub teams added on OT lists ----------
 async function otLogView(main, who) {
   who = who || myInitials() || SURGEONS[0][0];
-  const [people, rows] = await Promise.all([api('GET', '/api/otpeople'), api('GET', '/api/otlog?who=' + encodeURIComponent(who))]);
+  const [counts, rows] = await Promise.all([api('GET', '/api/otpeople'), api('GET', '/api/otlog?who=' + encodeURIComponent(who))]);
+  const people = Object.keys(counts);
   const known = new Set([...SURGEONS, ...SR_INITIALS].map(([i]) => i));
   const others = people.filter((p) => !known.has(p));
   if (!known.has(who) && !others.includes(who)) others.push(who);
@@ -1498,7 +1499,8 @@ async function otLogView(main, who) {
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Log'),
       h('div', { class: 'actions' }, h('label', { class: 'inline' }, 'Logbook of ', sel), h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
     h('h2', { class: 'printonly' }, title),
-    h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : 'No operations logged yet. Use Add scrub team on a patient in OT Lists.'),
+    h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : `No operations logged for ${who} yet. A log fills when ${who} is in a scrub team on an OT list.`),
+    !rows.length && people.length ? h('p', { class: 'small' }, 'Logged so far: ', people.sort((a, b) => counts[b] - counts[a]).map((p, k) => [k ? ', ' : '', h('a', { href: '#otlog/' + encodeURIComponent(p) }, `${p} (${counts[p]})`)])) : null,
     rows.length ? h('input', { type: 'search', class: 'otlogsearch noprint', placeholder: 'Search name, UHID, diagnosis or surgery', oninput: (ev) => {
       const q = ev.target.value.trim().toLowerCase();
       main.querySelectorAll('table.otlog tbody tr').forEach((tr) => { tr.hidden = !!q && !tr.textContent.toLowerCase().includes(q); });

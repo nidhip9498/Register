@@ -969,7 +969,12 @@ const Store = (() => {
     }
     return rows.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
   });
-  route('GET', '/api/otpeople', ANY, () => [...new Set([...all('otentry'), ...all('ot')].flatMap((o) => o.scrub || []))]);
+  // Everyone who has scrubbed in so far, with how many operations each.
+  route('GET', '/api/otpeople', ANY, () => {
+    const n = {};
+    for (const o of [...all('otentry').filter((e) => !e.cancelled), ...all('ot')]) for (const x of o.scrub || []) n[x] = (n[x] || 0) + 1;
+    return n;
+  });
   route('POST', '/api/otentries/:id/move', ANY, ({ body, params: p }) => {
     const e = getEntry(p.id);
     const list = otEntries(e.list_id).filter((x) => !x.cancelled);
