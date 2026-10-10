@@ -455,8 +455,6 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .otfound { margin-top: .6rem; }
 .otfound .otcard span { display: block; }
 .team { margin-top: .3rem; }
-.scrub { margin-top: .4rem; }
-.scrubbtn { width: 100%; text-align: left; background: var(--card); border: 1px dashed var(--line); border-radius: 8px; padding: .45rem .6rem; font-size: .85rem; }
 .scrubgrid { margin-top: .4rem; display: grid; gap: .35rem; }
 .slabel { font-size: .75rem; font-weight: 600; color: var(--muted); margin-top: .2rem; }
 .stiles { display: flex; flex-wrap: wrap; gap: .35rem; }
@@ -471,3 +469,7 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .reposted { color: var(--muted); margin: .2rem 0 .4rem; }
 .otlog td:nth-child(6), .otlog td:nth-child(7) { min-width: 15rem; }
 .otlog td:nth-child(2) { white-space: nowrap; }
+.otextra { margin-top: .4rem; }
+.otextrabtns { margin-top: .4rem; }
+.scrubgrid .btns { align-items: center; }
+.scrubgrid .btns .grow { flex: 1; }

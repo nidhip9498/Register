@@ -569,8 +569,7 @@ const Store = (() => {
     const lists = new Set(all('otlist').filter((l) => l.date === day).map((l) => l.id));
     return all('otentry').find((e) => !e.cancelled && lists.has(e.list_id) && (e.admission_id === a.id || (a.ip_no && (e.uhid || '').toLowerCase() === a.ip_no.toLowerCase())));
   }
-  function surgeryFromOtList(a) {
-    const day = otDay();
+  function surgeryFromOtList(a, day = otDay()) {
     if (!otEntryOn(a, day)) return null;
     const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
     const dates = keys.map((k) => a[k]).filter(Boolean);
@@ -832,7 +831,7 @@ const Store = (() => {
   });
   route('GET', '/api/otlists/:id', ANY, ({ params: p }) => {
     const l = getOtList(p.id);
-    return { ...l, created_by: userName(l.created_by), updated_by: l.updated_by ? userName(l.updated_by) : '', edits: (l.edits || []).map((x) => ({ ...x, by: userName(x.by) })), entries: otEntries(l.id).map((e) => ({ ...e, by: userName(e.created_by) })) };
+    return { ...l, created_by: userName(l.created_by), updated_by: l.updated_by ? userName(l.updated_by) : '', edits: (l.edits || []).map((x) => ({ ...x, by: userName(x.by) })), entries: otEntries(l.id).map((e) => ({ ...e, by: userName(e.created_by), findings: otFindings(e, l) })) };
   });
   route('PUT', '/api/otlists/:id', ANY, ({ body, params: p }) => {
     const l = getOtList(p.id);
@@ -909,10 +908,43 @@ const Store = (() => {
   });
 
   // Everyone's logbook: the operations they scrubbed in for, from the OT findings posts.
+  // OT findings for one patient on one list: posted from the OT list, or from Rounds on that day.
+  function otFindings(e, l) {
+    return all('ot').filter((o) => o.entry_id === e.id || (!o.entry_id && e.admission_id && o.admission_id === e.admission_id && (o.day || o.at.slice(0, 10)) === l.date))
+      .sort((x, y) => (x.at < y.at ? -1 : 1)).map((o) => ({ id: o.id, text: o.text, at: o.at, by: userName(o.by), mine: o.by === currentUser.id }));
+  }
+  route('POST', '/api/otentries/:id/findings', EDITORS, ({ body, params: p }) => {
+    const e = getEntry(p.id), l = getOtList(e.list_id);
+    const text = str(body.text, 3000);
+    if (!text) throw new HttpError(400, 'Type something first');
+    if (l.date > today()) throw new HttpError(400, 'This list is for a later day');
+    const a = e.admission_id && get(e.admission_id);
+    // Admitted patients' findings also show in Rounds and the ward's OT alerts; day-care findings stay with the OT list.
+    put('ot:' + uuid(), 'ot', { admission_id: a ? a.id : null, entry_id: e.id, text, by: currentUser.id, at: stamp(), day: l.date });
+    audit('OT note', e.name);
+    return { ok: true, surgery: a && !e.cancelled ? surgeryFromOtList(a, l.date) : null };
+  });
+  route('PUT', '/api/otentries/:id/scrub', ANY, ({ body, params: p }) => {
+    const e = getEntry(p.id);
+    const scrub = (Array.isArray(body.scrub) ? body.scrub : []).map((x) => str(x, 60)).filter((x, i, l) => x && l.indexOf(x) === i).slice(0, 10);
+    put(e.id, 'otentry', { ...strip(e), scrub, updated_by: currentUser.id, updated_at: stamp() });
+    touchOtList(e.list_id, `set the scrub team for ${e.name}`);
+    return { ok: true };
+  });
+
   route('GET', '/api/otlog', ANY, ({ query }) => {
     const who = str(query.who, 60).toLowerCase();
     if (!who) return [];
     const rows = [];
+    // From the scrub team on each OT list entry…
+    for (const e of all('otentry')) {
+      const i = e.cancelled ? -1 : (e.scrub || []).findIndex((x) => x.toLowerCase() === who);
+      const l = i >= 0 && get(e.list_id);
+      if (!l) continue;
+      const a = e.admission_id && get(e.admission_id);
+      rows.push({ id: e.id, list_id: l.id, admission_id: a ? a.id : '', date: l.date, ot: l.ot, name: e.name, uhid: e.uhid, age: e.age, dob: a && a.dob, sex: e.sex, diagnosis: e.diagnosis, surgery: e.surgery, role: i + 1, team: e.scrub });
+    }
+    // …and any posted with findings from Rounds earlier.
     for (const o of all('ot')) {
       const i = (o.scrub || []).findIndex((x) => x.toLowerCase() === who);
       const a = i >= 0 && get(o.admission_id);
@@ -921,7 +953,7 @@ const Store = (() => {
     }
     return rows.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
   });
-  route('GET', '/api/otpeople', ANY, () => [...new Set(all('ot').flatMap((o) => o.scrub || []))]);
+  route('GET', '/api/otpeople', ANY, () => [...new Set([...all('otentry'), ...all('ot')].flatMap((o) => o.scrub || []))]);
   route('POST', '/api/otentries/:id/move', ANY, ({ body, params: p }) => {
     const e = getEntry(p.id);
     const list = otEntries(e.list_id).filter((x) => !x.cancelled);

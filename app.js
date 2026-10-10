@@ -695,49 +695,43 @@ function myInitials() {
 }
 
 // Tap the people who scrubbed in, in order: 1 operating surgeon, 2 first assistant, 3 second assistant… Opens in place, no pop-up.
-function scrubPicker() {
-  let team = [];
+function scrubPicker(initial, onSave) {
+  let team = [...(initial || [])];
   const known = new Set([...SURGEONS, ...SR_INITIALS].map(([i]) => i));
-  const summary = h('button', { type: 'button', class: 'scrubbtn', onclick: () => { grid.hidden = !grid.hidden; } });
-  const surgery = h('input', { placeholder: 'Surgery done (taken from the OT list if left blank)' });
   const addIn = h('input', { placeholder: 'Name of the person', onkeydown: (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } } });
   const add = () => { const v = addIn.value.trim(); if (v && !team.includes(v)) team.push(v); addIn.value = ''; addRow.hidden = true; draw(); };
   const addRow = h('div', { class: 'saddrow' }, addIn, h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add'));
   addRow.hidden = true;
   const grid = h('div', { class: 'scrubgrid' });
-  grid.hidden = true;
   const tile = (i) => { const n = team.indexOf(i) + 1; return h('button', { type: 'button', class: 'stile' + (n ? ' on' : ''), title: personName(i), onclick: () => { if (n) team.splice(n - 1, 1); else team.push(i); draw(); } },
     n ? h('span', { class: 'snum' }, n) : null, i); };
-  const draw = () => {
-    summary.replaceChildren(h('b', {}, 'Scrubbed in: '), team.length ? team.map((x, k) => `${k + 1} ${x}`).join(' · ') : 'tap to choose');
-    grid.replaceChildren(
-      h('small', { class: 'muted' }, 'Tap in order: 1 operating surgeon, 2 first assistant, 3 second assistant… Tap again to remove.'),
-      h('div', { class: 'slabel' }, 'Consultants'), h('div', { class: 'stiles' }, SURGEONS.map(([i]) => tile(i))),
-      h('div', { class: 'slabel' }, 'Residents'), h('div', { class: 'stiles' }, SR_INITIALS.map(([i]) => tile(i)), team.filter((x) => !known.has(x)).map(tile),
-        h('button', { type: 'button', class: 'stile add', title: 'Someone else', onclick: () => { addRow.hidden = false; addIn.focus(); } }, '+')),
-      addRow, surgery);
-  };
+  const draw = () => grid.replaceChildren(
+    h('small', { class: 'muted' }, 'Tap in order: 1 operating surgeon, 2 first assistant, 3 second assistant… Tap again to remove.'),
+    h('div', { class: 'slabel' }, 'Consultants'), h('div', { class: 'stiles' }, SURGEONS.map(([i]) => tile(i))),
+    h('div', { class: 'slabel' }, 'Residents'), h('div', { class: 'stiles' }, SR_INITIALS.map(([i]) => tile(i)), team.filter((x) => !known.has(x)).map(tile),
+      h('button', { type: 'button', class: 'stile add', title: 'Someone else', onclick: () => { addRow.hidden = false; addIn.focus(); } }, '+')),
+    addRow,
+    h('div', { class: 'btns' }, h('span', { class: 'small grow' }, team.length ? team.map((x, k) => `${k + 1} ${x}`).join(' · ') : 'No one chosen'),
+      h('button', { type: 'button', class: 'primary small', onclick: () => onSave(team.slice()) }, 'Save team')));
   draw();
-  return { el: h('div', { class: 'scrub' }, summary, grid), team: () => team.slice(), surgery: () => surgery.value.trim() };
+  return grid;
 }
 
+const postedText = (r) => { const s = r && r.surgery; return !s || s.already ? 'Posted' : s.full ? 'Posted. Three surgery dates are already filled, so this one was not added.' : `Posted. ${fmtDate(s.date)} saved as surgery ${s.n} because the patient was on that day's OT list. POD counts from it.`; };
 function otBox(a, onChanged) {
   const ta = h('textarea', { rows: 2, placeholder: 'Type OT findings or instructions for the ward…' });
-  const scrub = scrubPicker();
   const post = async () => {
-    if (!ta.value.trim() && !scrub.team().length) return;
+    if (!ta.value.trim()) return;
     try {
-      const r = await api('POST', '/api/ot/' + a.id, { text: ta.value, scrub: scrub.team(), surgery: scrub.surgery() });
-      const s = r && r.surgery;
-      toast(!s || s.already ? 'Posted' : s.full ? 'Posted. Three surgery dates are already filled, so this one was not added.' : `Posted. ${fmtDate(s.date)} saved as surgery ${s.n} because the patient was on that day's OT list. POD counts from it.`);
+      const r = await api('POST', '/api/ot/' + a.id, { text: ta.value });
+      toast(postedText(r));
       onChanged();
     } catch (e) { toast(e.message, true); }
   };
   return h('div', { class: 'ot' },
     h('div', { class: 'othead' }, 'OT findings & instructions'),
     a.ot.length ? otList(a.ot, onChanged) : null,
-    h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post')),
-    scrub.el);
+    h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post')));
 }
 
 function patientCard(a, date, refresh) {
@@ -1384,7 +1378,10 @@ async function otListView(main, id) {
       [h('dt', {}, 'Surgery'), h('dd', {}, e.surgery || h('span', { class: 'warntext' }, 'Not filled yet'))],
       e.consultant && [h('dt', {}, 'Consultant'), h('dd', {}, fullNames(e.consultant))],
       e.blood && [h('dt', {}, 'Blood'), h('dd', {}, e.blood)],
-      e.special && [h('dt', {}, 'Special req'), h('dd', { class: 'instr' }, e.special)]),
+      e.special && [h('dt', {}, 'Special req'), h('dd', { class: 'instr' }, e.special)],
+      (e.scrub || []).length ? [h('dt', {}, 'Scrub team'), h('dd', {}, e.scrub.map((x, k) => `${x} (${roleShort(k + 1)})`).join(', '))] : null),
+    e.findings.length ? h('div', { class: 'ot' }, h('div', { class: 'othead' }, 'OT findings & instructions'), otList(e.findings, reload)) : null,
+    otExtras(l, e, reload),
     h('div', { class: 'btns' },
       h('button', { class: 'ghost small', onclick: () => otEntryModal(l, e, reload) }, 'Edit'),
       h('button', { class: 'ghost small', disabled: i === 0, onclick: () => move(e, 'up'), 'aria-label': 'Move up' }, '↑'),
@@ -1421,6 +1418,31 @@ async function otListView(main, id) {
     sheet);
 }
 
+// Scrub team and OT findings for one patient on the list; each opens in place under the card.
+function otExtras(l, e, reload) {
+  const box = h('div', { class: 'otextra' });
+  const open = (what) => {
+    if (box.dataset.open === what) { box.dataset.open = ''; box.replaceChildren(); return; }
+    box.dataset.open = what;
+    if (what === 'scrub') box.replaceChildren(scrubPicker(e.scrub, async (team) => {
+      try { await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast('Scrub team saved'); reload(); } catch (x) { toast(x.message, true); }
+    }));
+    else {
+      const ta = h('textarea', { rows: 2, placeholder: 'Type OT findings or instructions for the ward…' });
+      box.replaceChildren(h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: async () => {
+        if (!ta.value.trim()) return;
+        try { const r = await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/findings`, { text: ta.value }); toast(postedText(r)); reload(); } catch (x) { toast(x.message, true); }
+      } }, 'Post')));
+      ta.focus();
+    }
+  };
+  return h('div', {},
+    h('div', { class: 'btns otextrabtns' },
+      h('button', { class: 'ghost small', onclick: () => open('scrub') }, (e.scrub || []).length ? 'Edit scrub team' : 'Add scrub team'),
+      canEdit() && l.date <= S.meta.today && h('button', { class: 'ghost small', onclick: () => open('findings') }, 'Post OT findings')),
+    box);
+}
+
 // OT cancelled for the day: put the patient on another day's (or another OT's) list.
 function repostModal(l, e) {
   let pick = l.ot;
@@ -1449,7 +1471,7 @@ function admitFromOt(e, onDone) {
   });
 }
 
-// ---------- OT Log: each person's logbook from the scrub teams posted with OT findings ----------
+// ---------- OT Log: each person's logbook from the scrub teams added on OT lists ----------
 async function otLogView(main, who) {
   who = who || myInitials() || SURGEONS[0][0];
   const [people, rows] = await Promise.all([api('GET', '/api/otpeople'), api('GET', '/api/otlog?who=' + encodeURIComponent(who))]);
@@ -1467,10 +1489,10 @@ async function otLogView(main, who) {
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Log'),
       h('div', { class: 'actions' }, h('label', { class: 'inline' }, 'Logbook of ', sel), h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
     h('h2', { class: 'printonly' }, title),
-    h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : 'No operations logged yet. Choose who scrubbed in when posting OT findings in Rounds.'),
+    h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : 'No operations logged yet. Use Add scrub team on a patient in OT Lists.'),
     rows.length ? h('div', { class: 'tablewrap' }, h('table', { class: 'list print otlog' },
       h('thead', {}, h('tr', {}, ['#', 'Date', 'Name', 'UHID', 'Age / Sex', 'Diagnosis', 'Surgery', 'Role', 'Team'].map((t) => h('th', {}, t)))),
-      h('tbody', {}, rows.map((r, i) => h('tr', { class: 'clickable', onclick: () => { location.hash = 'patient/' + r.admission_id; } },
+      h('tbody', {}, rows.map((r, i) => h('tr', { class: 'clickable', onclick: () => { location.hash = r.list_id ? 'otlist/' + encodeURIComponent(r.list_id) : 'patient/' + r.admission_id; } },
         h('td', {}, i + 1), h('td', {}, fmtDate(r.date)), h('td', {}, h('b', {}, r.name)), h('td', {}, r.uhid || ''), h('td', {}, ageSex(r, r.date)),
         h('td', {}, r.diagnosis), h('td', {}, r.surgery), h('td', {}, roleName(r.role)), h('td', { class: 'muted' }, r.team.join(', '))))))) : null);
 }
