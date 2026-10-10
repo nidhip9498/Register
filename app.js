@@ -402,6 +402,7 @@ async function registerView(main, mode) {
   const wardSel = wards.length > 1 && h('select', { onchange: (e) => { S.filters.ward = e.target.value; drawGrid(); } },
     h('option', { value: '' }, 'All wards'), wards.map((w) => h('option', { value: w }, wardTitle(w))));
   if (wardSel) wardSel.value = wardFilter();
+  const alerts = h('div', {});
   const emptyToggle = h('label', { class: 'check' },
     h('input', { type: 'checkbox', checked: S.filters.emptyOnly, onchange: (e) => { S.filters.emptyOnly = e.target.checked; drawGrid(); } }), 'Show empty beds');
   const search = h('input', { type: 'search', placeholder: 'Find bed, name, UHID…', value: S.filters.q, oninput: (e) => { S.filters.q = e.target.value; drawGrid(); } });
@@ -418,6 +419,7 @@ async function registerView(main, mode) {
         canEdit() && h('button', { class: 'primary', onclick: () => admitModal(null, null, { icu: icuMode }) }, icuMode ? '+ Admit to ICU' : '+ Admit'),
         !icuMode && h('button', { class: 'ghost', onclick: () => shiftsModal() }, 'Bed shifts'),
         wards.map((w) => h('a', { class: 'button ghost', href: `#print/${date}/${w}` }, 'Print ' + w)))),
+    alerts,
     h('h2', { class: 'daytitle' }, icuMode ? 'ICU Register · ' : 'Ward Register · ', fmtDay(date)));
 
   const summary = h('div', { class: 'summary' });
@@ -429,6 +431,7 @@ async function registerView(main, mode) {
   S.dirty.clear();
 
   const inBed = (bed) => data.admissions.filter((a) => a.bed_on_date === bed && a.discharge_date !== date);
+  drawOtAlerts(alerts, data.admissions, (a) => bedPanel(a.bed_on_date));
 
   function drawGrid() {
     const allBeds = sections.flatMap((s) => s.beds);
@@ -581,6 +584,28 @@ async function shiftsModal() {
           edit && exec)),
       sheet)));
   draw();
+}
+
+// New OT findings & instructions posted by others, shown under the search bar until marked as read.
+// What each person has read is remembered on their own device.
+function otSeenKey() { return 'ward-ot-seen:' + (S.user && S.user.id); }
+function otSeen() { try { return localStorage.getItem(otSeenKey()) || ''; } catch { return ''; } }
+const localStamp = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
+function drawOtAlerts(box, admissions, open) {
+  const since = otSeen() || localStamp(new Date(Date.now() - 24 * 3600e3)); // first time on this device: the last day
+  const fresh = admissions.filter((a) => !a.discharge_date)
+    .flatMap((a) => (a.ot || []).filter((o) => !o.mine && o.at > since).map((o) => ({ a, o })))
+    .sort((x, y) => (x.o.at < y.o.at ? 1 : -1));
+  if (!fresh.length) return box.replaceChildren();
+  const markRead = () => { try { localStorage.setItem(otSeenKey(), fresh[0].o.at); } catch {} box.replaceChildren(); };
+  box.replaceChildren(h('div', { class: 'otalert' },
+    h('div', { class: 'otalert-head' }, h('b', {}, `New OT findings & instructions · ${fresh.length}`),
+      h('button', { type: 'button', class: 'ghost small', onclick: markRead }, 'Mark as read')),
+    h('ul', {}, fresh.slice(0, 8).map(({ a, o }) => h('li', {},
+      h('a', { href: 'javascript:void 0', onclick: () => open(a) }, h('b', {}, a.bed_on_date), ` ${a.name}`),
+      h('span', { class: 'muted small' }, ` · ${o.by || ''} · ${fmtDate(o.at.slice(0, 10))} ${o.at.slice(11, 16)}`),
+      h('div', { class: 'otalert-text' }, o.text)))),
+    fresh.length > 8 && h('p', { class: 'muted small' }, `and ${fresh.length - 8} more`)));
 }
 
 // List of empty beds, one column per ward (6B, 6A).
@@ -1135,7 +1160,7 @@ async function printView(main, date, ward) {
     h('h2', {}, ward ? `${ward} · ` : '', icuWard ? 'ICU register · ' : 'Ward register · ', fmtDay(date)),
     ...S.meta.sections.map((sec) => ({ ...sec, beds: ward ? sec.beds.filter((b) => wardOf(b) === ward) : sec.beds })).filter((sec) => sec.beds.length).map((sec) => h('section', { class: 'printsec' }, h('h3', {}, sec.name),
       h('table', { class: 'print' },
-        h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'Unit', 'Diagnosis / procedure', 'Day', 'Morning round', 'Short notes'].map((t) => h('th', {}, t)))),
+        h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'Unit', 'Diagnosis / procedure', 'POD', 'Morning round', 'Short notes'].map((t) => h('th', {}, t)))),
         h('tbody', {}, sec.beds.map((bed) => {
           const here = byBed[bed] || [];
           if (!here.length) return h('tr', { class: 'emptyrow' }, h('td', {}, bed), h('td', { colspan: 6 }, ''));
@@ -1144,7 +1169,7 @@ async function printView(main, date, ward) {
             h('td', {}, h('b', {}, a.name), h('br'), ageSex(a, date), a.ip_no ? ` · ${a.ip_no}` : ''),
             h('td', {}, a.unit),
             h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'muted' }, a.procedure_done) : null),
-            h('td', {}, stayBadges(a, date).map((b) => b.textContent).join(', ')),
+            h('td', {}, podText(a, date).replace('POD ', '')),
             h('td', {}, a.round ? summariseVals(a.round.vals, monitorFor(a), a) : '', a.round && a.round.remarks ? h('div', {}, a.round.remarks) : null),
             h('td', {}, a.instructions, a.unit_note ? h('div', {}, h('b', {}, `${a.unit}: `), a.unit_note) : null)));
         }))))));

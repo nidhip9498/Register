@@ -385,3 +385,9 @@ table.status td:last-child { white-space: pre-line; }
 .lockscreen .auth .ghost { margin-top: .4rem; }
 body.locked #app, body.locked #modal-root { visibility: hidden; }
 @media print { body.locked #app, body.locked #modal-root { display: none !important; } }
+
+.otalert { border: 1.5px solid var(--warn); background: var(--warn-soft); border-radius: 10px; padding: .6rem .8rem; margin-bottom: 1rem; }
+.otalert-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
+.otalert ul { list-style: none; padding: 0; margin: .4rem 0 0; }
+.otalert li { padding: .35rem 0; border-top: 1px solid var(--line); }
+.otalert-text { white-space: pre-line; }
