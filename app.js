@@ -1265,7 +1265,7 @@ async function otHomeView(main) {
   const today = S.meta.today;
   const [lists, kinds] = await Promise.all([api('GET', '/api/otlists?from=' + today), api('GET', '/api/otrooms')]);
   const todays = lists.filter((l) => l.date === today).sort((x, y) => (x.ot < y.ot ? -1 : 1));
-  const later = lists.filter((l) => l.date > today).sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.ot < y.ot ? -1 : 1));
+  const full = await Promise.all(todays.map((l) => api('GET', '/api/otlists/' + encodeURIComponent(l.id))));
   main.append(
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Lists'),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal() }, '+ Create list'))),
@@ -1273,8 +1273,27 @@ async function otHomeView(main) {
       h('b', {}, otName(ot))))),
     otSearchBox(),
     h('h3', {}, 'Today · ', fmtDay(today)),
-    todays.length ? h('div', { class: 'otcards' }, todays.map((l) => listCard(l))) : h('p', { class: 'muted' }, 'No lists for today yet.'),
-    ...(later.length ? [h('h3', {}, 'Coming up'), h('div', { class: 'otcards' }, later.slice(0, 12).map((l) => listCard(l)))] : []));
+    full.length ? h('div', { class: 'otmonths' }, full.map(todayDrop)) : h('p', { class: 'muted' }, 'No lists for today yet.'));
+}
+
+// Today's list of one OT as a dropdown; each patient opens in turn to show their details.
+function todayDrop(l) {
+  const live = l.entries.filter((e) => !e.cancelled);
+  return h('details', { class: 'otmonth' },
+    h('summary', {}, h('b', {}, otName(l.ot)), h('span', { class: 'muted small' }, ' · ' + [fullNames(l.surgeon), `${live.length} patient${live.length === 1 ? '' : 's'}`].filter(Boolean).join(' · '))),
+    h('div', { class: 'otsub' },
+      live.length ? live.map((e, i) => h('details', { class: 'otpt' },
+        h('summary', {}, h('b', {}, `${i + 1}. ${e.name}`), h('span', { class: 'muted small' }, ` · ${bedLabel(e.bed)}${e.done || e.surgery ? ' · ' + (e.done || e.surgery) : ''}`)),
+        h('dl', { class: 'otfacts' },
+          [h('dt', {}, 'Age / Sex'), h('dd', {}, [e.age, e.sex].filter(Boolean).join(' / ') || '—')],
+          e.uhid && [h('dt', {}, 'UHID'), h('dd', {}, e.uhid)],
+          e.diagnosis && [h('dt', {}, 'Diagnosis'), h('dd', {}, e.diagnosis)],
+          [h('dt', {}, 'Surgery'), h('dd', {}, e.surgery || h('span', { class: 'warntext' }, 'Not filled yet'))],
+          e.done && [h('dt', {}, 'Done'), h('dd', {}, h('b', {}, e.done))],
+          e.consultant && [h('dt', {}, 'Consultant'), h('dd', {}, fullNames(e.consultant))],
+          (e.scrub || []).length ? [h('dt', {}, 'Scrub team'), h('dd', {}, h('b', {}, e.scrub.join('/')))] : null,
+          e.special && [h('dt', {}, 'Special req'), h('dd', { class: 'instr' }, e.special)]))) : h('p', { class: 'muted small' }, 'No patients yet.'),
+      h('a', { class: 'button ghost small', href: '#otlist/' + encodeURIComponent(l.id) }, 'Open full list')));
 }
 
 async function otDatesView(main, ot) {
