@@ -597,15 +597,24 @@ function drawOtAlerts(box, admissions, open) {
     .flatMap((a) => (a.ot || []).filter((o) => !o.mine && o.at > since).map((o) => ({ a, o })))
     .sort((x, y) => (x.o.at < y.o.at ? 1 : -1));
   if (!fresh.length) return box.replaceChildren();
-  const markRead = () => { try { localStorage.setItem(otSeenKey(), fresh[0].o.at); } catch {} box.replaceChildren(); };
-  box.replaceChildren(h('div', { class: 'otalert' },
-    h('div', { class: 'otalert-head' }, h('b', {}, `New OT findings & instructions · ${fresh.length}`),
-      h('button', { type: 'button', class: 'ghost small', onclick: markRead }, 'Mark as read')),
-    h('ul', {}, fresh.slice(0, 8).map(({ a, o }) => h('li', {},
-      h('a', { href: 'javascript:void 0', onclick: () => open(a) }, h('b', {}, a.bed_on_date), ` ${a.name}`),
-      h('span', { class: 'muted small' }, ` · ${o.by || ''} · ${fmtDate(o.at.slice(0, 10))} ${o.at.slice(11, 16)}`),
-      h('div', { class: 'otalert-text' }, o.text)))),
-    fresh.length > 8 && h('p', { class: 'muted small' }, `and ${fresh.length - 8} more`)));
+  // A small bar with a bell; opening it shows every new entry and marks them all as read.
+  const openList = () => {
+    try { localStorage.setItem(otSeenKey(), fresh[0].o.at); } catch {}
+    box.replaceChildren();
+    const root = document.getElementById('modal-root');
+    const close = () => root.replaceChildren();
+    root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
+      h('div', { class: 'modal card panel' },
+        h('div', { class: 'mhead' }, h('h2', {}, `🔔 OT findings & instructions · ${fresh.length}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+        h('ul', { class: 'otnotes' }, fresh.map(({ a, o }) => h('li', {},
+          h('a', { href: 'javascript:void 0', onclick: () => { close(); open(a); } }, h('b', {}, a.bed_on_date), ` ${a.name}`),
+          h('span', { class: 'muted small' }, ` · ${o.by || ''} · ${fmtDate(o.at.slice(0, 10))} ${o.at.slice(11, 16)}`),
+          h('div', { class: 'otalert-text' }, o.text)))))));
+  };
+  box.replaceChildren(h('button', { type: 'button', class: 'otbar', onclick: openList },
+    h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
+    h('b', {}, `${fresh.length} new OT finding${fresh.length === 1 ? '' : 's'} & instructions`),
+    h('span', { class: 'muted small' }, 'Tap to view')));
 }
 
 // List of empty beds, one column per ward (6B, 6A).

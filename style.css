@@ -386,8 +386,10 @@ table.status td:last-child { white-space: pre-line; }
 body.locked #app, body.locked #modal-root { visibility: hidden; }
 @media print { body.locked #app, body.locked #modal-root { display: none !important; } }
 
-.otalert { border: 1.5px solid var(--warn); background: var(--warn-soft); border-radius: 10px; padding: .6rem .8rem; margin-bottom: 1rem; }
-.otalert-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
-.otalert ul { list-style: none; padding: 0; margin: .4rem 0 0; }
-.otalert li { padding: .35rem 0; border-top: 1px solid var(--line); }
+.otbar { display: flex; align-items: center; gap: .6rem; width: 100%; text-align: left; border: 1.5px solid var(--warn); background: var(--warn-soft); color: var(--text, inherit); border-radius: 10px; padding: .55rem .8rem; margin-bottom: 1rem; cursor: pointer; }
+.otbar .bell { font-size: 1.2rem; animation: ring 1.6s ease-in-out 2; transform-origin: top center; }
+.otbar .muted { margin-left: auto; }
+@keyframes ring { 0%, 100% { transform: rotate(0); } 15% { transform: rotate(16deg); } 30% { transform: rotate(-14deg); } 45% { transform: rotate(8deg); } 60% { transform: rotate(-4deg); } }
+.otnotes { list-style: none; padding: 0; margin: 0; }
+.otnotes li { padding: .5rem 0; border-top: 1px solid var(--line); }
 .otalert-text { white-space: pre-line; }
