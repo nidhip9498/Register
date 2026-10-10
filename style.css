@@ -454,3 +454,20 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .otsearch input { width: 100%; max-width: 420px; }
 .otfound { margin-top: .6rem; }
 .otfound .otcard span { display: block; }
+.team { margin-top: .3rem; }
+.scrub { margin-top: .4rem; }
+.scrubbtn { width: 100%; text-align: left; background: var(--card); border: 1px dashed var(--line); border-radius: 8px; padding: .45rem .6rem; font-size: .85rem; }
+.scrubgrid { margin-top: .4rem; display: grid; gap: .35rem; }
+.slabel { font-size: .75rem; font-weight: 600; color: var(--muted); margin-top: .2rem; }
+.stiles { display: flex; flex-wrap: wrap; gap: .35rem; }
+.stile { position: relative; min-width: 3.1rem; padding: .5rem .4rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); font-weight: 700; font-size: .85rem; }
+.stile.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.stile .snum { position: absolute; top: -7px; right: -7px; background: var(--text); color: var(--bg); border-radius: 50%; width: 18px; height: 18px; font-size: .68rem; line-height: 18px; text-align: center; }
+.stile.add { border-style: dashed; color: var(--muted); font-size: 1.1rem; }
+.saddrow { display: flex; gap: .4rem; }
+.saddrow input { flex: 1; }
+.otentry.cancelled { opacity: .65; }
+.otentry.cancelled b { text-decoration: line-through; }
+.reposted { color: var(--muted); margin: .2rem 0 .4rem; }
+.otlog td:nth-child(6), .otlog td:nth-child(7) { min-width: 15rem; }
+.otlog td:nth-child(2) { white-space: nowrap; }

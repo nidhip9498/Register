@@ -556,19 +556,22 @@ const Store = (() => {
   function otByAdmission() {
     const out = {};
     for (const o of all('ot').sort((x, y) => (x.at < y.at ? -1 : 1))) {
-      (out[o.admission_id] = out[o.admission_id] || []).push({ id: o.id, text: o.text, at: o.at, by: userName(o.by), mine: !!currentUser && o.by === currentUser.id });
+      (out[o.admission_id] = out[o.admission_id] || []).push({ id: o.id, text: o.text, at: o.at, scrub: o.scrub || [], surgery: o.surgery || '', by: userName(o.by), mine: !!currentUser && o.by === currentUser.id });
     }
     return out;
   }
   // Findings posted for a patient who is on that day's OT list mark that day as a surgery date:
   // the first one is surgery 1, a re-posting later becomes surgery 2, then 3 (POD counts from each).
   // Posts in the small hours (before 6 AM) count for the previous day's list. The dates stay editable.
-  function surgeryFromOtList(a) {
-    const now = new Date(), d = today();
-    const day = now.getHours() < 6 ? ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)) : d;
+  function otDay() { const now = new Date(); return now.getHours() < 6 ? ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)) : today(); }
+  // This patient's (not cancelled) entry on any OT list of that day.
+  function otEntryOn(a, day) {
     const lists = new Set(all('otlist').filter((l) => l.date === day).map((l) => l.id));
-    const onList = all('otentry').some((e) => lists.has(e.list_id) && (e.admission_id === a.id || (a.ip_no && (e.uhid || '').toLowerCase() === a.ip_no.toLowerCase())));
-    if (!onList) return null;
+    return all('otentry').find((e) => !e.cancelled && lists.has(e.list_id) && (e.admission_id === a.id || (a.ip_no && (e.uhid || '').toLowerCase() === a.ip_no.toLowerCase())));
+  }
+  function surgeryFromOtList(a) {
+    const day = otDay();
+    if (!otEntryOn(a, day)) return null;
     const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
     const dates = keys.map((k) => a[k]).filter(Boolean);
     if (dates.includes(day)) return { n: dates.indexOf(day) + 1, date: day, already: true };
@@ -581,11 +584,15 @@ const Store = (() => {
   route('POST', '/api/ot/:id', EDITORS, ({ body, params: p }) => {
     const a = getAdmission(p.id);
     const text = str(body.text, 3000);
-    if (!text) throw new HttpError(400, 'Type something first');
-    put('ot:' + uuid(), 'ot', { admission_id: a.id, text, by: currentUser.id, at: stamp() });
+    // Who scrubbed in, in order: operating surgeon, first assistant, second assistant…
+    const scrub = (Array.isArray(body.scrub) ? body.scrub : []).map((x) => str(x, 60)).filter((x, i, l) => x && l.indexOf(x) === i).slice(0, 10);
+    if (!text && !scrub.length) throw new HttpError(400, 'Type something first');
+    const day = otDay();
+    let surgery = str(body.surgery, 300);
+    if (scrub.length && !surgery) { const ent = otEntryOn(a, day); surgery = (ent && ent.surgery) || a.procedure_done || ''; }
+    put('ot:' + uuid(), 'ot', { admission_id: a.id, text, by: currentUser.id, at: stamp(), day, scrub, surgery });
     audit('OT note', a.name);
-    const surgery = surgeryFromOtList(a);
-    return { ok: true, surgery };
+    return { ok: true, surgery: surgeryFromOtList(a) };
   });
   route('DELETE', '/api/ot/:oid', ANY, ({ params: p }) => {
     const o = get(p.oid);
@@ -786,7 +793,7 @@ const Store = (() => {
       bed: current ? current.bed : '', admission_id: current ? current.id : '', blood: s.blood || '', special: s.special || '',
     };
   }
-  const listOut = (l) => ({ ...l, count: otEntries(l.id).length });
+  const listOut = (l) => ({ ...l, count: otEntries(l.id).filter((e) => !e.cancelled).length });
 
   route('GET', '/api/otlists', ANY, ({ query }) => {
     let lists = all('otlist');
@@ -807,18 +814,21 @@ const Store = (() => {
     audit('mark OT', `OT ${p.ot} ${kind}`);
     return { ok: true, kind };
   });
+  function newOtList(ot, date, body = {}) {
+    // The surgeon starts from the last list of the same OT. KEEP OT WARM is printed on every list, so the note starts empty.
+    const last = all('otlist').filter((l) => l.ot === ot).sort((x, y) => (x.date < y.date ? 1 : -1))[0];
+    const id = 'otlist:' + uuid();
+    put(id, 'otlist', { ot, date, surgeon: body.surgeon != null ? str(body.surgeon, 120) : (last ? last.surgeon : ''), note: body.note != null ? str(body.note, 200) : '', kind: KINDS.includes(body.kind) ? body.kind : roomKind(ot), created_by: currentUser.id, created_at: stamp() });
+    audit('create OT list', `OT ${ot} ${date}`);
+    return get(id);
+  }
   route('POST', '/api/otlists', ANY, ({ body }) => {
     const ot = str(body.ot, 4), date = body.date;
     if (!OTS.includes(ot)) throw new HttpError(400, 'Pick an OT');
     if (!isDate(date)) throw new HttpError(400, 'Pick a date');
     const have = all('otlist').find((l) => l.ot === ot && l.date === date);
     if (have) return { ...listOut(have), existed: true };
-    // The surgeon starts from the last list of the same OT. KEEP OT WARM is printed on every list, so the note starts empty.
-    const last = all('otlist').filter((l) => l.ot === ot).sort((x, y) => (x.date < y.date ? 1 : -1))[0];
-    const id = 'otlist:' + uuid();
-    put(id, 'otlist', { ot, date, surgeon: body.surgeon != null ? str(body.surgeon, 120) : (last ? last.surgeon : ''), note: body.note != null ? str(body.note, 200) : '', kind: KINDS.includes(body.kind) ? body.kind : roomKind(ot), created_by: currentUser.id, created_at: stamp() });
-    audit('create OT list', `OT ${ot} ${date}`);
-    return listOut(get(id));
+    return listOut(newOtList(ot, date, body));
   });
   route('GET', '/api/otlists/:id', ANY, ({ params: p }) => {
     const l = getOtList(p.id);
@@ -858,9 +868,9 @@ const Store = (() => {
         age: ageFromDob(a.dob, l.date) || ageOn(a.age, a.admit_date || today(), l.date) || a.age, admission_id: a.id });
     }
     if (!f.name) throw new HttpError(400, 'Name is required');
-    const list = otEntries(l.id);
-    if (f.uhid && list.some((e) => (e.uhid || '').toLowerCase() === f.uhid.toLowerCase())) throw new HttpError(400, `UHID ${f.uhid} is already on this list`);
-    if (f.admission_id && list.some((e) => e.admission_id === f.admission_id)) throw new HttpError(400, `${f.name} is already on this list`);
+    const list = otEntries(l.id), live = list.filter((e) => !e.cancelled);
+    if (f.uhid && live.some((e) => (e.uhid || '').toLowerCase() === f.uhid.toLowerCase())) throw new HttpError(400, `UHID ${f.uhid} is already on this list`);
+    if (f.admission_id && live.some((e) => e.admission_id === f.admission_id)) throw new HttpError(400, `${f.name} is already on this list`);
     const id = 'otentry:' + uuid();
     put(id, 'otentry', { ...f, list_id: l.id, order: list.length ? Math.max(...list.map((e) => e.order || 0)) + 1 : 1, created_by: currentUser.id, created_at: stamp() });
     touchOtList(l.id, `added ${f.name}`);
@@ -876,9 +886,45 @@ const Store = (() => {
     touchOtList(e.list_id, `edited ${f.name}`);
     return { ok: true };
   });
+  // OT cancelled for the day: the entry stays on that list marked cancelled, and a copy goes on the new day's list.
+  route('POST', '/api/otentries/:id/repost', ANY, ({ body, params: p }) => {
+    const e = getEntry(p.id);
+    if (e.cancelled) throw new HttpError(400, `${e.name} has already been reposted`);
+    const ot = str(body.ot, 4), date = body.date, reason = str(body.reason, 200);
+    if (!OTS.includes(ot)) throw new HttpError(400, 'Pick an OT');
+    if (!isDate(date)) throw new HttpError(400, 'Pick a date');
+    const from = getOtList(e.list_id);
+    if (from.ot === ot && from.date === date) throw new HttpError(400, 'Pick another day or OT');
+    const l = all('otlist').find((x) => x.ot === ot && x.date === date) || newOtList(ot, date);
+    const live = otEntries(l.id).filter((x) => !x.cancelled);
+    if ((e.uhid && live.some((x) => (x.uhid || '').toLowerCase() === e.uhid.toLowerCase())) || (e.admission_id && live.some((x) => x.admission_id === e.admission_id))) throw new HttpError(400, `${e.name} is already on the OT ${ot} list for that day`);
+    const id = 'otentry:' + uuid();
+    put(id, 'otentry', { ...strip(e, 'order', 'created_by', 'created_at', 'updated_by', 'updated_at', 'reposted_from'), list_id: l.id,
+      order: live.length ? Math.max(...otEntries(l.id).map((x) => x.order || 0)) + 1 : 1, reposted_from: { ot: from.ot, date: from.date, reason }, created_by: currentUser.id, created_at: stamp() });
+    put(e.id, 'otentry', { ...strip(e), cancelled: true, cancel_reason: reason, reposted_to: { ot, date, list_id: l.id }, updated_by: currentUser.id, updated_at: stamp() });
+    touchOtList(from.id, `reposted ${e.name} to OT ${ot}, ${date.split('-').reverse().join('/')}`);
+    touchOtList(l.id, `added ${e.name} (reposted)`);
+    audit('repost OT', `${e.name} → OT ${ot} ${date}`);
+    return { list_id: l.id };
+  });
+
+  // Everyone's logbook: the operations they scrubbed in for, from the OT findings posts.
+  route('GET', '/api/otlog', ANY, ({ query }) => {
+    const who = str(query.who, 60).toLowerCase();
+    if (!who) return [];
+    const rows = [];
+    for (const o of all('ot')) {
+      const i = (o.scrub || []).findIndex((x) => x.toLowerCase() === who);
+      const a = i >= 0 && get(o.admission_id);
+      if (!a) continue;
+      rows.push({ id: o.id, admission_id: a.id, date: o.day || o.at.slice(0, 10), name: a.name, uhid: a.ip_no, age: a.age, dob: a.dob, sex: a.sex, diagnosis: a.diagnosis, surgery: o.surgery || a.procedure_done, role: i + 1, team: o.scrub });
+    }
+    return rows.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
+  });
+  route('GET', '/api/otpeople', ANY, () => [...new Set(all('ot').flatMap((o) => o.scrub || []))]);
   route('POST', '/api/otentries/:id/move', ANY, ({ body, params: p }) => {
     const e = getEntry(p.id);
-    const list = otEntries(e.list_id);
+    const list = otEntries(e.list_id).filter((x) => !x.cancelled);
     const i = list.findIndex((x) => x.id === e.id), j = i + (body.dir === 'up' ? -1 : 1);
     if (j < 0 || j >= list.length) return { ok: true };
     list.forEach((x, k) => { x.order = k + 1; });
