@@ -711,6 +711,12 @@ const Store = (() => {
   const OTS = ['11', '12', '13', '14', '15', '16'];
   const otEntries = (listId) => all('otentry').filter((e) => e.list_id === listId).sort((x, y) => (x.order || 0) - (y.order || 0));
   const getOtList = (id) => { const l = get(id); if (!l || !id.startsWith('otlist:')) throw new HttpError(404, 'List not found'); return l; };
+  // Any change to a list's patients counts as an edit of the list (shown as "last edited" on screen).
+  const touchOtList = (listId, what) => {
+    const l = get(listId); if (!l) return;
+    const at = stamp(), edits = [{ by: currentUser.id, at, what }, ...(l.edits || [])].slice(0, 5);
+    put(listId, 'otlist', { ...strip(l), updated_by: currentUser.id, updated_at: at, edits });
+  };
   // Ages like "2m", "12y", "6.5y", "2y 3m", "57d" moved on from the day they were written to another day.
   function ageOn(age, from, to) {
     const t = String(age || '').trim().toLowerCase();
@@ -775,20 +781,22 @@ const Store = (() => {
     if (!isDate(date)) throw new HttpError(400, 'Pick a date');
     const have = all('otlist').find((l) => l.ot === ot && l.date === date);
     if (have) return { ...listOut(have), existed: true };
-    // The heading (surgeon in charge) and note start from the last list of the same OT.
+    // The surgeon starts from the last list of the same OT. KEEP OT WARM is printed on every list, so the note starts empty.
     const last = all('otlist').filter((l) => l.ot === ot).sort((x, y) => (x.date < y.date ? 1 : -1))[0];
     const id = 'otlist:' + uuid();
-    put(id, 'otlist', { ot, date, surgeon: body.surgeon != null ? str(body.surgeon, 80) : (last ? last.surgeon : ''), note: body.note != null ? str(body.note, 200) : (last ? last.note : ''), created_by: currentUser.id, created_at: stamp() });
+    put(id, 'otlist', { ot, date, surgeon: body.surgeon != null ? str(body.surgeon, 120) : (last ? last.surgeon : ''), note: body.note != null ? str(body.note, 200) : '', created_by: currentUser.id, created_at: stamp() });
     audit('create OT list', `OT ${ot} ${date}`);
     return listOut(get(id));
   });
   route('GET', '/api/otlists/:id', ANY, ({ params: p }) => {
     const l = getOtList(p.id);
-    return { ...l, created_by: userName(l.created_by), entries: otEntries(l.id).map((e) => ({ ...e, by: userName(e.created_by) })) };
+    return { ...l, created_by: userName(l.created_by), updated_by: l.updated_by ? userName(l.updated_by) : '', edits: (l.edits || []).map((x) => ({ ...x, by: userName(x.by) })), entries: otEntries(l.id).map((e) => ({ ...e, by: userName(e.created_by) })) };
   });
   route('PUT', '/api/otlists/:id', ANY, ({ body, params: p }) => {
     const l = getOtList(p.id);
-    put(l.id, 'otlist', { ...strip(l), surgeon: str(body.surgeon, 80), note: str(body.note, 200) });
+    const surgeon = str(body.surgeon, 120), note = str(body.note, 200);
+    put(l.id, 'otlist', { ...strip(l), surgeon, note });
+    if (surgeon !== (l.surgeon || '') || note !== (l.note || '')) touchOtList(l.id, surgeon !== (l.surgeon || '') ? 'changed the surgeon' : 'changed the note');
     return { ok: true };
   });
   route('DELETE', '/api/otlists/:id', ANY, ({ params: p }) => {
@@ -806,7 +814,7 @@ const Store = (() => {
     if (body.admission_id && !body.name) {
       const a = getAdmission(body.admission_id);
       const known = (a.ip_no && lookupUhid(a.ip_no, l.date)) || {};
-      f = otEntryFields({ ...known, uhid: a.ip_no, name: a.name, sex: a.sex, bed: a.bed, diagnosis: a.diagnosis, surgery: known.surgery || a.procedure_done, consultant: a.unit,
+      f = otEntryFields({ ...known, uhid: a.ip_no, name: a.name, sex: a.sex, bed: a.bed, diagnosis: a.diagnosis, surgery: known.surgery || a.procedure_done, consultant: a.unit || l.surgeon,
         age: ageFromDob(a.dob, l.date) || ageOn(a.age, a.admit_date || today(), l.date) || a.age, admission_id: a.id });
     }
     if (!f.name) throw new HttpError(400, 'Name is required');
@@ -815,6 +823,7 @@ const Store = (() => {
     if (f.admission_id && list.some((e) => e.admission_id === f.admission_id)) throw new HttpError(400, `${f.name} is already on this list`);
     const id = 'otentry:' + uuid();
     put(id, 'otentry', { ...f, list_id: l.id, order: list.length ? Math.max(...list.map((e) => e.order || 0)) + 1 : 1, created_by: currentUser.id, created_at: stamp() });
+    touchOtList(l.id, `added ${f.name}`);
     audit('add to OT list', `${f.name} → OT ${l.ot} ${l.date}`);
     return { id };
   });
@@ -824,6 +833,7 @@ const Store = (() => {
     const f = otEntryFields({ ...e, ...body });
     if (!f.name) throw new HttpError(400, 'Name is required');
     put(e.id, 'otentry', { ...strip(e), ...f, updated_by: currentUser.id, updated_at: stamp() });
+    touchOtList(e.list_id, `edited ${f.name}`);
     return { ok: true };
   });
   route('POST', '/api/otentries/:id/move', ANY, ({ body, params: p }) => {
@@ -834,11 +844,13 @@ const Store = (() => {
     list.forEach((x, k) => { x.order = k + 1; });
     [list[i].order, list[j].order] = [list[j].order, list[i].order];
     for (const x of list) put(x.id, 'otentry', strip(x));
+    touchOtList(e.list_id, `moved ${e.name} ${body.dir === 'up' ? 'up' : 'down'}`);
     return { ok: true };
   });
   route('DELETE', '/api/otentries/:id', ANY, ({ params: p }) => {
     const e = getEntry(p.id);
     put(e.id, 'otentry', null);
+    touchOtList(e.list_id, `removed ${e.name}`);
     audit('remove from OT list', e.name);
     return { ok: true };
   });

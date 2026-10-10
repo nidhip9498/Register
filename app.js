@@ -1195,10 +1195,22 @@ const DAY_CARE = 'MCH2/PAR';
 const otName = (ot) => `OT ${ot}`;
 const bedLabel = (bed) => (!bed ? 'Bed not yet allotted' : bed.toUpperCase() === DAY_CARE ? 'Day care (MCH2/PAR)' : bed);
 const wardCol = (bed) => (!bed ? '' : /^MCH/i.test(bed) ? bed.toUpperCase() : 'MCH ' + bed);
+// Surgeons as printed on OT lists: always the formal name, never initials ("SN" is Dr Sachit Anand's unit in the ward).
+const SURGEONS = [['VJ', 'Dr Vishesh Jain'], ['SA', 'Dr Sandeep Agarwala'], ['AD', 'Dr Anjan Dhua'], ['DKY', 'Dr Devendra K Yadav'], ['PG', 'Dr Prabudh Goel'], ['AV', 'Dr Ajay Verma'], ['GD', 'Dr G Divya'], ['SN', 'Dr Sachit Anand']];
+const squash = (x) => x.toLowerCase().replace(/[^a-z]/g, '');
+const fullName = (x) => { const t = (x || '').trim(); const hit = t && SURGEONS.find(([i, n]) => i === t.toUpperCase() || squash(n) === squash(t)); return hit ? hit[1] : t; };
+const fullNames = (x) => (x || '').split('/').map(fullName).filter(Boolean).join('/');
+// A dropdown of the surgeons; a name typed in earlier that is not on the list is kept as its own choice.
+const surgeonSelect = (val, blank, extra = [], attrs = {}) => {
+  const names = [...extra, ...SURGEONS.map(([, n]) => n)].filter((n, i, a) => a.indexOf(n) === i);
+  if (val && !names.includes(val)) names.push(val);
+  return h('select', attrs, h('option', { value: '' }, blank), names.map((n) => h('option', { value: n, selected: n === val }, n)));
+};
+const stampText = (t) => (t ? `${fmtDate(t.slice(0, 10))}, ${t.slice(11, 16)}` : '');
 const shortDate = (d) => { const [y, m, day] = d.split('-'); return `${day}/${m}/${y.slice(2)}`; };
 const listCard = (l, withOt = true) => h('a', { class: 'otcard', href: '#otlist/' + encodeURIComponent(l.id) },
   h('b', {}, withOt ? `${otName(l.ot)} · ` : '', fmtDay(l.date)),
-  h('span', { class: 'muted small' }, [l.surgeon, `${l.count} patient${l.count === 1 ? '' : 's'}`].filter(Boolean).join(' · ')));
+  h('span', { class: 'muted small' }, [fullNames(l.surgeon), `${l.count} patient${l.count === 1 ? '' : 's'}`].filter(Boolean).join(' · ')));
 
 async function otHomeView(main) {
   const today = S.meta.today;
@@ -1249,19 +1261,24 @@ async function otListView(main, id) {
   let l;
   try { l = await api('GET', '/api/otlists/' + encodeURIComponent(id)); } catch (e) { main.append(h('p', { class: 'error' }, e.message), h('a', { href: '#ot' }, '‹ OT Lists')); return; }
   const reload = () => { if (location.hash === '#otlist/' + encodeURIComponent(id)) render(); };
-  const saveHead = async () => { try { await api('PUT', '/api/otlists/' + encodeURIComponent(id), { surgeon: surgeon.value, note: note.value }); l.surgeon = surgeon.value; l.note = note.value; drawSheet(); toast('Saved'); } catch (e) { toast(e.message, true); } };
-  const surgeon = h('input', { value: l.surgeon || '', placeholder: 'e.g. Dr. Vishesh Jain', onchange: saveHead });
-  const note = h('input', { value: l.note || '', placeholder: 'e.g. Keep OT warm', onchange: saveHead });
+  const surgeonValue = () => [surgeon.value, surgeon2.value].filter((n, i, a) => n && a.indexOf(n) === i).join('/');
+  const saveHead = async () => { try { await api('PUT', '/api/otlists/' + encodeURIComponent(id), { surgeon: surgeonValue(), note: note.value }); reload(); toast('Saved'); } catch (e) { toast(e.message, true); } };
+  const [s1, s2] = fullNames(l.surgeon).split('/');
+  const surgeon = surgeonSelect(s1 || '', '— Choose —', [], { onchange: saveHead });
+  const surgeon2 = surgeonSelect(s2 || '', 'None', [], { onchange: saveHead });
+  // KEEP OT WARM is printed on every list; older lists may still carry it as their note.
+  const extraNote = /^\s*keep\s*(the\s*)?ot\s*warm\s*$/i.test(l.note || '') ? '' : (l.note || '');
+  const note = h('input', { value: extraNote, placeholder: 'Anything else to print on top', onchange: saveHead });
   const sheet = h('div', { class: 'printonly otprint' });
   const drawSheet = () => sheet.replaceChildren(
-    h('h1', {}, `PAEDIATRIC SURGERY OT LIST OT- ${l.ot}`), h('p', { class: 'c' }, `(${shortDate(l.date)})`),
-    l.surgeon && h('p', { class: 'c b' }, l.surgeon.toUpperCase()), l.note && h('p', { class: 'c b' }, l.note.toUpperCase()),
+    h('h1', {}, `Department of Pediatric Surgery, MCH Block, OT-${l.ot} List`), h('p', { class: 'c' }, `(${shortDate(l.date)})`),
+    l.surgeon && h('p', { class: 'c b' }, fullNames(l.surgeon).toUpperCase()), h('p', { class: 'c b' }, 'KEEP OT WARM'), extraNote && h('p', { class: 'c b' }, extraNote.toUpperCase()),
     h('table', {}, h('thead', {}, h('tr', {}, ['SL NO', 'WARD', 'NAME', 'AGE/SEX', 'UHID', 'DIAGNOSIS', 'SURGERY', 'CONSULTANT', 'BLOOD ARRANGE', 'SPECIAL REQ'].map((t) => h('th', {}, t)))),
       h('tbody', {}, l.entries.map((e, i) => h('tr', {}, h('td', {}, i + 1), h('td', {}, wardCol(e.bed)), h('td', {}, (e.name || '').toUpperCase()), h('td', {}, [e.age, e.sex].filter(Boolean).join('/')),
-        h('td', {}, e.uhid), h('td', {}, e.diagnosis), h('td', {}, e.surgery), h('td', {}, e.consultant), h('td', {}, e.blood), h('td', {}, e.special))))),
+        h('td', {}, e.uhid), h('td', {}, e.diagnosis), h('td', {}, e.surgery), h('td', {}, fullNames(e.consultant)), h('td', {}, e.blood), h('td', {}, e.special))))),
     h('div', { class: 'otfoot' }, h('b', {}, `DATE: ${fmtDate(S.meta.today)}`), h('b', {}, 'SIGNATURE')));
   drawSheet();
-  const doPrint = () => { const st = h('style', {}, '@page { size: A4 landscape; margin: 12mm; }'); document.head.append(st); window.print(); st.remove(); };
+  const doPrint = () => { const st = h('style', {}, '@page { size: A4 landscape; margin: 16mm 15mm; }'); document.head.append(st); window.print(); st.remove(); };
   const move = async (e, dir) => { try { await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/move`, { dir }); reload(); } catch (x) { toast(x.message, true); } };
   const card = (e, i) => h('div', { class: 'card otentry' },
     h('div', { class: 'othead2' }, h('span', { class: 'slno' }, i + 1), h('div', { class: 'grow' }, h('b', { class: 'big' }, e.name), h('div', { class: 'muted small' }, [[e.age, e.sex].filter(Boolean).join(' / '), e.uhid && `UHID ${e.uhid}`].filter(Boolean).join(' · '))),
@@ -1269,7 +1286,7 @@ async function otListView(main, id) {
     h('dl', { class: 'otfacts' },
       e.diagnosis && [h('dt', {}, 'Diagnosis'), h('dd', {}, e.diagnosis)],
       [h('dt', {}, 'Surgery'), h('dd', {}, e.surgery || h('span', { class: 'warntext' }, 'Not filled yet'))],
-      e.consultant && [h('dt', {}, 'Consultant'), h('dd', {}, e.consultant)],
+      e.consultant && [h('dt', {}, 'Consultant'), h('dd', {}, fullNames(e.consultant))],
       e.blood && [h('dt', {}, 'Blood'), h('dd', {}, e.blood)],
       e.special && [h('dt', {}, 'Special req'), h('dd', { class: 'instr' }, e.special)]),
     h('div', { class: 'btns' },
@@ -1285,12 +1302,17 @@ async function otListView(main, id) {
       h('h2', {}, `${otName(l.ot)} · `, fmtDay(l.date)),
       h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: doPrint }, 'Print'))),
     h('div', { class: 'noprint' },
-      h('div', { class: 'card othdr' }, h('label', {}, 'Surgeon in charge (list heading)', surgeon), h('label', {}, 'Note on top (optional)', note)),
+      h('div', { class: 'card othdr' }, h('label', {}, 'Surgeon', surgeon), h('label', {}, 'Second surgeon (if two run the OT)', surgeon2),
+        h('label', {}, 'Extra note (optional)', note, h('small', { class: 'muted' }, 'KEEP OT WARM is always printed.'))),
       h('div', { class: 'otadd' },
         h('button', { class: 'primary', onclick: () => otEntryModal(l, null, reload) }, '+ Add patient'),
         h('button', { class: 'ghost', onclick: () => fromWardModal(l, reload) }, '+ From ward / ICU')),
       l.entries.length ? h('div', { class: 'otentries' }, l.entries.map(card)) : h('p', { class: 'muted' }, 'No patients on this list yet.'),
-      h('p', { class: 'muted small' }, `Made by ${l.created_by || '—'}. `,
+      h('div', { class: 'otmeta' },
+        h('p', {}, `Created by ${l.created_by || '—'}${l.created_at ? ` on ${stampText(l.created_at)}` : ''}`),
+        (l.edits || []).length ? h('p', {}, 'Recent edits:') : null,
+        (l.edits || []).map((x) => h('p', {}, `${x.by} ${x.what} · ${stampText(x.at)}`))),
+      h('p', { class: 'muted small' },
         h('button', { class: 'link small danger', onclick: async () => {
           if (!confirm(`Delete the whole ${otName(l.ot)} list for ${fmtDate(l.date)}${l.entries.length ? ` with its ${l.entries.length} patients` : ''}?`)) return;
           try { await api('DELETE', '/api/otlists/' + encodeURIComponent(id)); toast('List deleted'); location.hash = 'ot/' + l.ot; } catch (x) { toast(x.message, true); }
@@ -1308,12 +1330,15 @@ function otEntryModal(l, e, onSaved) {
     if (!u || (e && u === e.uhid)) return;
     const r = await api('GET', `/api/uhid/${encodeURIComponent(u)}?date=${l.date}`).catch(() => ({}));
     if (!r || !r.name) { found.textContent = 'New UHID: fill in the details.'; return; }
-    for (const k of ['name', 'age', 'sex', 'bed', 'diagnosis', 'surgery', 'consultant', 'blood', 'special']) if (r[k] && !form[k].value.trim()) form[k].value = r[k];
+    for (const k of ['name', 'age', 'sex', 'bed', 'diagnosis', 'surgery', 'blood', 'special']) if (r[k] && !form[k].value.trim()) form[k].value = r[k];
+    if (r.consultant && !form.consultant.value) { const n = fullNames(r.consultant); if (![...form.consultant.options].some((o) => o.value === n)) form.consultant.append(h('option', { value: n }, n)); form.consultant.value = n; }
     if (r.admission_id) form.admission_id.value = r.admission_id;
     found.textContent = `Found ${r.name}: details filled in${r.bed ? `, now in ${r.bed}` : ''}. Check and change anything needed.`;
   };
   const beds = h('datalist', { id: 'otbeds' }, h('option', { value: DAY_CARE }, 'Day care'), S.meta.sections.flatMap((x) => x.beds).map((b) => h('option', { value: b })));
-  const units = h('datalist', { id: 'otunits' }, S.meta.units.map((u) => h('option', { value: u.name })));
+  // The consultant starts as the OT's surgeon(s) and can be changed, e.g. Dr Ajay Verma operating in Dr Anjan Dhua's OT.
+  const listSurgeon = fullNames(l.surgeon);
+  const consultant = surgeonSelect(e ? fullNames(v.consultant) : listSurgeon, '—', listSurgeon.includes('/') ? [listSurgeon] : [], { name: 'consultant' });
   const form = modal(e ? `Edit · ${e.name}` : `Add patient · ${otName(l.ot)} ${fmtDate(l.date)}`, h('div', { class: 'grid2 otform' },
     h('label', { class: 'span2' }, 'UHID', h('input', { name: 'uhid', value: v.uhid || '', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Type the UHID first',
       onchange: () => lookup(form), onkeydown: (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); lookup(form); } } }), found),
@@ -1324,7 +1349,7 @@ function otEntryModal(l, e, onSaved) {
       h('small', { class: 'muted' }, 'Leave blank if being admitted later. MCH2/PAR = day care.'), beds),
     h('label', { class: 'span2' }, 'Diagnosis', h('textarea', { name: 'diagnosis', rows: 2 }, v.diagnosis || '')),
     h('label', { class: 'span2' }, 'Surgery', h('textarea', { name: 'surgery', rows: 2 }, v.surgery || '')),
-    h('label', {}, 'Consultant', h('input', { name: 'consultant', value: v.consultant || '', list: 'otunits', autocomplete: 'off' }), units),
+    h('label', {}, 'Consultant', consultant),
     input('Blood arrangement', 'blood', { placeholder: 'e.g. 1-1-1' }),
     h('label', { class: 'span2' }, 'Special requirements', h('textarea', { name: 'special', rows: 3, placeholder: 'Ports, instruments, positioning, ventilation…' }, v.special || '')),
     h('input', { type: 'hidden', name: 'admission_id', value: v.admission_id || '' })),
