@@ -1420,6 +1420,8 @@ async function otListView(main, id) {
     sheet);
 }
 
+// OT findings go on the current day's list only (and on yesterday's until 6 AM, for OTs that run late).
+const findingsDay = (date) => date === S.meta.today || (new Date().getHours() < 6 && date === addDays(S.meta.today, -1));
 // Scrub team and OT findings for one patient on the list; each opens in place under the card.
 function otExtras(l, e, reload) {
   const box = h('div', { class: 'otextra' });
@@ -1429,7 +1431,6 @@ function otExtras(l, e, reload) {
     if (what === 'scrub') box.replaceChildren(scrubPicker(e.scrub, async (team) => {
       try { await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast('Scrub team saved'); reload(); } catch (x) { toast(x.message, true); }
     }));
-    else if (l.date > S.meta.today) box.replaceChildren(h('p', { class: 'warntext small' }, `This list is for ${fmtDay(l.date)}. The procedure done and OT findings can be added from that day onwards.`));
     else {
       // Two parts: the surgery / procedure actually done (shown in Rounds and the OT Log), and findings & instructions for the ward.
       const done = h('input', { value: e.done || e.surgery || '', placeholder: 'e.g. Laparoscopic pyeloplasty' });
@@ -1447,7 +1448,7 @@ function otExtras(l, e, reload) {
   return h('div', {},
     h('div', { class: 'ottiles' },
       h('button', { class: 'ottile', onclick: () => open('scrub') }, (e.scrub || []).length ? 'Edit scrub team' : '+ Add scrub team'),
-      canEdit() && h('button', { class: 'ottile', onclick: () => open('findings') }, '+ Add OT findings & instructions')),
+      canEdit() && findingsDay(l.date) && h('button', { class: 'ottile', onclick: () => open('findings') }, '+ Add OT findings & instructions')),
     box);
 }
 
