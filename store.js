@@ -560,13 +560,32 @@ const Store = (() => {
     }
     return out;
   }
+  // Findings posted for a patient who is on that day's OT list mark that day as a surgery date:
+  // the first one is surgery 1, a re-posting later becomes surgery 2, then 3 (POD counts from each).
+  // Posts in the small hours (before 6 AM) count for the previous day's list. The dates stay editable.
+  function surgeryFromOtList(a) {
+    const now = new Date(), d = today();
+    const day = now.getHours() < 6 ? ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)) : d;
+    const lists = new Set(all('otlist').filter((l) => l.date === day).map((l) => l.id));
+    const onList = all('otentry').some((e) => lists.has(e.list_id) && (e.admission_id === a.id || (a.ip_no && (e.uhid || '').toLowerCase() === a.ip_no.toLowerCase())));
+    if (!onList) return null;
+    const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
+    const dates = keys.map((k) => a[k]).filter(Boolean);
+    if (dates.includes(day)) return { n: dates.indexOf(day) + 1, date: day, already: true };
+    if (dates.length >= 3) return { full: true, date: day };
+    const sorted = [...dates, day].sort();
+    put(a.id, 'admission', { ...strip(a), ...Object.fromEntries(keys.map((k, i) => [k, sorted[i] || null])), updated_at: stamp() });
+    audit('surgery date from OT list', `${a.name} ${day}`);
+    return { n: sorted.indexOf(day) + 1, date: day };
+  }
   route('POST', '/api/ot/:id', EDITORS, ({ body, params: p }) => {
     const a = getAdmission(p.id);
     const text = str(body.text, 3000);
     if (!text) throw new HttpError(400, 'Type something first');
     put('ot:' + uuid(), 'ot', { admission_id: a.id, text, by: currentUser.id, at: stamp() });
     audit('OT note', a.name);
-    return { ok: true };
+    const surgery = surgeryFromOtList(a);
+    return { ok: true, surgery };
   });
   route('DELETE', '/api/ot/:oid', ANY, ({ params: p }) => {
     const o = get(p.oid);

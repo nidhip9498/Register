@@ -680,7 +680,12 @@ function otBox(a, onChanged) {
   const ta = h('textarea', { rows: 2, placeholder: 'Type OT findings or instructions for the ward…' });
   const post = async () => {
     if (!ta.value.trim()) return;
-    try { await api('POST', '/api/ot/' + a.id, { text: ta.value }); toast('Posted'); onChanged(); } catch (e) { toast(e.message, true); }
+    try {
+      const r = await api('POST', '/api/ot/' + a.id, { text: ta.value });
+      const s = r && r.surgery;
+      toast(!s || s.already ? 'Posted' : s.full ? 'Posted. Three surgery dates are already filled, so this one was not added.' : `Posted. ${fmtDate(s.date)} saved as surgery ${s.n} because the patient was on that day's OT list. POD counts from it.`);
+      onChanged();
+    } catch (e) { toast(e.message, true); }
   };
   return h('div', { class: 'ot' },
     h('div', { class: 'othead' }, 'OT findings & instructions'),
