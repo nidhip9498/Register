@@ -241,6 +241,11 @@ input.narrow { width: 70px; }
   .emptyrow td { color: #999; }
   .census { grid-template-columns: repeat(4, 1fr); }
   .printonly { display: block !important; }
+  body.print-modal main { display: none !important; }
+  body.print-modal .backdrop { position: static !important; background: none !important; padding: 0 !important; }
+  body.print-modal .modal { box-shadow: none !important; max-width: none !important; border: 0 !important; }
+  table.print td.blank { width: 18%; }
+  table.print th { color: #000; }
   .occgrid { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
   .occgrid th, .occgrid td, .occlist th { font-size: 12px; color: #000; }
   .occcount td { font-weight: 700; border-top: 2px solid #000 !important; }
@@ -367,3 +372,8 @@ table.status td:last-child { white-space: pre-line; }
 .emptycols h3 { margin: .2rem 0 .4rem; }
 .emptycols ul { list-style: none; padding: 0; margin: 0; }
 .emptycols li { padding: .3rem 0; border-bottom: 1px solid var(--line); font-weight: 600; }
+
+.shiftlist select { min-width: 110px; }
+.shiftlist td.arrow { font-size: 1.3rem; color: var(--muted); text-align: center; }
+.shiftmsg { white-space: pre-line; }
+.shiftbtns { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .8rem; }

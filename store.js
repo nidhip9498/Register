@@ -409,6 +409,59 @@ const Store = (() => {
     return { ok: true };
   });
 
+  // Planned bed shifts: written the evening before, carried out together with one Execute the next morning.
+  const shiftPlan = () => get('plan:shifts') || { rows: [] };
+  route('GET', '/api/shifts', ANY, () => {
+    const pl = shiftPlan();
+    return { rows: pl.rows || [], saved_by: userName(pl.saved_by), saved_at: pl.saved_at || '', executed_by: userName(pl.executed_by), executed_at: pl.executed_at || '' };
+  });
+  route('PUT', '/api/shifts', EDITORS, ({ body }) => {
+    const beds = allBeds();
+    const rows = (Array.isArray(body.rows) ? body.rows : []).slice(0, 60)
+      .map((r) => ({ from: str(r.from, 30), to: str(r.to, 30) })).filter((r) => r.from || r.to);
+    for (const r of rows) r.name = r.from ? occupants(r.from).map((o) => o.name).join(', ') : '';
+    for (const r of rows) if ((r.from && !beds.includes(r.from)) || (r.to && !beds.includes(r.to))) throw new HttpError(400, `Unknown bed in ${r.from} → ${r.to}`);
+    put('plan:shifts', 'plan', { rows, saved_by: currentUser.id, saved_at: stamp(), executed_by: null, executed_at: '' });
+    audit('save bed shift list', `${rows.length} shifts`);
+    return { ok: true };
+  });
+  route('POST', '/api/shifts/execute', EDITORS, ({ body }) => {
+    const pl = shiftPlan();
+    const rows = (pl.rows || []).filter((r) => r.from || r.to);
+    if (!rows.length) throw new HttpError(400, 'The list is empty');
+    if (pl.executed_at) throw new HttpError(400, 'This list was already carried out');
+    const problems = [];
+    const seen = (k) => { const c = rows.map((r) => r[k]).filter(Boolean); return c.filter((b, i) => c.indexOf(b) !== i); };
+    for (const r of rows) if (!r.from || !r.to) problems.push(`${r.from || '?'} → ${r.to || '?'}: both beds are needed`);
+    for (const b of new Set(seen('from'))) problems.push(`${b} is listed twice under From`);
+    for (const b of new Set(seen('to'))) problems.push(`${b} is listed twice under To`);
+    const movers = new Map();
+    for (const r of rows) {
+      if (!r.from || !r.to) continue;
+      if (r.from === r.to) { problems.push(`${r.from} → ${r.to}: same bed`); continue; }
+      const occ = occupants(r.from);
+      if (!occ.length) problems.push(`${r.from} is empty`);
+      else if (occ.length > 1) problems.push(`${r.from} has more than one patient`);
+      else movers.set(occ[0].id, { adm: occ[0], to: r.to });
+    }
+    // A To bed must be empty, or its patient must also be moving somewhere on the list.
+    for (const r of rows) {
+      if (!r.to) continue;
+      for (const o of occupants(r.to)) if (!movers.has(o.id)) problems.push(`${r.to} still has ${o.name}, who is not on the list. Add where ${o.name} goes.`);
+    }
+    if (problems.length) throw new HttpError(400, problems.join('\n'));
+    const date = isDate(body.date) ? body.date : today();
+    for (const { adm, to } of movers.values()) {
+      put('move:' + uuid(), 'move', { admission_id: adm.id, from_bed: adm.bed, to_bed: to, move_date: date, moved_by: currentUser.id, at: now() });
+      put(adm.id, 'admission', { ...strip(adm), bed: to });
+    }
+    // Keep who moved, so the list still prints correctly after the beds have changed.
+    const named = (pl.rows || []).map((r) => { const m = [...movers.values()].find((x) => x.adm.bed === r.from && x.to === r.to); return { ...r, name: m ? m.adm.name : '' }; });
+    put('plan:shifts', 'plan', { ...strip(pl), rows: named, executed_by: currentUser.id, executed_at: stamp() });
+    audit('carry out bed shifts', [...movers.values()].map(({ adm, to }) => `${adm.name} ${adm.bed} -> ${to}`).join(', '));
+    return { moved: movers.size };
+  });
+
   route('PUT', '/api/rounds/:id/:date', EDITORS, ({ body, params: p }) => {
     const a = getAdmission(p.id);
     if (!isDate(p.date)) throw new HttpError(400, 'Bad date');

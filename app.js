@@ -375,6 +375,7 @@ async function registerView(main, mode) {
       h('div', { class: 'filters' }, wardSel, search, emptyToggle),
       h('div', { class: 'actions' },
         canEdit() && h('button', { class: 'primary', onclick: () => admitModal(null, null, { icu: icuMode }) }, icuMode ? '+ Admit to ICU' : '+ Admit'),
+        !icuMode && h('button', { class: 'ghost', onclick: () => shiftsModal() }, 'Bed shifts'),
         wards.map((w) => h('a', { class: 'button ghost', href: `#print/${date}/${w}` }, 'Print ' + w)))),
     h('h2', { class: 'daytitle' }, icuMode ? 'ICU Register · ' : 'Ward Register · ', fmtDay(date)));
 
@@ -449,6 +450,69 @@ async function registerView(main, mode) {
 }
 
 function stat(label, n, cls) { return h('div', { class: 'stat ' + (cls && n ? cls : '') }, h('b', {}, n), h('span', {}, label)); }
+
+// Planned bed shifts: write the list the evening before, then Execute after the morning round.
+async function shiftsModal() {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  const [plan, reg] = await Promise.all([api('GET', '/api/shifts'), api('GET', '/api/register?date=' + S.meta.today)]);
+  const order = S.meta.sections.flatMap((s) => s.beds);
+  const inBed = (b) => reg.admissions.filter((a) => a.bed_on_date === b && !a.discharge_date);
+  const who = (b) => inBed(b).map((a) => a.name).join(', ');
+  const edit = canEdit();
+  let rows = plan.rows.length ? plan.rows.map((r) => ({ ...r })) : [{ from: '', to: '' }];
+  let saved = true;
+  const tbody = h('tbody', {});
+  const sheet = h('div', { class: 'printonly' });
+  const msg = h('div', { class: 'error shiftmsg' });
+  const status = h('p', { class: 'muted' });
+
+  const bedSelect = (val, onchange, occupiedOnly) => h('select', { disabled: !edit, onchange },
+    h('option', { value: '' }, '—'),
+    order.filter((b) => !occupiedOnly || inBed(b).length || b === val).map((b) => h('option', { value: b, selected: b === val }, b)));
+  const draw = () => {
+    const movingFrom = new Set(rows.map((r) => r.from).filter(Boolean));
+    tbody.replaceChildren(...rows.map((r, i) => h('tr', {},
+      h('td', {}, bedSelect(r.from, (e) => { r.from = e.target.value; changed(); }, true), h('div', { class: 'small muted' }, plan.executed_at && saved ? (r.name ? `Moved: ${r.name}` : '') : r.from ? who(r.from) || 'Empty' : '')),
+      h('td', { class: 'arrow' }, '→'),
+      h('td', {}, bedSelect(r.to, (e) => { r.to = e.target.value; changed(); }), h('div', { class: 'small muted' },
+        plan.executed_at && saved ? '' : r.to ? (inBed(r.to).length ? `Now: ${who(r.to)}${movingFrom.has(r.to) ? ' (also moving)' : ''}` : 'Empty') : '')),
+      edit && h('td', {}, h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.splice(i, 1); if (!rows.length) rows.push({ from: '', to: '' }); changed(); } }, 'Remove')))));
+    const done = plan.executed_at && saved;
+    status.textContent = done ? `Carried out by ${plan.executed_by} · ${plan.executed_at}` : plan.saved_at ? `${saved ? 'Saved' : 'Last saved'} by ${plan.saved_by} · ${plan.saved_at}${saved ? '' : ' · unsaved changes'}` : 'Not saved yet';
+    exec.disabled = !saved || !!plan.executed_at || !rows.some((r) => r.from && r.to);
+    const list = rows.filter((r) => r.from || r.to);
+    sheet.replaceChildren(h('h2', {}, 'Bed shifts · ', fmtDay(S.meta.today)),
+      h('table', { class: 'print' }, h('thead', {}, h('tr', {}, ['From', 'Patient', 'To', 'Done'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, list.map((r) => h('tr', {}, h('td', {}, h('b', {}, r.from)), h('td', {}, plan.executed_at && saved ? r.name || '' : who(r.from)), h('td', {}, h('b', {}, r.to)), h('td', { class: 'blank' }))))));
+  };
+  const changed = () => { saved = false; msg.textContent = ''; draw(); };
+  const save = h('button', { type: 'button', class: 'primary', onclick: async () => {
+    try { await api('PUT', '/api/shifts', { rows: rows.filter((r) => r.from || r.to) }); toast('Bed shift list saved'); shiftsModal(); } catch (e) { msg.textContent = e.message; }
+  } }, 'Save list');
+  const exec = h('button', { type: 'button', class: 'danger', onclick: async () => {
+    if (!confirm('Move all these patients to their new beds now?')) return;
+    try { const r = await api('POST', '/api/shifts/execute', { date: S.meta.today }); toast(`${r.moved} patients moved`); close(); render(); } catch (e) { msg.textContent = e.message; }
+  } }, 'Execute');
+  const fresh = h('button', { type: 'button', class: 'ghost', onclick: () => { rows = [{ from: '', to: '' }]; plan.executed_at = ''; changed(); } }, 'Start a new list');
+
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
+    h('div', { class: 'modal card panel shifts' },
+      h('div', { class: 'mhead noprint' }, h('h2', {}, 'Bed shifts'), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+      h('div', { class: 'noprint' },
+        h('p', { class: 'muted' }, 'Write the shifts the evening before and save. After the morning round, press Execute to move everyone at once. Swaps are fine: write both rows, for example 6B/05 → 6B/PO3 and 6B/PO3 → 6B/05.'),
+        status,
+        h('table', { class: 'list shiftlist' }, h('thead', {}, h('tr', {}, h('th', {}, 'From bed'), h('th', {}), h('th', {}, 'To bed'), edit && h('th', {}))), tbody),
+        edit && h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.push({ from: '', to: '' }); changed(); } }, '+ Add a shift'),
+        msg,
+        h('div', { class: 'btns shiftbtns' },
+          edit && save,
+          h('button', { type: 'button', class: 'ghost', onclick: () => { document.body.classList.add('print-modal'); window.print(); document.body.classList.remove('print-modal'); } }, 'Print'),
+          edit && plan.executed_at && fresh,
+          edit && exec)),
+      sheet)));
+  draw();
+}
 
 // List of empty beds, one column per ward (6B, 6A).
 function emptyBedsPanel(beds, date) {
