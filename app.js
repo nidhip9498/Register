@@ -1519,7 +1519,6 @@ async function otLogView(main, who) {
       h('div', { class: 'actions' }, h('label', { class: 'inline' }, 'Logbook of ', sel), h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
     h('h2', { class: 'printonly' }, title),
     h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : `No operations logged for ${who} yet. A log fills when ${who} is in a scrub team on an OT list.`),
-    !rows.length && people.length ? h('p', { class: 'small' }, 'Logged so far: ', people.sort((a, b) => counts[b] - counts[a]).map((p, k) => [k ? ', ' : '', h('a', { href: '#otlog/' + encodeURIComponent(p) }, `${p} (${counts[p]})`)])) : null,
     rows.length ? h('input', { type: 'search', class: 'otlogsearch noprint', placeholder: 'Search name, UHID, diagnosis or surgery', oninput: (ev) => {
       const q = ev.target.value.trim().toLowerCase();
       main.querySelectorAll('table.otlog tbody tr').forEach((tr) => { tr.hidden = !!q && !tr.textContent.toLowerCase().includes(q); });
