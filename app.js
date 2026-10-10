@@ -470,28 +470,41 @@ async function shiftsModal() {
   const bedSelect = (val, onchange, occupiedOnly) => h('select', { disabled: !edit, onchange },
     h('option', { value: '' }, '—'),
     order.filter((b) => !occupiedOnly || inBed(b).length || b === val).map((b) => h('option', { value: b, selected: b === val }, b)));
+  // What happens to whoever is already in the To bed.
+  const toNote = (r, movingFrom) => {
+    if (!r.to || !inBed(r.to).length) return r.to ? { text: 'Empty' } : { text: '' };
+    if (r.swap) return { text: `Swap: ${who(r.to)} goes to ${r.from || 'the From bed'}` };
+    if (movingFrom.has(r.to)) return { text: `Now: ${who(r.to)} (also moving)` };
+    return { text: `${who(r.to)} stays here too until discharged`, warn: true };
+  };
   const draw = () => {
-    const movingFrom = new Set(rows.map((r) => r.from).filter(Boolean));
-    tbody.replaceChildren(...rows.map((r, i) => h('tr', {},
-      h('td', {}, bedSelect(r.from, (e) => { r.from = e.target.value; changed(); }, true), h('div', { class: 'small muted' }, plan.executed_at && saved ? (r.name ? `Moved: ${r.name}` : '') : r.from ? who(r.from) || 'Empty' : '')),
-      h('td', { class: 'arrow' }, '→'),
-      h('td', {}, bedSelect(r.to, (e) => { r.to = e.target.value; changed(); }), h('div', { class: 'small muted' },
-        plan.executed_at && saved ? '' : r.to ? (inBed(r.to).length ? `Now: ${who(r.to)}${movingFrom.has(r.to) ? ' (also moving)' : ''}` : 'Empty') : '')),
-      edit && h('td', {}, h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.splice(i, 1); if (!rows.length) rows.push({ from: '', to: '' }); changed(); } }, 'Remove')))));
     const done = plan.executed_at && saved;
+    const movingFrom = new Set(rows.map((r) => r.from).filter(Boolean));
+    tbody.replaceChildren(...rows.map((r, i) => {
+      const note = done ? { text: r.swap && r.name2 ? `Swapped: ${r.name2}` : '' } : toNote(r, movingFrom);
+      return h('tr', {},
+        h('td', {}, bedSelect(r.from, (e) => { r.from = e.target.value; changed(); }, true), h('div', { class: 'small muted' }, done ? (r.name ? `Moved: ${r.name}` : '') : r.from ? who(r.from) || 'Empty' : '')),
+        h('td', { class: 'arrow' }, r.swap ? '⇄' : '→'),
+        h('td', {}, bedSelect(r.to, (e) => { r.to = e.target.value; changed(); }), h('div', { class: 'small ' + (note.warn ? 'warntext' : 'muted') }, note.text)),
+        h('td', { class: 'swapcell' }, h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: !!r.swap, disabled: !edit, onchange: (e) => { r.swap = e.target.checked; changed(); } }), 'Swap')),
+        edit && h('td', {}, h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.splice(i, 1); if (!rows.length) rows.push({ from: '', to: '' }); changed(); } }, 'Remove')));
+    }));
     status.textContent = done ? `Carried out by ${plan.executed_by} · ${plan.executed_at}` : plan.saved_at ? `${saved ? 'Saved' : 'Last saved'} by ${plan.saved_by} · ${plan.saved_at}${saved ? '' : ' · unsaved changes'}` : 'Not saved yet';
     exec.disabled = !saved || !!plan.executed_at || !rows.some((r) => r.from && r.to);
     const list = rows.filter((r) => r.from || r.to);
     sheet.replaceChildren(h('h2', {}, 'Bed shifts · ', fmtDay(S.meta.today)),
-      h('table', { class: 'print' }, h('thead', {}, h('tr', {}, ['From', 'Patient', 'To', 'Done'].map((t) => h('th', {}, t)))),
-        h('tbody', {}, list.map((r) => h('tr', {}, h('td', {}, h('b', {}, r.from)), h('td', {}, plan.executed_at && saved ? r.name || '' : who(r.from)), h('td', {}, h('b', {}, r.to)), h('td', { class: 'blank' }))))));
+      h('table', { class: 'print' }, h('thead', {}, h('tr', {}, ['From', 'Patient', 'To', 'Note', 'Done'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, list.map((r) => h('tr', {}, h('td', {}, h('b', {}, r.from)), h('td', {}, done ? r.name || '' : who(r.from)), h('td', {}, h('b', {}, r.swap ? '⇄ ' : '', r.to)),
+          h('td', {}, done ? (r.swap && r.name2 ? `Swap: ${r.name2} → ${r.from}` : '') : (toNote(r, movingFrom).text || '').replace(/^Empty$/, '')), h('td', { class: 'blank' }))))));
   };
   const changed = () => { saved = false; msg.textContent = ''; draw(); };
   const save = h('button', { type: 'button', class: 'primary', onclick: async () => {
     try { await api('PUT', '/api/shifts', { rows: rows.filter((r) => r.from || r.to) }); toast('Bed shift list saved'); shiftsModal(); } catch (e) { msg.textContent = e.message; }
   } }, 'Save list');
   const exec = h('button', { type: 'button', class: 'danger', onclick: async () => {
-    if (!confirm('Move all these patients to their new beds now?')) return;
+    const movingFrom = new Set(rows.map((r) => r.from).filter(Boolean));
+    const sharing = rows.filter((r) => toNote(r, movingFrom).warn).map((r) => `${r.to}: ${who(r.to)}`);
+    if (!confirm('Move all these patients to their new beds now?' + (sharing.length ? `\n\nThese beds will hold two patients until one is discharged:\n${sharing.join('\n')}` : ''))) return;
     try { const r = await api('POST', '/api/shifts/execute', { date: S.meta.today }); toast(`${r.moved} patients moved`); close(); render(); } catch (e) { msg.textContent = e.message; }
   } }, 'Execute');
   const fresh = h('button', { type: 'button', class: 'ghost', onclick: () => { rows = [{ from: '', to: '' }]; plan.executed_at = ''; changed(); } }, 'Start a new list');
@@ -500,9 +513,9 @@ async function shiftsModal() {
     h('div', { class: 'modal card panel shifts' },
       h('div', { class: 'mhead noprint' }, h('h2', {}, 'Bed shifts'), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       h('div', { class: 'noprint' },
-        h('p', { class: 'muted' }, 'Write the shifts the evening before and save. After the morning round, press Execute to move everyone at once. Swaps are fine: write both rows, for example 6B/05 → 6B/PO3 and 6B/PO3 → 6B/05.'),
+        h('p', { class: 'muted' }, 'Write the shifts the evening before and save. After the morning round, press Execute to move everyone at once. Tick Swap to exchange the two patients. Without Swap, a patient already in the To bed stays there (for example, someone going home later today) until discharged.'),
         status,
-        h('table', { class: 'list shiftlist' }, h('thead', {}, h('tr', {}, h('th', {}, 'From bed'), h('th', {}), h('th', {}, 'To bed'), edit && h('th', {}))), tbody),
+        h('table', { class: 'list shiftlist' }, h('thead', {}, h('tr', {}, h('th', {}, 'From bed'), h('th', {}), h('th', {}, 'To bed'), h('th', {}), edit && h('th', {}))), tbody),
         edit && h('button', { type: 'button', class: 'ghost small', onclick: () => { rows.push({ from: '', to: '' }); changed(); } }, '+ Add a shift'),
         msg,
         h('div', { class: 'btns shiftbtns' },

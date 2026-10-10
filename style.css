@@ -377,3 +377,5 @@ table.status td:last-child { white-space: pre-line; }
 .shiftlist td.arrow { font-size: 1.3rem; color: var(--muted); text-align: center; }
 .shiftmsg { white-space: pre-line; }
 .shiftbtns { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .8rem; }
+.warntext { color: var(--warn, #b54708); }
+.shiftlist td.swapcell { white-space: nowrap; }
