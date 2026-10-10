@@ -347,14 +347,14 @@ const Store = (() => {
     const adms = all('admission').filter((a) => (!a.admit_date || a.admit_date <= date) && (!a.discharge_date || a.discharge_date >= date))
       .sort((a, b) => ((a.admit_date || '') < (b.admit_date || '') ? -1 : (a.admit_date || '') > (b.admit_date || '') ? 1 : 0));
     const moves = all('move');
-    const ot = otByAdmission();
+    const ot = otByAdmission(), procs = otProcs();
     return {
       date,
       admissions: adms.map((a) => {
         const r = get(`round:${a.id}:${date}`), p = get(`round:${a.id}:${prev}`);
         const n = get(`note:${a.id}:${date}`), pn = get(`note:${a.id}:${prev}`);
         return {
-          ...a, bed_on_date: bedOnDate(a, date, moves), ot: ot[a.id] || [],
+          ...a, bed_on_date: bedOnDate(a, date, moves), ot: ot[a.id] || [], otprocs: procs[a.id] || [],
           round: r ? { vals: r.vals, remarks: r.remarks, filled_by: userName(r.filled_by), filled_at: r.filled_at } : null,
           prev_round: p ? { vals: p.vals, remarks: p.remarks } : null,
           unit_note: n ? n.note : '', unit_note_by: n ? userName(n.updated_by) : '', prev_unit_note: pn ? pn.note : '',
@@ -553,6 +553,17 @@ const Store = (() => {
   });
 
   // OT findings and instructions: short posts anyone can add, like the WhatsApp group.
+  // Per admitted patient: each OT day with the procedure done and the scrub team, from the OT lists.
+  function otProcs() {
+    const out = {};
+    for (const e of all('otentry')) {
+      if (e.cancelled || !e.admission_id || (!e.done && !(e.scrub || []).length)) continue;
+      const l = get(e.list_id);
+      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || '', scrub: e.scrub || [] });
+    }
+    for (const k in out) out[k].sort((x, y) => (x.date < y.date ? -1 : 1));
+    return out;
+  }
   function otByAdmission() {
     const out = {};
     for (const o of all('ot').sort((x, y) => (x.at < y.at ? -1 : 1))) {
@@ -619,7 +630,7 @@ const Store = (() => {
       .map((r) => ({ date: r.date, vals: r.vals, remarks: r.remarks, filled_at: r.filled_at, filled_by: userName(r.filled_by) }));
     const notes = all('note').filter((n) => n.admission_id === a.id).map((n) => ({ date: n.date, note: n.note }));
     const moves = all('move').filter((m) => m.admission_id === a.id).sort((x, y) => (x.move_date < y.move_date ? -1 : x.move_date > y.move_date ? 1 : x.at - y.at));
-    return { ...a, rounds, notes, moves, ot: otByAdmission()[a.id] || [] };
+    return { ...a, rounds, notes, moves, ot: otByAdmission()[a.id] || [], otprocs: otProcs()[a.id] || [] };
   });
 
   route('GET', '/api/patients', ANY, ({ query }) => {
@@ -915,14 +926,19 @@ const Store = (() => {
   }
   route('POST', '/api/otentries/:id/findings', EDITORS, ({ body, params: p }) => {
     const e = getEntry(p.id), l = getOtList(e.list_id);
-    const text = str(body.text, 3000);
-    if (!text) throw new HttpError(400, 'Type something first');
+    const text = str(body.text, 3000), done = body.done != null ? str(body.done, 300) : (e.done || '');
+    if (!text && !done) throw new HttpError(400, 'Type something first');
     if (l.date > today()) throw new HttpError(400, 'This list is for a later day');
     const a = e.admission_id && get(e.admission_id);
+    // The procedure actually done goes on the OT list entry (OT Log, Rounds); an admitted patient without one in the register gets it there too.
+    if (done !== (e.done || '')) {
+      put(e.id, 'otentry', { ...strip(e), done, updated_by: currentUser.id, updated_at: stamp() });
+      touchOtList(l.id, `noted the procedure done for ${e.name}`);
+      if (a && done && !a.procedure_done) put(a.id, 'admission', { ...strip(a), procedure_done: done, updated_at: stamp() });
+    }
     // Admitted patients' findings also show in Rounds and the ward's OT alerts; day-care findings stay with the OT list.
-    put('ot:' + uuid(), 'ot', { admission_id: a ? a.id : null, entry_id: e.id, text, by: currentUser.id, at: stamp(), day: l.date });
-    audit('OT note', e.name);
-    return { ok: true, surgery: a && !e.cancelled ? surgeryFromOtList(a, l.date) : null };
+    if (text) { put('ot:' + uuid(), 'ot', { admission_id: a ? a.id : null, entry_id: e.id, text, by: currentUser.id, at: stamp(), day: l.date }); audit('OT note', e.name); }
+    return { ok: true, surgery: a && !e.cancelled ? surgeryFromOtList(get(a.id), l.date) : null };
   });
   route('PUT', '/api/otentries/:id/scrub', ANY, ({ body, params: p }) => {
     const e = getEntry(p.id);
@@ -942,7 +958,7 @@ const Store = (() => {
       const l = i >= 0 && get(e.list_id);
       if (!l) continue;
       const a = e.admission_id && get(e.admission_id);
-      rows.push({ id: e.id, list_id: l.id, admission_id: a ? a.id : '', date: l.date, ot: l.ot, name: e.name, uhid: e.uhid, age: e.age, dob: a && a.dob, sex: e.sex, diagnosis: e.diagnosis, surgery: e.surgery, role: i + 1, team: e.scrub });
+      rows.push({ id: e.id, list_id: l.id, admission_id: a ? a.id : '', date: l.date, ot: l.ot, name: e.name, uhid: e.uhid, age: e.age, dob: a && a.dob, sex: e.sex, diagnosis: e.diagnosis, surgery: e.done || e.surgery, role: i + 1, team: e.scrub });
     }
     // …and any posted with findings from Rounds earlier.
     for (const o of all('ot')) {

@@ -470,6 +470,11 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .otlog td:nth-child(6), .otlog td:nth-child(7) { min-width: 15rem; }
 .otlog td:nth-child(2) { white-space: nowrap; }
 .otextra { margin-top: .4rem; }
-.otextrabtns { margin-top: .4rem; }
+.ottiles { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .6rem; }
+.ottile { padding: .7rem .6rem; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: .85rem; }
+.otfind { display: grid; gap: .6rem; }
+.otfind input, .otfind textarea { width: 100%; }
+.otproc { margin: .2rem 0; }
+.otlogsearch { width: 100%; max-width: 420px; margin: 0 0 .6rem; }
 .scrubgrid .btns { align-items: center; }
 .scrubgrid .btns .grow { flex: 1; }

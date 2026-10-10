@@ -676,7 +676,7 @@ function otList(entries, onChanged) {
       try { await api('DELETE', '/api/ot/' + encodeURIComponent(o.id)); toast('Deleted'); onChanged(); } catch (e) { toast(e.message, true); }
     } }, 'Delete'),
     o.text && h('div', {}, o.text),
-    (o.scrub || []).length ? h('div', { class: 'team small' }, h('b', {}, 'Scrubbed: '), o.scrub.map((x, k) => `${x} (${roleShort(k + 1)})`).join(', '), o.surgery ? h('div', { class: 'muted' }, o.surgery) : null) : null)));
+    (o.scrub || []).length ? h('div', { class: 'team small' }, h('b', {}, 'Scrubbed: '), o.scrub.join('/'), o.surgery ? h('div', { class: 'muted' }, o.surgery) : null) : null)));
 }
 
 // Scrub-team initials. Consultants as in SURGEONS (SN is Dr Sachit Anand, SA is Dr Sandeep Agarwala), then the residents.
@@ -730,6 +730,7 @@ function otBox(a, onChanged) {
   };
   return h('div', { class: 'ot' },
     h('div', { class: 'othead' }, 'OT findings & instructions'),
+    (a.otprocs || []).map((x) => h('p', { class: 'otproc small' }, h('b', {}, `${otName(x.ot)} · ${fmtDate(x.date)}: `), x.done || 'Procedure not noted yet', x.scrub.length ? h('span', { class: 'muted' }, ` · ${x.scrub.join('/')}`) : null)),
     a.ot.length ? otList(a.ot, onChanged) : null,
     h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post')));
 }
@@ -1379,7 +1380,8 @@ async function otListView(main, id) {
       e.consultant && [h('dt', {}, 'Consultant'), h('dd', {}, fullNames(e.consultant))],
       e.blood && [h('dt', {}, 'Blood'), h('dd', {}, e.blood)],
       e.special && [h('dt', {}, 'Special req'), h('dd', { class: 'instr' }, e.special)],
-      (e.scrub || []).length ? [h('dt', {}, 'Scrub team'), h('dd', {}, e.scrub.map((x, k) => `${x} (${roleShort(k + 1)})`).join(', '))] : null),
+      e.done && [h('dt', {}, 'Done'), h('dd', {}, h('b', {}, e.done))],
+      (e.scrub || []).length ? [h('dt', {}, 'Scrub team'), h('dd', {}, h('b', {}, e.scrub.join('/')))] : null),
     e.findings.length ? h('div', { class: 'ot' }, h('div', { class: 'othead' }, 'OT findings & instructions'), otList(e.findings, reload)) : null,
     otExtras(l, e, reload),
     h('div', { class: 'btns' },
@@ -1428,18 +1430,23 @@ function otExtras(l, e, reload) {
       try { await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast('Scrub team saved'); reload(); } catch (x) { toast(x.message, true); }
     }));
     else {
-      const ta = h('textarea', { rows: 2, placeholder: 'Type OT findings or instructions for the ward…' });
-      box.replaceChildren(h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: async () => {
-        if (!ta.value.trim()) return;
-        try { const r = await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/findings`, { text: ta.value }); toast(postedText(r)); reload(); } catch (x) { toast(x.message, true); }
-      } }, 'Post')));
+      // Two parts: the surgery / procedure actually done (shown in Rounds and the OT Log), and findings & instructions for the ward.
+      const done = h('input', { value: e.done || e.surgery || '', placeholder: 'e.g. Laparoscopic pyeloplasty' });
+      const ta = h('textarea', { rows: 3, placeholder: 'Type OT findings or instructions for the ward…' });
+      box.replaceChildren(h('div', { class: 'otfind' },
+        h('label', {}, 'Surgery / procedure done', done, h('small', { class: 'muted' }, 'Starts as the planned surgery. Change it if something else was done.')),
+        h('label', {}, 'OT findings & instructions', ta),
+        h('div', { class: 'btns' }, h('button', { type: 'button', class: 'primary small', onclick: async () => {
+          if (!ta.value.trim() && !done.value.trim()) return;
+          try { const r = await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/findings`, { text: ta.value, done: done.value }); toast(ta.value.trim() ? postedText(r) : 'Saved'); reload(); } catch (x) { toast(x.message, true); }
+        } }, 'Save'))));
       ta.focus();
     }
   };
   return h('div', {},
-    h('div', { class: 'btns otextrabtns' },
-      h('button', { class: 'ghost small', onclick: () => open('scrub') }, (e.scrub || []).length ? 'Edit scrub team' : 'Add scrub team'),
-      canEdit() && l.date <= S.meta.today && h('button', { class: 'ghost small', onclick: () => open('findings') }, 'Post OT findings')),
+    h('div', { class: 'ottiles' },
+      h('button', { class: 'ottile', onclick: () => open('scrub') }, (e.scrub || []).length ? 'Edit scrub team' : '+ Add scrub team'),
+      canEdit() && l.date <= S.meta.today && h('button', { class: 'ottile', onclick: () => open('findings') }, '+ Add OT findings & instructions')),
     box);
 }
 
@@ -1490,11 +1497,15 @@ async function otLogView(main, who) {
       h('div', { class: 'actions' }, h('label', { class: 'inline' }, 'Logbook of ', sel), h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
     h('h2', { class: 'printonly' }, title),
     h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : 'No operations logged yet. Use Add scrub team on a patient in OT Lists.'),
+    rows.length ? h('input', { type: 'search', class: 'otlogsearch noprint', placeholder: 'Search name, UHID, diagnosis or surgery', oninput: (ev) => {
+      const q = ev.target.value.trim().toLowerCase();
+      main.querySelectorAll('table.otlog tbody tr').forEach((tr) => { tr.hidden = !!q && !tr.textContent.toLowerCase().includes(q); });
+    } }) : null,
     rows.length ? h('div', { class: 'tablewrap' }, h('table', { class: 'list print otlog' },
       h('thead', {}, h('tr', {}, ['#', 'Date', 'Name', 'UHID', 'Age / Sex', 'Diagnosis', 'Surgery', 'Role', 'Team'].map((t) => h('th', {}, t)))),
       h('tbody', {}, rows.map((r, i) => h('tr', { class: 'clickable', onclick: () => { location.hash = r.list_id ? 'otlist/' + encodeURIComponent(r.list_id) : 'patient/' + r.admission_id; } },
         h('td', {}, i + 1), h('td', {}, fmtDate(r.date)), h('td', {}, h('b', {}, r.name)), h('td', {}, r.uhid || ''), h('td', {}, ageSex(r, r.date)),
-        h('td', {}, r.diagnosis), h('td', {}, r.surgery), h('td', {}, roleName(r.role)), h('td', { class: 'muted' }, r.team.join(', '))))))) : null);
+        h('td', {}, r.diagnosis), h('td', {}, r.surgery), h('td', {}, roleName(r.role)), h('td', { class: 'muted' }, r.team.join('/'))))))) : null);
 }
 
 // Add or edit one patient on a list. Typing a UHID that has been seen before fills in the rest (all of it can still be changed).
