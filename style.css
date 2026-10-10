@@ -379,3 +379,9 @@ table.status td:last-child { white-space: pre-line; }
 .shiftbtns { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .8rem; }
 .warntext { color: var(--warn, #b54708); }
 .shiftlist td.swapcell { white-space: nowrap; }
+
+/* Lock screen after time without use: fully covers the app */
+.lockscreen { position: fixed; inset: 0; z-index: 1000; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 1rem; overflow: auto; }
+.lockscreen .auth .ghost { margin-top: .4rem; }
+body.locked #app, body.locked #modal-root { visibility: hidden; }
+@media print { body.locked #app, body.locked #modal-root { display: none !important; } }

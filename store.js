@@ -261,16 +261,18 @@ const Store = (() => {
   const ROLES = ['admin', 'sr', 'jr', 'consultant'];
   const failedLogins = new Map();
   const SESSION_HOURS = 12;
+  const IDLE_MINUTES = 15; // keep in step with LOCK_MINUTES in app.js
 
   function publicUser(u) { return { id: u.id, username: u.username, name: u.name, role: u.role }; }
   async function startSession(u) {
     currentUser = publicUser(u);
-    await setMeta('session', { user_id: u.id, expires: now() + SESSION_HOURS * 3600e3 });
+    await setMeta('session', { user_id: u.id, expires: now() + SESSION_HOURS * 3600e3, last: now() });
     return currentUser;
   }
   async function restoreSession() {
     const s = await getMeta('session');
-    const u = s && s.expires > now() && get(s.user_id);
+    // Opening the app after 15 minutes without use asks for the password again.
+    const u = s && s.expires > now() && (!s.last || now() - s.last < IDLE_MINUTES * 60e3) && get(s.user_id);
     currentUser = u && u.active ? publicUser(u) : null;
     return currentUser;
   }
@@ -314,6 +316,13 @@ const Store = (() => {
     const out = await startSession(u);
     audit('login');
     return out;
+  });
+
+  // The person is still using the app: keep the session awake.
+  route('POST', '/api/touch', ANY, async () => {
+    const s = await getMeta('session');
+    if (s) await setMeta('session', { ...s, last: now() });
+    return { ok: true };
   });
 
   route('POST', '/api/logout', ANY, async () => { currentUser = null; await delMeta('session'); return { ok: true }; });

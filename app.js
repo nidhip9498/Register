@@ -141,6 +141,47 @@ async function boot() {
   await refreshState();
 }
 
+// ---------- Lock after 15 minutes without use ----------
+// The screen is covered (nothing typed is lost) until the person enters their password again.
+const LOCK_MINUTES = 15;
+const idle = { last: Date.now(), touched: 0, locked: false };
+function noteActivity() {
+  if (idle.locked) return;
+  idle.last = Date.now();
+  if (S.user && idle.last - idle.touched > 60e3) { idle.touched = idle.last; api('POST', '/api/touch').catch(() => {}); }
+}
+function checkIdle() {
+  if (!idle.locked && S.user && Date.now() - idle.last > LOCK_MINUTES * 60e3) lockScreen();
+}
+function lockScreen() {
+  idle.locked = true;
+  document.body.classList.add('locked');
+  const err = h('p', { class: 'error' });
+  const pass = h('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true });
+  const cover = h('div', { class: 'lockscreen' }, h('form', { class: 'card auth', onsubmit: async (e) => {
+    e.preventDefault();
+    try {
+      await api('POST', '/api/login', { username: S.user.username, password: pass.value });
+      idle.locked = false; idle.last = idle.touched = Date.now(); cover.remove(); document.body.classList.remove('locked');
+    } catch (x) { err.textContent = x.status === 401 ? 'Wrong password' : x.message; pass.select(); }
+  } },
+  h('img', { src: 'icon.svg', alt: '', class: 'logo' }),
+  h('h1', {}, 'Locked'),
+  h('p', { class: 'muted subtitle' }, `The app locked after ${LOCK_MINUTES} minutes without use. Anything you were typing is kept.`),
+  h('label', {}, `Password for ${S.user.name}`, pass),
+  err,
+  h('button', { class: 'primary', type: 'submit' }, 'Unlock'),
+  h('button', { type: 'button', class: 'ghost', onclick: async () => {
+    if (S.dirty.size && !confirm('Unsaved round entries will be lost. Sign out anyway?')) return;
+    await api('POST', '/api/logout').catch(() => {}); S.user = null; S.dirty.clear(); idle.locked = false; cover.remove(); document.body.classList.remove('locked'); render();
+  } }, 'Sign in as someone else')));
+  document.body.append(cover);
+  pass.focus();
+}
+['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach((ev) => document.addEventListener(ev, noteActivity, { passive: true, capture: true }));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkIdle(); });
+setInterval(checkIdle, 30e3);
+
 async function refreshState() {
   await Store.upgrade();
   const st = await api('GET', '/api/state');
