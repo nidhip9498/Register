@@ -448,3 +448,7 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .otmonth summary::before { content: '▸'; display: inline-block; width: 1.1em; transition: transform .15s; }
 .otmonth[open] summary::before { transform: rotate(90deg); }
 .otmonth .otcards { padding: 0 .9rem .8rem; }
+.otsearch { margin: .9rem 0 .2rem; }
+.otsearch input { width: 100%; max-width: 420px; }
+.otfound { margin-top: .6rem; }
+.otfound .otcard span { display: block; }

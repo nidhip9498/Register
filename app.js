@@ -1221,7 +1221,8 @@ async function otHomeView(main) {
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Lists'),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal() }, '+ Create list'))),
     h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot, kind]) => h('a', { class: 'otroom' + (kind === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot },
-      h('b', {}, otName(ot)), h('small', {}, kind || 'Lists by date')))),
+      h('b', {}, otName(ot))))),
+    otSearchBox(),
     h('h3', {}, 'Today · ', fmtDay(today)),
     todays.length ? h('div', { class: 'otcards' }, todays.map((l) => listCard(l))) : h('p', { class: 'muted' }, 'No lists for today yet.'),
     ...(later.length ? [h('h3', {}, 'Coming up'), h('div', { class: 'otcards' }, later.slice(0, 12).map((l) => listCard(l)))] : []));
@@ -1231,13 +1232,29 @@ async function otDatesView(main, ot) {
   const today = S.meta.today;
   const lists = await api('GET', '/api/otlists?ot=' + encodeURIComponent(ot));
   const up = lists.filter((l) => l.date >= today).reverse(), past = lists.filter((l) => l.date < today);
-  const kind = (OT_ROOMS.find(([o]) => o === ot) || [])[1];
   main.append(
-    h('div', { class: 'toolbar' }, h('a', { class: 'button ghost', href: '#ot' }, '‹ OT Lists'), h('h2', {}, otName(ot), kind ? h('small', { class: 'muted' }, ` · ${kind}`) : ''),
+    h('div', { class: 'toolbar' }, h('a', { class: 'button ghost', href: '#ot' }, '‹ OT Lists'), h('h2', {}, otName(ot)),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal(ot) }, '+ Create list'))),
     h('h3', {}, 'Today and coming up'),
     up.length ? h('div', { class: 'otcards' }, up.map((l) => listCard(l, false))) : h('p', { class: 'muted' }, 'No lists yet.'),
     ...(lists.length ? [h('h3', {}, 'By month'), monthGroups(lists)] : []));
+}
+
+// Find a patient by UHID or name: every OT list they were posted on, newest first.
+function otSearchBox() {
+  const out = h('div', { class: 'otfound' });
+  let timer;
+  const run = async (q) => {
+    if (q.trim().length < 2) { out.replaceChildren(); return; }
+    const rows = await api('GET', '/api/otsearch?q=' + encodeURIComponent(q.trim())).catch(() => []);
+    out.replaceChildren(rows.length ? h('div', { class: 'otcards' }, rows.map((r) => h('a', { class: 'otcard', href: '#otlist/' + encodeURIComponent(r.list_id) },
+      h('b', {}, r.name), h('span', { class: 'muted small' }, [[r.age, r.sex].filter(Boolean).join('/'), r.uhid && `UHID ${r.uhid}`].filter(Boolean).join(' · ')),
+      h('span', {}, `${otName(r.ot)} · ${fmtDay(r.date)}`),
+      h('span', { class: 'muted small' }, [r.surgery, fullNames(r.consultant)].filter(Boolean).join(' · '))))) : h('p', { class: 'muted' }, 'Not found on any OT list.'));
+  };
+  return h('div', { class: 'otsearch' },
+    h('input', { type: 'search', placeholder: 'Search a patient by UHID or name', autocomplete: 'off', oninput: (ev) => { clearTimeout(timer); timer = setTimeout(() => run(ev.target.value), 250); } }),
+    out);
 }
 
 // Every list of one OT grouped by month and year; tapping a month opens its dates right there.
