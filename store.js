@@ -80,6 +80,16 @@ const Store = (() => {
     if (changed.length) { await persist(changed); listeners.forEach((f) => f('remote')); }
     return changed.length;
   }
+  // Records moved to the archive: removed from this device only (no change is sent back).
+  async function dropLocal(ids) {
+    const gone = ids.filter((id) => R.has(id));
+    if (!gone.length) return 0;
+    gone.forEach((id) => R.delete(id));
+    await tx('records', 'readwrite', (s) => gone.forEach((id) => s.delete(id)));
+    listeners.forEach((f) => f('remote'));
+    return gone.length;
+  }
+  const allIds = () => [...R.keys()];
   function dirtyRecords() { return [...R.values()].filter((r) => r.dirty); }
   async function markClean(ids, tsById) {
     const recs = [];
@@ -994,6 +1004,16 @@ const Store = (() => {
     return { ok: true };
   });
 
+  // Patients discharged more than a year ago, with their rounds, notes, OT findings and bed moves.
+  // OT lists stay, so the OT Log keeps every operation.
+  route('GET', '/api/archive/plan', ADMIN, () => {
+    const cutoff = shiftDate(today(), -365);
+    const old = all('admission').filter((a) => a.discharge_date && a.discharge_date < cutoff);
+    const ids = new Set(old.map((a) => a.id));
+    const related = [...all('round'), ...all('note'), ...all('ot'), ...all('move')].filter((r) => ids.has(r.admission_id)).map((r) => r.id);
+    return { cutoff, patients: old.length, ids: [...ids, ...related] };
+  });
+
   route('GET', '/api/audit', ADMIN, () => all('audit').sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 500).map((a) => ({ ...a, name: userName(a.user_id) })));
 
   // A full, unencrypted copy of the ward's data saved as a file on this device.
@@ -1023,5 +1043,5 @@ const Store = (() => {
     throw new HttpError(404, 'Not found');
   }
 
-  return { upgrade, load, wipe, getMeta, setMeta, handle, restoreSession, applyRemote, dirtyRecords, markClean, onChange: (f) => listeners.add(f), HttpError };
+  return { upgrade, load, wipe, getMeta, setMeta, handle, restoreSession, applyRemote, dirtyRecords, markClean, dropLocal, allIds, onChange: (f) => listeners.add(f), HttpError };
 })();

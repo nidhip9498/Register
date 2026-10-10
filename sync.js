@@ -88,12 +88,14 @@ const Sync = (() => {
         let more = true;
         while (more) {
           const out = await call(cfg.url, { action: 'pull', token: cfg.token, since: cfg.lastSeq, limit: 500 });
-          const recs = [];
+          const recs = [], gone = [];
           for (const x of out.records) {
+            if (x.blob === '') { gone.push(x.rid); continue; } // moved to the archive
             try { const o = await open(x.blob); recs.push({ id: o.id, type: o.type, data: o.data, by: o.by, ts: x.ts }); }
             catch { console.warn('Skipped a record that could not be decrypted'); }
           }
           await Store.applyRemote(recs);
+          if (gone.length) await Store.dropLocal(await localIds(gone));
           cfg.lastSeq = out.seq;
           await Store.setMeta('sync', cfg);
           more = out.more;
@@ -110,6 +112,50 @@ const Sync = (() => {
     return running;
   }
 
+  // Which local records these sealed ids belong to.
+  async function localIds(rids) {
+    const want = new Set(rids), out = [];
+    for (const id of Store.allIds()) if (want.has(await sealedId(id))) out.push(id);
+    return out;
+  }
+  async function serverVersion() { const h = await call(cfg.url, { action: 'hello' }); return h.version || 1; }
+  const needUpdate = () => new Error('The Google Apps Script needs the new Code.gs first (see the archive steps).');
+
+  // Move old records to the sheet's archive tab, then off this device.
+  async function archive(ids) {
+    if (!cfg) throw new Error('This device is not connected to the ward');
+    if (await serverVersion() < 2) throw needUpdate();
+    await syncNow();
+    if (Store.dirtyRecords().length) throw new Error('Some changes have not been sent yet. Check the internet and try again.');
+    let moved = 0;
+    for (let i = 0; i < ids.length; i += 400) {
+      const part = ids.slice(i, i + 400), rids = [];
+      for (const id of part) rids.push(await sealedId(id));
+      const out = await call(cfg.url, { action: 'archive', token: cfg.token, rids });
+      moved += out.moved;
+      await Store.dropLocal(part);
+    }
+    await syncNow();
+    return moved;
+  }
+  // Every archived record, decrypted here; kept in memory only while the page is open.
+  let archiveCache = null;
+  async function readArchive() {
+    if (archiveCache) return archiveCache;
+    if (!cfg) throw new Error('This device is not connected to the ward');
+    if (await serverVersion() < 2) throw needUpdate();
+    const out = [];
+    let offset = 0, more = true;
+    while (more) {
+      const page = await call(cfg.url, { action: 'readArchive', token: cfg.token, offset, limit: 500 });
+      for (const x of page.records) { try { out.push(await open(x.blob)); } catch { /* not readable with this passcode */ } }
+      offset += page.records.length;
+      more = page.more && page.records.length > 0;
+    }
+    archiveCache = out;
+    return out;
+  }
+
   // Sync soon after a change, every 2 minutes, and whenever the device comes back online.
   function schedule() { clearTimeout(timer); timer = setTimeout(syncNow, 1500); }
   function start() {
@@ -120,5 +166,5 @@ const Sync = (() => {
     syncNow();
   }
 
-  return { connect, restore, start, syncNow, status: () => ({ ...status, waiting: Store.dirtyRecords().length }), onStatus: (f) => listeners.add(f), configured: () => !!cfg, url: () => cfg && cfg.url };
+  return { connect, restore, start, syncNow, archive, readArchive, status: () => ({ ...status, waiting: Store.dirtyRecords().length }), onStatus: (f) => listeners.add(f), configured: () => !!cfg, url: () => cfg && cfg.url };
 })();

@@ -1184,6 +1184,38 @@ async function statusView(main) {
   const search = h('section', { class: 'noprint' }, h('h3', {}, 'Find any patient, including discharged'));
   main.append(search);
   patientSearch(search);
+  const arch = h('section', { class: 'noprint' }, h('h3', {}, 'Search the archive'), h('p', { class: 'muted small' }, 'Patients discharged more than a year ago and archived by the admin. Needs internet.'));
+  main.append(arch);
+  archiveSearch(arch);
+}
+
+function archiveSearch(box) {
+  const out = h('div', { class: 'archout' });
+  const q = h('input', { type: 'search', placeholder: 'Name, UHID or diagnosis', onkeydown: (ev) => { if (ev.key === 'Enter') run(); } });
+  const run = async () => {
+    const t = q.value.trim().toLowerCase();
+    if (t.length < 2) return;
+    out.replaceChildren(h('p', { class: 'muted' }, 'Fetching the archive…'));
+    let recs;
+    try { recs = await Sync.readArchive(); } catch (e) { out.replaceChildren(h('p', { class: 'error' }, e.message)); return; }
+    const of = (type) => recs.filter((r) => r.type === type && r.data).map((r) => ({ id: r.id, ...r.data }));
+    const adms = of('admission').filter((a) => [a.name, a.ip_no, a.diagnosis].some((x) => (x || '').toLowerCase().includes(t)));
+    const rounds = of('round'), ots = of('ot');
+    out.replaceChildren(adms.length ? h('div', { class: 'otcards' }, adms.map((a) => {
+      const ar = rounds.filter((r) => r.admission_id === a.id).sort((x, y) => (x.date < y.date ? -1 : 1));
+      const ao = ots.filter((o) => o.admission_id === a.id).sort((x, y) => (x.at < y.at ? -1 : 1));
+      return h('div', { class: 'card' },
+        h('b', { class: 'big' }, a.name), h('div', { class: 'muted small' }, [a.ip_no && `UHID ${a.ip_no}`, ageSex(a, a.discharge_date || S.meta.today), a.unit, a.bed].filter(Boolean).join(' · ')),
+        h('dl', { class: 'otfacts' },
+          fact('Admitted', a.admit_date && fmtDate(a.admit_date)), fact('Discharged', a.discharge_date && `${fmtDate(a.discharge_date)}${a.outcome ? ` (${a.outcome})` : ''}`),
+          fact('Diagnosis', a.diagnosis), fact('Procedure', a.procedure_done),
+          fact('Surgery dates', [a.surgery_date, a.surgery_date2, a.surgery_date3].filter(Boolean).map(fmtDate).join(', ')), fact('Short notes', a.instructions)),
+        (ar.length || ao.length) ? h('details', {}, h('summary', {}, `OT findings (${ao.length}) and rounds (${ar.length})`),
+          ao.map((o) => h('p', { class: 'small' }, h('b', {}, fmtDate(o.at.slice(0, 10)) + ': '), o.text)),
+          ar.map((r) => h('p', { class: 'small' }, h('b', {}, fmtDate(r.date) + ': '), summariseVals(r.vals, monitorFor(a), a), r.remarks ? ` · ${r.remarks}` : ''))) : null);
+    })) : h('p', { class: 'muted' }, 'No one in the archive matches.'));
+  };
+  box.append(h('div', { class: 'saddrow' }, q, h('button', { class: 'ghost', onclick: run }, 'Search')), out);
 }
 
 // ---------- Patients list (search / discharged) ----------
@@ -1759,11 +1791,29 @@ async function notesView(main, unit) {
 // ---------- Admin ----------
 
 function adminView(main, tab) {
-  const tabs = { users: 'Users', params: 'Round fields', beds: 'Beds & units', import: 'Import', look: 'Appearance', log: 'Activity log' };
+  const tabs = { users: 'Users', params: 'Round fields', beds: 'Beds & units', import: 'Import', archive: 'Archive', look: 'Appearance', log: 'Activity log' };
   main.append(h('h2', {}, 'Admin'), h('div', { class: 'tabs' }, Object.entries(tabs).map(([k, v]) => h('a', { href: '#admin/' + k, class: k === tab ? 'active' : '' }, v))));
   const body = h('div', {});
   main.append(body);
-  ({ users: adminUsers, params: adminParams, beds: adminBeds, import: adminImport, look: adminLook, log: adminLog })[tab](body);
+  ({ users: adminUsers, params: adminParams, beds: adminBeds, import: adminImport, archive: adminArchive, look: adminLook, log: adminLog })[tab](body);
+}
+
+// Once a year: patients discharged more than a year ago move to the archive tab of the Google Sheet.
+async function adminArchive(body) {
+  const plan = await api('GET', '/api/archive/plan');
+  const btn = plan.patients ? h('button', { class: 'primary', onclick: async () => {
+    if (!confirm(`Move ${plan.patients} patient${plan.patients === 1 ? '' : 's'} discharged before ${fmtDate(plan.cutoff)} to the archive?`)) return;
+    btn.disabled = true; btn.textContent = 'Archiving…';
+    try { const n = await Sync.archive(plan.ids); toast(`Archived ${plan.patients} patient${plan.patients === 1 ? '' : 's'} (${n} entries)`); render(); }
+    catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = 'Move to archive'; }
+  } }, 'Move to archive') : null;
+  body.append(h('div', { class: 'card' },
+    h('h3', {}, 'Archive old patients'),
+    h('p', {}, `This moves patients discharged before ${fmtDate(plan.cutoff)} (more than a year ago), with their rounds, notes and OT findings, to an "archive" tab in your Google Sheet. Phones and laptops then stop carrying them, which keeps the app quick. OT lists and the OT Log are not affected.`),
+    h('p', {}, 'Archived patients can still be found with "Search the archive" at the bottom of the Status tab.'),
+    h('p', {}, h('b', {}, plan.patients ? `${plan.patients} patient${plan.patients === 1 ? '' : 's'} can be archived now.` : 'No one was discharged more than a year ago, so there is nothing to archive yet.')),
+    btn,
+    h('p', { class: 'muted small' }, 'Needs internet, and the updated Code.gs in your Google Apps Script.')));
 }
 
 async function adminUsers(body) {
