@@ -1237,7 +1237,22 @@ async function otDatesView(main, ot) {
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal(ot) }, '+ Create list'))),
     h('h3', {}, 'Today and coming up'),
     up.length ? h('div', { class: 'otcards' }, up.map((l) => listCard(l, false))) : h('p', { class: 'muted' }, 'No lists yet.'),
-    ...(past.length ? [h('h3', {}, 'Earlier'), h('div', { class: 'otcards' }, past.slice(0, 60).map((l) => listCard(l, false)))] : []));
+    ...(lists.length ? [h('h3', {}, 'By month'), monthGroups(lists)] : []));
+}
+
+// Every list of one OT grouped by month and year; tapping a month opens its dates right there.
+function monthGroups(lists) {
+  const groups = new Map();
+  for (const l of lists) { const k = l.date.slice(0, 7); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); }
+  const thisMonth = S.meta.today.slice(0, 7);
+  return h('div', { class: 'otmonths' }, [...groups.keys()].sort().reverse().map((k) => {
+    const ls = groups.get(k).sort((x, y) => (x.date < y.date ? -1 : 1));
+    const [y, m] = k.split('-');
+    const title = new Date(+y, +m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    return h('details', { class: 'otmonth', open: k === thisMonth || null },
+      h('summary', {}, h('b', {}, title), h('span', { class: 'muted small' }, ` · ${ls.length} list${ls.length === 1 ? '' : 's'}`)),
+      h('div', { class: 'otcards' }, ls.map((l) => listCard(l, false))));
+  }));
 }
 
 // Pick an OT and a date. Opens the list (an existing one if that OT already has a list that day).
@@ -1271,7 +1286,7 @@ async function otListView(main, id) {
   const note = h('input', { value: extraNote, placeholder: 'Anything else to print on top', onchange: saveHead });
   const sheet = h('div', { class: 'printonly otprint' });
   const drawSheet = () => sheet.replaceChildren(
-    h('h1', {}, `Department of Pediatric Surgery, MCH Block, OT-${l.ot} List`), h('p', { class: 'c' }, `(${shortDate(l.date)})`),
+    h('h1', {}, 'Department of Pediatric Surgery, MCH Block'), h('p', { class: 'c t2' }, 'OT List - ', h('b', {}, otName(l.ot))), h('p', { class: 'c' }, `(${shortDate(l.date)})`),
     l.surgeon && h('p', { class: 'c b' }, fullNames(l.surgeon).toUpperCase()), h('p', { class: 'c b' }, 'KEEP OT WARM'), extraNote && h('p', { class: 'c b' }, extraNote.toUpperCase()),
     h('table', {}, h('thead', {}, h('tr', {}, ['SL NO', 'WARD', 'NAME', 'AGE/SEX', 'UHID', 'DIAGNOSIS', 'SURGERY', 'CONSULTANT', 'BLOOD ARRANGE', 'SPECIAL REQ'].map((t) => h('th', {}, t)))),
       h('tbody', {}, l.entries.map((e, i) => h('tr', {}, h('td', {}, i + 1), h('td', {}, wardCol(e.bed)), h('td', {}, (e.name || '').toUpperCase()), h('td', {}, [e.age, e.sex].filter(Boolean).join('/')),

@@ -429,6 +429,7 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .pick.done { opacity: .6; }
 @media (max-width: 640px) { .otfacts { grid-template-columns: 6rem 1fr; } }
 .otprint h1 { font-size: 15px; text-align: center; margin: 0 0 6px; }
+.otprint .t2 { font-size: 14px; }
 .otprint .c { text-align: center; margin: 4px 0; font-size: 13px; }
 .otprint .b { font-weight: 700; }
 .otprint table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -440,3 +441,10 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 
 .otmeta { text-align: right; font-size: .72rem; color: var(--muted); margin-top: 1rem; }
 .otmeta p { margin: 0 0 .15rem; }
+.otmonths { display: grid; gap: .5rem; }
+.otmonth { border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.otmonth summary { cursor: pointer; padding: .7rem .9rem; list-style: none; }
+.otmonth summary::-webkit-details-marker { display: none; }
+.otmonth summary::before { content: '▸'; display: inline-block; width: 1.1em; transition: transform .15s; }
+.otmonth[open] summary::before { transform: rotate(90deg); }
+.otmonth .otcards { padding: 0 .9rem .8rem; }
