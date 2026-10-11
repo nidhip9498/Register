@@ -523,3 +523,8 @@ details.fold[open] > summary { margin-bottom: .4rem; }
 .invdate { color: var(--accent); margin: .2rem 0 .4rem; }
 .invday .ptcols h3 { font-size: .95rem; }
 .undodis .undo { margin-left: .7rem; padding: .2rem .6rem; }
+
+table.print tr.hasnotes td { border-bottom: 0; }
+table.print tr.notesrow td { background: var(--warn-soft, #fff7ed); font-size: .85em; padding-top: .2rem; padding-bottom: .3rem; }
+table.print tr.notesrow .unote { margin-left: 1rem; }
+@media print { table.print tr.notesrow td { background: #f6f6f6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }

@@ -1268,18 +1268,18 @@ async function statusView(main) {
   // Same layout as the printed register: every section in bed order, with the morning round and short notes.
   const byBed = {};
   for (const a of pts) (byBed[a.bed_on_date] = byBed[a.bed_on_date] || []).push(a);
-  for (const sec of S.meta.sections) {
+  for (const sec of wardBeds()) {
     if (!sec.beds.some((b) => byBed[b])) continue;
-    box.append(h('section', { class: 'printsec' }, h('h3', {}, sec.name), h('div', { class: 'tablewrap' }, h('table', { class: 'list status print' },
-      h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'Consultant', 'Diagnosis / Surgery', 'POD · Day', 'Morning round', 'Short notes'].map((t) => h('th', {}, t)))),
-      h('tbody', {}, sec.beds.flatMap((bed) => (byBed[bed] || []).map((a) => h('tr', {},
+    box.append(h('section', { class: 'printsec' }, h('h3', {}, wardTitle(sec.ward)), h('div', { class: 'tablewrap' }, h('table', { class: 'list status print' },
+      h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'Consultant', 'Diagnosis / Surgery', 'POD · Day', 'Morning round', 'Remarks'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, sec.beds.flatMap((bed) => (byBed[bed] || []).flatMap((a) => [h('tr', { class: notesRow(a, 7) ? 'hasnotes' : '' },
         h('td', {}, h('span', { class: 'bedno' }, bed)),
         h('td', {}, h('a', { href: '#patient/' + a.id, class: 'pname' }, a.name), h('div', { class: 'muted small' }, ageSex(a, date))),
         h('td', {}, a.unit),
         h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'muted small' }, a.procedure_done) : null),
         h('td', {}, [podText(a, date), dayNo(a, date) && `Day ${dayNo(a, date)}`].filter(Boolean).join(' · ')),
-        h('td', {}, a.round ? [summariseVals(a.round.vals, monitorFor(a), a).split(' · ').filter(Boolean).map((t) => h('div', {}, t)), a.round.remarks && h('div', {}, h('b', {}, 'Remarks: '), a.round.remarks)] : h('span', { class: 'muted' }, 'Not filled yet')),
-        h('td', {}, a.instructions, a.unit_note ? h('div', {}, h('b', {}, `${a.unit}: `), a.unit_note) : null)))))))));
+        h('td', {}, a.round ? summariseVals(a.round.vals, monitorFor(a), a).split(' · ').filter(Boolean).map((t) => h('div', {}, t)) : h('span', { class: 'muted' }, 'Not filled yet')),
+        h('td', {}, a.round ? a.round.remarks || '' : '')), notesRow(a, 7)])))))));
   }
   if (!pts.length) box.append(h('p', { class: 'muted empty-note' }, 'No patients on this date.'));
   // Discharged by mistake? The last week's discharges, each with Undo (back into the same bed).
@@ -1367,21 +1367,33 @@ async function printView(main, date, ward) {
   main.append(
     h('div', { class: 'toolbar noprint' }, h('a', { href: icuWard ? '#icu' : '#register', class: 'button ghost' }, icuWard ? '‹ ICU Register' : '‹ Ward Register'), h('button', { class: 'primary', onclick: () => window.print() }, 'Print')),
     h('h2', {}, ward ? `${ward} · ` : '', icuWard ? 'ICU register · ' : 'Ward register · ', fmtDay(date)),
-    ...S.meta.sections.map((sec) => ({ ...sec, beds: ward ? sec.beds.filter((b) => wardOf(b) === ward) : sec.beds })).filter((sec) => sec.beds.length).map((sec) => h('section', { class: 'printsec' }, h('h3', {}, sec.name),
+    ...wardBeds(ward).map(({ ward: w, beds }) => h('section', { class: 'printsec' }, ward ? null : h('h3', {}, wardTitle(w)),
       h('table', { class: 'print' },
-        h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'Unit', 'Diagnosis / procedure', 'POD', 'Morning round', 'Short notes'].map((t) => h('th', {}, t)))),
-        h('tbody', {}, sec.beds.map((bed) => {
+        h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'Unit', 'Diagnosis / procedure', 'POD', 'Morning round', 'Remarks'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, beds.map((bed) => {
           const here = byBed[bed] || [];
           if (!here.length) return h('tr', { class: 'emptyrow' }, h('td', {}, bed), h('td', { colspan: 6 }, ''));
-          return here.map((a) => h('tr', {},
+          return here.map((a) => [h('tr', { class: notesRow(a, 7) ? 'hasnotes' : '' },
             h('td', {}, bed),
             h('td', {}, h('b', {}, a.name), h('br'), ageSex(a, date), a.ip_no ? ` · ${a.ip_no}` : ''),
             h('td', {}, a.unit),
             h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'muted' }, a.procedure_done) : null),
             h('td', {}, podText(a, date).replace('POD ', '')),
-            h('td', {}, a.round ? summariseVals(a.round.vals, monitorFor(a), a) : '', a.round && a.round.remarks ? h('div', {}, a.round.remarks) : null),
-            h('td', {}, a.instructions, a.unit_note ? h('div', {}, h('b', {}, `${a.unit}: `), a.unit_note) : null)));
+            h('td', {}, a.round ? summariseVals(a.round.vals, monitorFor(a), a) : ''),
+            h('td', {}, a.round ? a.round.remarks || '' : '')), notesRow(a, 7)]);
         }))))));
+}
+// Beds grouped by ward only (6B, 6A…), in bed order: the print has no sub-headings such as Post-Op or Chemo cubicle.
+function wardBeds(only) {
+  const beds = S.meta.sections.flatMap((x) => x.beds).filter((b) => !only || wardOf(b) === only);
+  return [...new Set(beds.map(wardOf))].map((w) => ({ ward: w, beds: beds.filter((b) => wardOf(b) === w) }));
+}
+// Short notes (and the consultant's round note) as one strip under the patient, across every column.
+function notesRow(a, cols) {
+  if (!a.instructions && !a.unit_note) return null;
+  return h('tr', { class: 'notesrow' }, h('td', { colspan: cols },
+    a.instructions ? [h('b', {}, 'Short notes: '), a.instructions] : null,
+    a.unit_note ? h('span', { class: 'unote' }, h('b', {}, `${a.unit || 'Consultant'}: `), a.unit_note) : null));
 }
 
 // ---------- OT lists: OT 11 to 16, one list per OT per day ----------
