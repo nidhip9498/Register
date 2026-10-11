@@ -511,3 +511,14 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .invadd input[type=date] { max-width: 11rem; }
 .invlist .del { margin-left: .7rem; }
 @media (min-width: 641px) { .ot .invadd { flex-direction: row; align-items: center; } .invadd input:first-child { flex: 1; } .invadd button { flex: 0 0 auto; } }
+
+details.fold > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::before { content: '▸'; color: var(--plan); font-size: .8rem; }
+details.fold[open] > summary::before { content: '▾'; }
+details.fold > summary .othead { margin-bottom: 0; }
+details.fold[open] > summary { margin-bottom: .4rem; }
+.foldhint { color: var(--muted); }
+.invday + .invday { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .6rem; }
+.invdate { color: var(--accent); margin: .2rem 0 .4rem; }
+.invday .ptcols h3 { font-size: .95rem; }

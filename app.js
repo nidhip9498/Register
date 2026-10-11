@@ -232,9 +232,13 @@ function applyTheme() {
   else delete document.documentElement.dataset.theme;
 }
 
+// A redraw of the same page (e.g. after a sync brings in someone else's entry) keeps the place on screen instead of jumping to the top.
+let lastHash = null;
 function render() {
   applyTheme();
   const app = document.getElementById('app');
+  const keep = location.hash === lastHash ? window.scrollY : 0, height = document.documentElement.scrollHeight;
+  lastHash = location.hash;
   app.replaceChildren();
   if (!Sync.configured()) return app.append(connectView());
   if (S.setupNeeded) return app.append(setupView());
@@ -244,18 +248,22 @@ function render() {
   drawSyncChip(Sync.status());
   const main = h('main', {});
   app.append(main);
-  if (route === 'patients') statusView(main);
-  else if (route === 'patient') patientView(main, arg);
-  else if (route === 'print') printView(main, arg || S.date, location.hash.split('/')[2] || '');
-  else if (route === 'census') censusView(main);
-  else if (route === 'ot') arg ? otDatesView(main, arg) : otHomeView(main);
-  else if (route === 'otlist') otListView(main, decodeURIComponent(arg || ''));
-  else if (route === 'otlog') otLogView(main, decodeURIComponent(arg || ''));
-  else if (route === 'rounds' && canEdit()) roundsView(main);
-  else if (route === 'notes') notesView(main, decodeURIComponent(arg || ''));
-  else if (route === 'admin' && S.user.role === 'admin') adminView(main, arg || 'users');
-  else if (route === 'icu') registerView(main, 'icu');
-  else registerView(main, 'ward');
+  if (keep) { main.style.minHeight = height + 'px'; window.scrollTo(0, keep); }
+  Promise.resolve(view(route, arg, main)).catch(() => {}).then(() => { if (keep) { window.scrollTo(0, keep); main.style.minHeight = ''; } });
+}
+function view(route, arg, main) {
+  if (route === 'patients') return statusView(main);
+  if (route === 'patient') return patientView(main, arg);
+  if (route === 'print') return printView(main, arg || S.date, location.hash.split('/')[2] || '');
+  if (route === 'census') return censusView(main);
+  if (route === 'ot') return arg ? otDatesView(main, arg) : otHomeView(main);
+  if (route === 'otlist') return otListView(main, decodeURIComponent(arg || ''));
+  if (route === 'otlog') return otLogView(main, decodeURIComponent(arg || ''));
+  if (route === 'rounds' && canEdit()) return roundsView(main);
+  if (route === 'notes') return notesView(main, decodeURIComponent(arg || ''));
+  if (route === 'admin' && S.user.role === 'admin') return adminView(main, arg || 'users');
+  if (route === 'icu') return registerView(main, 'icu');
+  return registerView(main, 'ward');
 }
 
 function topBar(route) {
@@ -445,9 +453,9 @@ async function registerView(main, mode) {
       clickStat('Admitted today', here.filter((a) => a.admit_date === date), date, false),
       clickStat('Discharged today', here.filter((a) => a.discharge_date === date), date, true),
       (() => {
-        const rows = invOn(here.filter((a) => a.discharge_date !== date), addDays(date, 1));
-        const el = stat('Investigations tomorrow', rows.length); el.classList.add('clickable'); el.title = 'Show the investigations';
-        el.onclick = () => invPanel('Investigations tomorrow', rows, addDays(date, 1)); return el;
+        const rows = invFrom(here.filter((a) => a.discharge_date !== date), date);
+        const el = stat('Upcoming investigations', rows.length); el.classList.add('clickable'); el.title = 'Show all booked investigations';
+        el.onclick = () => upcomingPanel(rows, date); return el;
       })());
 
     const q = S.filters.q.trim().toLowerCase();
@@ -658,18 +666,24 @@ function clickStat(label, list, date, out) {
   return el;
 }
 // One column per ward (6B, 6A); on a wide screen each patient takes a single line.
-function wardListPanel(title, date, rows, line, emptyText) {
+const bedRank = (bed) => { const i = S.meta.sections.flatMap((x) => x.beds).indexOf(bed); return i < 0 ? 1e6 : i; };
+function wardCols(rows, line) {
+  rows = [...rows].sort((x, y) => bedRank(x.bed) - bedRank(y.bed));
+  const wards = [...new Set(rows.map((r) => wardOf(r.bed)))];
+  return h('div', { class: 'emptycols ptcols' }, wards.map((w) => {
+    const list = rows.filter((r) => wardOf(r.bed) === w);
+    return h('div', {}, h('h3', {}, `${w} · ${list.length}`), h('ul', {}, list.map((r) => h('li', {}, line(r)))));
+  }));
+}
+function listModal(title, ...kids) {
   const root = document.getElementById('modal-root');
   const close = () => root.replaceChildren();
-  const wards = [...new Set(rows.map((r) => wardOf(r.bed)))];
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
     h('div', { class: 'modal card panel wide' },
-      h('div', { class: 'mhead' }, h('h2', {}, `${title} · ${rows.length}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
-      h('p', { class: 'muted' }, fmtDay(date)),
-      rows.length ? h('div', { class: 'emptycols ptcols' }, wards.map((w) => {
-        const list = rows.filter((r) => wardOf(r.bed) === w);
-        return h('div', {}, h('h3', {}, `${w} · ${list.length}`), h('ul', {}, list.map((r) => h('li', {}, line(r)))));
-      })) : h('p', {}, emptyText))));
+      h('div', { class: 'mhead' }, h('h2', {}, title), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), ...kids)));
+}
+function wardListPanel(title, date, rows, line, emptyText) {
+  listModal(`${title} · ${rows.length}`, h('p', { class: 'muted' }, fmtDay(date)), rows.length ? wardCols(rows, line) : h('p', {}, emptyText));
 }
 function patientsPanel(label, list, date, out) {
   wardListPanel(label, date, list.map((a) => ({ a, bed: a.bed_on_date || a.bed })), ({ a, bed }) => [
@@ -680,10 +694,19 @@ function patientsPanel(label, list, date, out) {
 }
 // Investigations booked for `day` among these patients, in bed order.
 const invOn = (adms, day) => adms.flatMap((a) => (a.inv || []).filter((v) => v.date === day).map((v) => ({ a, v, bed: a.bed_on_date || a.bed })));
-function invPanel(title, rows, day) {
-  wardListPanel(title, day, rows, ({ a, v, bed }) => [
-    h('b', { class: 'invname' }, v.text), h('span', { class: 'muted small' }, bed), h('span', {}, a.name),
-    a.diagnosis ? h('span', { class: 'small muted' }, a.diagnosis) : null], 'No investigations booked.');
+const invLine = ({ a, v, bed }) => [
+  h('b', { class: 'invname' }, v.text), h('span', { class: 'muted small' }, bed), h('span', {}, a.name),
+  a.diagnosis ? h('span', { class: 'small muted' }, a.diagnosis) : null];
+function invPanel(title, rows, day) { wardListPanel(title, day, rows, invLine, 'No investigations booked.'); }
+// Every investigation booked from `day` on, among these patients.
+const invFrom = (adms, day) => adms.flatMap((a) => (a.inv || []).filter((v) => v.date >= day).map((v) => ({ a, v, bed: a.bed_on_date || a.bed })));
+// Upcoming investigations, date by date, each day split by ward.
+function upcomingPanel(rows, today) {
+  const days = [...new Set(rows.map((r) => r.v.date))].sort();
+  listModal(`Upcoming investigations · ${rows.length}`,
+    rows.length ? days.map((d) => h('section', { class: 'invday' },
+      h('h3', { class: 'invdate' }, d === today ? 'Today · ' : d === addDays(today, 1) ? 'Tomorrow · ' : '', fmtDay(d)),
+      wardCols(rows.filter((r) => r.v.date === d), invLine))) : h('p', {}, 'No investigations booked.'));
 }
 
 function emptyBed(bed) {
@@ -768,6 +791,13 @@ function scrubPicker(initial, onSave) {
 }
 
 const postedText = (r) => { const s = r && r.surgery; return !s || s.already ? 'Posted' : s.full ? 'Posted. Three surgery dates are already filled, so this one was not added.' : `Posted. ${fmtDate(s.date)} saved as surgery ${s.n} because the patient was on that day's OT list. POD counts from it.`; };
+// Rounds boxes fold into a dropdown; one left open stays open when its card is redrawn.
+const openBoxes = new Set();
+function foldBox(key, cls, title, hint, kids) {
+  const d = h('details', { class: 'ot fold ' + cls, open: openBoxes.has(key) || null, ontoggle: () => (d.open ? openBoxes.add(key) : openBoxes.delete(key)) },
+    h('summary', {}, h('span', { class: 'othead' }, title), hint ? h('span', { class: 'foldhint small' }, hint) : null), ...kids);
+  return d;
+}
 function otBox(a, onChanged) {
   const ta = h('textarea', { rows: 2, placeholder: 'Type OT findings or instructions for the ward…' });
   const post = async () => {
@@ -778,11 +808,11 @@ function otBox(a, onChanged) {
       onChanged();
     } catch (e) { toast(e.message, true); }
   };
-  return h('div', { class: 'ot' },
-    h('div', { class: 'othead' }, 'OT findings & instructions'),
+  const n = a.ot.length + (a.otprocs || []).length;
+  return foldBox('ot:' + a.id, '', 'OT findings & instructions', n ? `${a.ot.length} posted${(a.otprocs || []).length ? ` · ${a.otprocs.length} OT` : ''}` : '', [
     (a.otprocs || []).map((x) => h('p', { class: 'otproc small' }, h('b', {}, `${otName(x.ot)} · ${fmtDate(x.date)}: `), x.done || 'Procedure not noted yet', x.scrub.length ? h('span', { class: 'muted' }, ` · ${x.scrub.join('/')}`) : null)),
     a.ot.length ? otList(a.ot, onChanged) : null,
-    h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post')));
+    h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post'))]);
 }
 
 // Investigations booked for a date (Barium swallow, CT under GA, PET CT…). The register shows tomorrow's; the alert bar shows today's.
@@ -793,16 +823,16 @@ function invBox(a, date, onChanged) {
     if (!text.value.trim()) return;
     try { await api('POST', '/api/inv/' + a.id, { text: text.value, date: when.value }); toast('Investigation added'); onChanged(); } catch (e) { toast(e.message, true); }
   };
-  const inv = a.inv || [];
-  return h('div', { class: 'ot inv' },
-    h('div', { class: 'othead' }, 'Investigations'),
+  const inv = a.inv || [], next = inv.find((v) => v.date >= date);
+  const when2 = (d) => (d === date ? 'Today' : d === addDays(date, 1) ? 'Tomorrow' : fmtDate(d));
+  return foldBox('inv:' + a.id, 'inv', 'Investigations', next ? `${when2(next.date)}: ${next.text}${inv.filter((v) => v.date >= date).length > 1 ? ` +${inv.filter((v) => v.date >= date).length - 1}` : ''}` : '', [
     inv.length ? h('ul', { class: 'invlist' }, inv.map((v) => h('li', { class: v.date < date ? 'past' : v.date === date ? 'today' : '' },
       h('b', {}, v.date === date ? 'Today' : v.date === addDays(date, 1) ? 'Tomorrow' : fmtDate(v.date)), ` · ${v.text}`,
       canEdit() && h('button', { type: 'button', class: 'link small del', onclick: async () => {
         if (!confirm(`Delete ${v.text}?`)) return;
         try { await api('DELETE', '/api/inv/' + encodeURIComponent(v.id)); toast('Deleted'); onChanged(); } catch (e) { toast(e.message, true); }
       } }, 'Delete')))) : null,
-    canEdit() && h('div', { class: 'otadd invadd' }, text, when, h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add')));
+    canEdit() && h('div', { class: 'otadd invadd' }, text, when, h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add'))]);
 }
 
 function patientCard(a, date, refresh) {
