@@ -1822,7 +1822,7 @@ async function censusView(main) {
         h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'occsx' }, a.procedure_done) : null),
         h('td', { class: 'blank' })); })))) : null;
     sheet.replaceChildren(
-      h('h2', {}, 'Bed Occupancy · ', fmtDay(date)),
+      h('h2', {}, 'Bed Occupancy'),
       h('table', { class: 'print occgrid' },
         h('thead', {}, h('tr', {}, cols.map((c) => h('th', {}, c.title)))),
         h('tbody', {},
