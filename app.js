@@ -434,7 +434,7 @@ async function registerView(main, mode) {
   S.dirty.clear();
 
   const inBed = (bed) => data.admissions.filter((a) => a.bed_on_date === bed && a.discharge_date !== date);
-  drawOtAlerts(alerts, data.admissions, (a) => bedPanel(a.bed_on_date));
+  drawOtAlerts(alerts, data.admissions, (a) => bedPanel(a.bed_on_date), date);
 
   function drawGrid() {
     const allBeds = sections.flatMap((s) => s.beds);
@@ -443,7 +443,12 @@ async function registerView(main, mode) {
       stat('Patients', here.filter((a) => a.discharge_date !== date).length),
       (() => { const empty = allBeds.filter((b) => !inBed(b).length); const el = stat('Empty beds', empty.length); el.classList.add('clickable'); el.title = 'Show the empty beds'; el.onclick = () => emptyBedsPanel(empty, date); return el; })(),
       clickStat('Admitted today', here.filter((a) => a.admit_date === date), date, false),
-      clickStat('Discharged today', here.filter((a) => a.discharge_date === date), date, true));
+      clickStat('Discharged today', here.filter((a) => a.discharge_date === date), date, true),
+      (() => {
+        const rows = invOn(here.filter((a) => a.discharge_date !== date), addDays(date, 1));
+        const el = stat('Investigations tomorrow', rows.length); el.classList.add('clickable'); el.title = 'Show the investigations';
+        el.onclick = () => invPanel('Investigations tomorrow', rows, addDays(date, 1)); return el;
+      })());
 
     const q = S.filters.q.trim().toLowerCase();
     const show = (bed) => {
@@ -594,16 +599,19 @@ async function shiftsModal() {
 function otSeenKey() { return 'ward-ot-seen:' + (S.user && S.user.id); }
 function otSeen() { try { return localStorage.getItem(otSeenKey()) || ''; } catch { return ''; } }
 const localStamp = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
-function drawOtAlerts(box, admissions, open) {
+function drawOtAlerts(box, admissions, open, date) {
   const since = otSeen() || localStamp(new Date(Date.now() - 24 * 3600e3)); // first time on this device: the last day
   const fresh = admissions.filter((a) => !a.discharge_date)
     .flatMap((a) => (a.ot || []).filter((o) => !o.mine && o.at > since).map((o) => ({ a, o })))
     .sort((x, y) => (x.o.at < y.o.at ? 1 : -1));
-  if (!fresh.length) return box.replaceChildren();
-  // A small bar with a bell; opening it shows every new entry and marks them all as read.
+  // Left half: investigations booked for today. Right half: new OT findings & instructions.
+  const day = date || S.meta.today;
+  const inv = invOn(admissions.filter((a) => !a.discharge_date || a.discharge_date > day), day);
+  if (!fresh.length && !inv.length) return box.replaceChildren();
+  // Opening the OT side shows every new entry and marks them all as read.
   const openList = () => {
     try { localStorage.setItem(otSeenKey(), fresh[0].o.at); } catch {}
-    box.replaceChildren();
+    drawOtAlerts(box, admissions.map((a) => ({ ...a, ot: [] })), open, date);
     const root = document.getElementById('modal-root');
     const close = () => root.replaceChildren();
     root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
@@ -614,10 +622,17 @@ function drawOtAlerts(box, admissions, open) {
           h('span', { class: 'muted small' }, ` · ${o.by || ''} · ${fmtDate(o.at.slice(0, 10))} ${o.at.slice(11, 16)}`),
           h('div', { class: 'otalert-text' }, o.text)))))));
   };
-  box.replaceChildren(h('button', { type: 'button', class: 'otbar', onclick: openList },
-    h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
-    h('b', {}, `${fresh.length} new OT finding${fresh.length === 1 ? '' : 's'} & instructions`),
-    h('span', { class: 'muted small' }, 'Tap to view')));
+  box.replaceChildren(h('div', { class: 'alertbar' },
+    inv.length ? h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Investigations today', inv, day) },
+      h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
+      h('b', {}, `${inv.length} investigation${inv.length === 1 ? '' : 's'} today`),
+      h('span', { class: 'muted small' }, 'Tap to view'))
+      : h('div', { class: 'otbar quiet' }, h('span', { class: 'muted small' }, 'No investigations today')),
+    fresh.length ? h('button', { type: 'button', class: 'otbar', onclick: openList },
+      h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
+      h('b', {}, `${fresh.length} new OT finding${fresh.length === 1 ? '' : 's'} & instructions`),
+      h('span', { class: 'muted small' }, 'Tap to view'))
+      : h('div', { class: 'otbar quiet' }, h('span', { class: 'muted small' }, 'No new OT findings'))));
 }
 
 // List of empty beds, one column per ward (6B, 6A).
@@ -642,24 +657,33 @@ function clickStat(label, list, date, out) {
   el.classList.add('clickable'); el.title = 'Show these patients'; el.onclick = () => patientsPanel(label, list, date, out);
   return el;
 }
-function patientsPanel(label, list, date, out) {
+// One column per ward (6B, 6A); on a wide screen each patient takes a single line.
+function wardListPanel(title, date, rows, line, emptyText) {
   const root = document.getElementById('modal-root');
   const close = () => root.replaceChildren();
-  const bedOf = (a) => a.bed_on_date || a.bed;
-  const wards = [...new Set(list.map((a) => wardOf(bedOf(a))))];
+  const wards = [...new Set(rows.map((r) => wardOf(r.bed)))];
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
-    h('div', { class: 'modal card panel' },
-      h('div', { class: 'mhead' }, h('h2', {}, `${label} · ${list.length}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+    h('div', { class: 'modal card panel wide' },
+      h('div', { class: 'mhead' }, h('h2', {}, `${title} · ${rows.length}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       h('p', { class: 'muted' }, fmtDay(date)),
-      list.length ? h('div', { class: 'emptycols ptcols' }, wards.map((w) => {
-        const pts = list.filter((a) => wardOf(bedOf(a)) === w);
-        return h('div', {}, h('h3', {}, `${w} · ${pts.length}`),
-          h('ul', {}, pts.map((a) => h('li', {},
-            h('div', {}, h('span', { class: 'muted small' }, bedOf(a) + ' · '), h('b', {}, a.name)),
-            h('div', { class: 'small' }, ageSex(a, date) || '—'),
-            h('div', { class: 'small muted' }, a.diagnosis || ''),
-            out && a.outcome && a.outcome !== 'Discharged' ? h('div', { class: 'small outcome-bad' }, a.outcome) : null))));
-      })) : h('p', {}, out ? 'No discharges.' : 'No admissions.'))));
+      rows.length ? h('div', { class: 'emptycols ptcols' }, wards.map((w) => {
+        const list = rows.filter((r) => wardOf(r.bed) === w);
+        return h('div', {}, h('h3', {}, `${w} · ${list.length}`), h('ul', {}, list.map((r) => h('li', {}, line(r)))));
+      })) : h('p', {}, emptyText))));
+}
+function patientsPanel(label, list, date, out) {
+  wardListPanel(label, date, list.map((a) => ({ a, bed: a.bed_on_date || a.bed })), ({ a, bed }) => [
+    h('span', { class: 'muted small' }, bed), h('b', {}, a.name),
+    h('span', { class: 'small' }, ageSex(a, date) || '—'),
+    a.diagnosis ? h('span', { class: 'small muted' }, a.diagnosis) : null,
+    out && a.outcome && a.outcome !== 'Discharged' ? h('span', { class: 'small outcome-bad' }, a.outcome) : null], out ? 'No discharges.' : 'No admissions.');
+}
+// Investigations booked for `day` among these patients, in bed order.
+const invOn = (adms, day) => adms.flatMap((a) => (a.inv || []).filter((v) => v.date === day).map((v) => ({ a, v, bed: a.bed_on_date || a.bed })));
+function invPanel(title, rows, day) {
+  wardListPanel(title, day, rows, ({ a, v, bed }) => [
+    h('b', { class: 'invname' }, v.text), h('span', { class: 'muted small' }, bed), h('span', {}, a.name),
+    a.diagnosis ? h('span', { class: 'small muted' }, a.diagnosis) : null], 'No investigations booked.');
 }
 
 function emptyBed(bed) {
@@ -761,6 +785,26 @@ function otBox(a, onChanged) {
     h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post')));
 }
 
+// Investigations booked for a date (Barium swallow, CT under GA, PET CT…). The register shows tomorrow's; the alert bar shows today's.
+function invBox(a, date, onChanged) {
+  const text = h('input', { placeholder: 'Investigation, e.g. CT abdomen under GA' });
+  const when = h('input', { type: 'date', value: addDays(date, 1) });
+  const add = async () => {
+    if (!text.value.trim()) return;
+    try { await api('POST', '/api/inv/' + a.id, { text: text.value, date: when.value }); toast('Investigation added'); onChanged(); } catch (e) { toast(e.message, true); }
+  };
+  const inv = a.inv || [];
+  return h('div', { class: 'ot inv' },
+    h('div', { class: 'othead' }, 'Investigations'),
+    inv.length ? h('ul', { class: 'invlist' }, inv.map((v) => h('li', { class: v.date < date ? 'past' : v.date === date ? 'today' : '' },
+      h('b', {}, v.date === date ? 'Today' : v.date === addDays(date, 1) ? 'Tomorrow' : fmtDate(v.date)), ` · ${v.text}`,
+      canEdit() && h('button', { type: 'button', class: 'link small del', onclick: async () => {
+        if (!confirm(`Delete ${v.text}?`)) return;
+        try { await api('DELETE', '/api/inv/' + encodeURIComponent(v.id)); toast('Deleted'); onChanged(); } catch (e) { toast(e.message, true); }
+      } }, 'Delete')))) : null,
+    canEdit() && h('div', { class: 'otadd invadd' }, text, when, h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add')));
+}
+
 function patientCard(a, date, refresh) {
   const pm = paramMap();
   const chosen = monitorFor(a).map((k) => pm[k]).filter(Boolean);
@@ -825,7 +869,8 @@ function patientCard(a, date, refresh) {
         h('div', { class: 'cfact pod' }, h('span', {}, 'POD'), h('b', {}, pod ? pod.replace('POD ', '') : '—')))),
     a.instructions && h('p', { class: 'instr' }, h('b', {}, 'Short notes: '), a.instructions),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
-    otBox(a, () => refresh(id)));
+    otBox(a, () => refresh(id)),
+    invBox(a, date, () => refresh(id)));
 
   if (!discharged && a.discharge_date !== date) {
     add(

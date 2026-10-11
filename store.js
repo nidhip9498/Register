@@ -357,14 +357,14 @@ const Store = (() => {
     const adms = all('admission').filter((a) => (!a.admit_date || a.admit_date <= date) && (!a.discharge_date || a.discharge_date >= date))
       .sort((a, b) => ((a.admit_date || '') < (b.admit_date || '') ? -1 : (a.admit_date || '') > (b.admit_date || '') ? 1 : 0));
     const moves = all('move');
-    const ot = otByAdmission(), procs = otProcs();
+    const ot = otByAdmission(), procs = otProcs(), inv = invByAdmission();
     return {
       date,
       admissions: adms.map((a) => {
         const r = get(`round:${a.id}:${date}`), p = get(`round:${a.id}:${prev}`);
         const n = get(`note:${a.id}:${date}`), pn = get(`note:${a.id}:${prev}`);
         return {
-          ...a, bed_on_date: bedOnDate(a, date, moves), ot: ot[a.id] || [], otprocs: procs[a.id] || [],
+          ...a, bed_on_date: bedOnDate(a, date, moves), ot: ot[a.id] || [], otprocs: procs[a.id] || [], inv: inv[a.id] || [],
           round: r ? { vals: r.vals, remarks: r.remarks, filled_by: userName(r.filled_by), filled_at: r.filled_at } : null,
           prev_round: p ? { vals: p.vals, remarks: p.remarks } : null,
           unit_note: n ? n.note : '', unit_note_by: n ? userName(n.updated_by) : '', prev_unit_note: pn ? pn.note : '',
@@ -616,6 +616,30 @@ const Store = (() => {
     audit('OT note', a.name);
     return { ok: true, surgery: surgeryFromOtList(a) };
   });
+  // Investigations booked for a date (barium swallow, CT under GA, PET CT…): shown in Rounds, on the register for the next day, and in the alert bar on the day.
+  function invByAdmission() {
+    const out = {};
+    for (const v of all('inv').sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : x.at < y.at ? -1 : 1))) {
+      (out[v.admission_id] = out[v.admission_id] || []).push({ id: v.id, text: v.text, date: v.date, by: userName(v.by), mine: !!currentUser && v.by === currentUser.id });
+    }
+    return out;
+  }
+  route('POST', '/api/inv/:id', EDITORS, ({ body, params: p }) => {
+    const a = getAdmission(p.id);
+    const text = str(body.text, 300);
+    if (!text) throw new HttpError(400, 'Type the investigation');
+    if (!isDate(body.date)) throw new HttpError(400, 'Pick the date it is booked for');
+    put('inv:' + uuid(), 'inv', { admission_id: a.id, text, date: body.date, by: currentUser.id, at: stamp() });
+    audit('investigation', `${a.name}: ${text} on ${body.date}`);
+    return { ok: true };
+  });
+  route('DELETE', '/api/inv/:iid', EDITORS, ({ params: p }) => {
+    const v = get(p.iid);
+    if (!v || !p.iid.startsWith('inv:')) throw new HttpError(404, 'Investigation not found');
+    put(p.iid, 'inv', null);
+    audit('delete investigation', v.text);
+    return { ok: true };
+  });
   route('DELETE', '/api/ot/:oid', ANY, ({ params: p }) => {
     const o = get(p.oid);
     if (!o || !p.oid.startsWith('ot:')) throw new HttpError(404, 'Entry not found');
@@ -731,7 +755,7 @@ const Store = (() => {
       for (const r of [...R.values()]) {
         if (!r.data) continue;
         if (r.type === 'admission') { put(r.id, 'admission', null); out.removed++; }
-        else if (['round', 'note', 'ot', 'move'].includes(r.type)) put(r.id, r.type, null);
+        else if (['round', 'note', 'ot', 'move', 'inv'].includes(r.type)) put(r.id, r.type, null);
       }
     }
     for (const p of list) {
@@ -1033,7 +1057,7 @@ const Store = (() => {
     const cutoff = shiftDate(today(), -365);
     const old = all('admission').filter((a) => a.discharge_date && a.discharge_date < cutoff);
     const ids = new Set(old.map((a) => a.id));
-    const related = [...all('round'), ...all('note'), ...all('ot'), ...all('move')].filter((r) => ids.has(r.admission_id)).map((r) => r.id);
+    const related = [...all('round'), ...all('note'), ...all('ot'), ...all('move'), ...all('inv')].filter((r) => ids.has(r.admission_id)).map((r) => r.id);
     return { cutoff, patients: old.length, ids: [...ids, ...related] };
   });
 
