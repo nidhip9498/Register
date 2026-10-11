@@ -1806,11 +1806,9 @@ async function censusView(main) {
   const sheet = h('div', { class: 'printonly occsheet' });
   const drawSheet = () => {
     const cols = units.map((u) => ({ title: u.name, beds: ward.filter((a) => a.unit === u.name && !emergency.has(a.bed_on_date)).map((a) => a.bed_on_date), of: u.beds }));
-    const emBeds = S.meta.emergencyBeds.map((b) => { const a = emerg.find((x) => x.bed_on_date === b); return `${b} - ${a ? a.unit || '?' : ''}`; });
-    cols.push({ title: 'Emergency', beds: emBeds, n: emerg.length, of: S.meta.emergencyBeds.length });
+    // Emergency beds are left out of the print (Nidhi, 2026-10-11).
     const rows = Math.max(1, ...cols.map((c) => c.beds.length));
     const mine = ward.filter((a) => a.unit === listUnit && !emergency.has(a.bed_on_date));
-    const mineEm = emerg.filter((a) => a.unit === listUnit);
     const mineIcu = icu.filter((a) => a.unit === listUnit);
     // Instructions is the widest column (space to write on the round); name, age/sex and POD share one box.
     const list = (pts, head) => pts.length ? h('div', {}, head && h('h3', {}, head), h('table', { class: 'list print occlist' },
@@ -1828,8 +1826,8 @@ async function censusView(main) {
         h('tbody', {},
           Array.from({ length: rows }, (_, i) => h('tr', {}, cols.map((c) => h('td', {}, c.beds[i] || '')))),
           h('tr', { class: 'occcount' }, cols.map((c) => { const n = c.n ?? c.beds.length; return h('td', {}, c.of ? `${n > c.of ? '⚠ ' : ''}${n}/${c.of}` : String(n)); })))),
-      listUnit && h('h2', { class: 'occlisthead' }, `${listUnit} · ${mine.length + mineEm.length + mineIcu.length} patients`),
-      listUnit && (mine.length + mineEm.length + mineIcu.length ? h('div', {}, list(mine), list(mineEm, 'In emergency beds'), list(mineIcu, 'ICU (6C)')) : h('p', {}, 'No patients.')));
+      listUnit && h('h2', { class: 'occlisthead' }, `${listUnit} · ${mine.length + mineIcu.length} patients`),
+      listUnit && (mine.length + mineIcu.length ? h('div', {}, list(mine), list(mineIcu, 'ICU (6C)')) : h('p', {}, 'No patients.')));
   };
   drawSheet();
   const pick = h('select', { onchange: (e) => { listUnit = e.target.value; drawSheet(); } },
