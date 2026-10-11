@@ -442,8 +442,8 @@ async function registerView(main, mode) {
     summary.replaceChildren(
       stat('Patients', here.filter((a) => a.discharge_date !== date).length),
       (() => { const empty = allBeds.filter((b) => !inBed(b).length); const el = stat('Empty beds', empty.length); el.classList.add('clickable'); el.title = 'Show the empty beds'; el.onclick = () => emptyBedsPanel(empty, date); return el; })(),
-      stat('Admitted today', here.filter((a) => a.admit_date === date).length),
-      stat('Discharged today', here.filter((a) => a.discharge_date === date).length));
+      clickStat('Admitted today', here.filter((a) => a.admit_date === date), date, false),
+      clickStat('Discharged today', here.filter((a) => a.discharge_date === date), date, true));
 
     const q = S.filters.q.trim().toLowerCase();
     const show = (bed) => {
@@ -634,6 +634,32 @@ function emptyBedsPanel(beds, date) {
         return h('div', {}, h('h3', {}, `${w} · ${list.length}`),
           h('ul', {}, list.map((b) => h('li', {}, canEdit() ? h('a', { href: 'javascript:void 0', onclick: () => { close(); admitModal(b); } }, b) : b))));
       })) : h('p', {}, 'No empty beds.'))));
+}
+
+// Admitted / Discharged today: tap the count to see those patients, one column per ward.
+function clickStat(label, list, date, out) {
+  const el = stat(label, list.length);
+  el.classList.add('clickable'); el.title = 'Show these patients'; el.onclick = () => patientsPanel(label, list, date, out);
+  return el;
+}
+function patientsPanel(label, list, date, out) {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  const bedOf = (a) => a.bed_on_date || a.bed;
+  const wards = [...new Set(list.map((a) => wardOf(bedOf(a))))];
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
+    h('div', { class: 'modal card panel' },
+      h('div', { class: 'mhead' }, h('h2', {}, `${label} · ${list.length}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+      h('p', { class: 'muted' }, fmtDay(date)),
+      list.length ? h('div', { class: 'emptycols ptcols' }, wards.map((w) => {
+        const pts = list.filter((a) => wardOf(bedOf(a)) === w);
+        return h('div', {}, h('h3', {}, `${w} · ${pts.length}`),
+          h('ul', {}, pts.map((a) => h('li', {},
+            h('div', {}, h('span', { class: 'muted small' }, bedOf(a) + ' · '), h('b', {}, a.name)),
+            h('div', { class: 'small' }, ageSex(a, date) || '—'),
+            h('div', { class: 'small muted' }, a.diagnosis || ''),
+            out && a.outcome && a.outcome !== 'Discharged' ? h('div', { class: 'small outcome-bad' }, a.outcome) : null))));
+      })) : h('p', {}, out ? 'No discharges.' : 'No admissions.'))));
 }
 
 function emptyBed(bed) {

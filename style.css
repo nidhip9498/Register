@@ -487,3 +487,6 @@ body.locked #app, body.locked #modal-root { visibility: hidden; }
 .otpt > summary::-webkit-details-marker { display: none; }
 .otpt > summary::before { content: '▸'; display: inline-block; width: 1.1em; transition: transform .15s; }
 .otpt[open] > summary::before { transform: rotate(90deg); }
+.ptcols li { font-weight: 400; }
+.ptcols li b { font-weight: 700; }
+.outcome-bad { color: var(--bad); font-weight: 700; }
