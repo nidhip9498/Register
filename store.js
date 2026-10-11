@@ -382,6 +382,7 @@ const Store = (() => {
     const id = 'adm:' + uuid();
     put(id, 'admission', { ...f, bed, discharge_date: null, outcome: '', created_by: currentUser.id, updated_at: stamp() });
     audit('admit', `${f.name} to ${bed}`);
+    linkOtEntries(id);
     return { id };
   });
 
@@ -390,6 +391,7 @@ const Store = (() => {
     const f = admissionFields({ ...a, ...body });
     put(a.id, 'admission', { ...strip(a), ...f, updated_at: stamp() });
     audit('edit patient', `${f.name} (${a.bed})`);
+    linkOtEntries(a.id);
     return { ok: true };
   });
 
@@ -738,7 +740,9 @@ const Store = (() => {
       if (occupants(bed).length) { out.skipped.push(`${bed} (already has a patient)`); continue; }
       let f;
       try { f = admissionFields({ ...p, bed }); } catch (e) { out.skipped.push(`${bed} (${e.message})`); continue; }
-      put('adm:' + uuid(), 'admission', { ...f, bed, discharge_date: null, outcome: '', created_by: currentUser.id, updated_at: stamp() });
+      const id = 'adm:' + uuid();
+      put(id, 'admission', { ...f, bed, discharge_date: null, outcome: '', created_by: currentUser.id, updated_at: stamp() });
+      linkOtEntries(id);
       out.added.push(bed);
     }
     audit('import patients', `${body.replace ? out.removed + ' erased, ' : ''}${out.added.length} added, ${out.skipped.length} skipped`);
@@ -813,6 +817,25 @@ const Store = (() => {
       bed: current ? current.bed : '', admission_id: current ? current.id : '', blood: s.blood || '', special: s.special || '',
     };
   }
+  // A child already on a coming OT list who is then admitted (same UHID) gets linked to the admission, so the list shows the bed.
+  function linkOtEntries(admId) {
+    const a = get(admId);
+    if (!a || a.discharge_date || !a.ip_no) return;
+    const from = a.admit_date || today(), u = a.ip_no.toLowerCase();
+    for (const e of all('otentry')) {
+      if (e.cancelled || e.admission_id || (e.uhid || '').toLowerCase() !== u) continue;
+      const l = get(e.list_id);
+      if (!l || l.date < from) continue;
+      put(e.id, 'otentry', { ...strip(e), admission_id: a.id, bed: a.bed });
+      touchOtList(l.id, `linked ${e.name} to bed ${a.bed}`);
+    }
+  }
+  // On today's and coming lists an admitted child shows the bed they are in now (after any bed move); earlier lists keep what was printed.
+  function liveBed(e, l) {
+    if (e.cancelled || !e.admission_id || l.date < today()) return e.bed;
+    const a = get(e.admission_id);
+    return a && !a.discharge_date ? a.bed : e.bed;
+  }
   const listOut = (l) => ({ ...l, count: otEntries(l.id).filter((e) => !e.cancelled).length });
 
   route('GET', '/api/otlists', ANY, ({ query }) => {
@@ -852,7 +875,7 @@ const Store = (() => {
   });
   route('GET', '/api/otlists/:id', ANY, ({ params: p }) => {
     const l = getOtList(p.id);
-    return { ...l, created_by: userName(l.created_by), updated_by: l.updated_by ? userName(l.updated_by) : '', edits: (l.edits || []).map((x) => ({ ...x, by: userName(x.by) })), entries: otEntries(l.id).map((e) => ({ ...e, by: userName(e.created_by), findings: otFindings(e, l) })) };
+    return { ...l, created_by: userName(l.created_by), updated_by: l.updated_by ? userName(l.updated_by) : '', edits: (l.edits || []).map((x) => ({ ...x, by: userName(x.by) })), entries: otEntries(l.id).map((e) => ({ ...e, bed: liveBed(e, l), by: userName(e.created_by), findings: otFindings(e, l) })) };
   });
   route('PUT', '/api/otlists/:id', ANY, ({ body, params: p }) => {
     const l = getOtList(p.id);
