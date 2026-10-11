@@ -1363,7 +1363,8 @@ async function printView(main, date, ward) {
   const icuWard = !!ward && (S.meta.icuBeds || []).some((b) => wardOf(b) === ward);
   const data = await api('GET', '/api/register?date=' + date);
   const byBed = {};
-  for (const a of data.admissions) (byBed[a.bed_on_date] = byBed[a.bed_on_date] || []).push(a);
+  // Patients discharged on this day have left the bed, as on the register.
+  for (const a of data.admissions.filter((x) => x.discharge_date !== date)) (byBed[a.bed_on_date] = byBed[a.bed_on_date] || []).push(a);
   main.append(
     h('div', { class: 'toolbar noprint' }, h('a', { href: icuWard ? '#icu' : '#register', class: 'button ghost' }, icuWard ? '‹ ICU Register' : '‹ Ward Register'), h('button', { class: 'primary', onclick: () => window.print() }, 'Print')),
     h('h2', {}, ward ? `${ward} · ` : '', icuWard ? 'ICU register · ' : 'Ward register · ', fmtDay(date)),
