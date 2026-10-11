@@ -251,7 +251,10 @@ input.narrow { width: 70px; }
   .occgrid th, .occgrid td, .occlist th { font-size: 12px; color: #000; }
   .occcount td { font-weight: 700; border-top: 2px solid #000 !important; }
   .occlist { width: 100%; border-collapse: collapse; }
-  .occlist td.blank { width: 32%; height: 34px; }
+  .occlist { table-layout: fixed; }
+  .occlist td { font-size: 12px; vertical-align: top; overflow-wrap: anywhere; }
+  .occlist td.blank { height: 46px; }
+  .occlist .occsx { font-style: italic; margin-top: 2px; }
   .occlisthead { margin-top: 10px; }
 }
 .printonly { display: none; }

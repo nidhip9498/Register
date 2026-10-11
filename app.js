@@ -1812,11 +1812,15 @@ async function censusView(main) {
     const mine = ward.filter((a) => a.unit === listUnit && !emergency.has(a.bed_on_date));
     const mineEm = emerg.filter((a) => a.unit === listUnit);
     const mineIcu = icu.filter((a) => a.unit === listUnit);
+    // Instructions is the widest column (space to write on the round); name, age/sex and POD share one box.
     const list = (pts, head) => pts.length ? h('div', {}, head && h('h3', {}, head), h('table', { class: 'list print occlist' },
-      h('thead', {}, h('tr', {}, ['Bed', 'Name', 'Age / Sex', 'Diagnosis', 'Surgery', 'POD', 'Instructions'].map((t) => h('th', {}, t)))),
-      h('tbody', {}, pts.map((a) => h('tr', {},
-        h('td', {}, h('b', {}, a.bed_on_date)), h('td', {}, a.name), h('td', {}, ageSex(a, date)), h('td', {}, a.diagnosis),
-        h('td', {}, a.procedure_done), h('td', {}, podText(a, date).replace('POD ', '')), h('td', { class: 'blank' })))))) : null;
+      h('colgroup', {}, ['7%', '21%', '32%', '40%'].map((w) => h('col', { style: `width:${w}` }))),
+      h('thead', {}, h('tr', {}, ['Bed', 'Patient · POD', 'Diagnosis / Surgery', 'Instructions'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, pts.map((a) => { const pod = podText(a, date); return h('tr', {},
+        h('td', {}, h('b', {}, a.bed_on_date)),
+        h('td', {}, h('b', {}, a.name), h('div', {}, ageSex(a, date)), pod ? h('div', {}, pod) : null),
+        h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'occsx' }, a.procedure_done) : null),
+        h('td', { class: 'blank' })); })))) : null;
     sheet.replaceChildren(
       h('h2', {}, 'Bed Occupancy · ', fmtDay(date)),
       h('table', { class: 'print occgrid' },
