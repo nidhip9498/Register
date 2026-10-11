@@ -1448,7 +1448,11 @@ async function otListView(main, id) {
   main.append(
     h('div', { class: 'toolbar noprint' }, h('a', { class: 'button ghost', href: '#ot/' + l.ot }, '‹ ' + otName(l.ot)),
       h('h2', {}, `${otName(l.ot)} · `, fmtDay(l.date)),
-      h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: doPrint }, 'Print'))),
+      h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: doPrint }, 'Print'),
+        h('button', { class: 'ghost danger', onclick: async () => {
+          if (!confirm(`Delete the whole ${otName(l.ot)} list for ${fmtDate(l.date)}${live.length ? ` with its ${live.length} patients` : ''}?`)) return;
+          try { await api('DELETE', '/api/otlists/' + encodeURIComponent(id)); toast('List deleted'); location.hash = 'ot/' + l.ot; } catch (x) { toast(x.message, true); }
+        } }, 'Delete list'))),
     h('div', { class: 'noprint' },
       h('div', { class: 'card othdr' }, h('label', {}, 'Surgeon', surgeon), h('label', {}, 'Second surgeon (if two run the OT)', surgeon2),
         h('label', {}, 'Extra note (optional)', note, h('small', { class: 'muted' }, 'KEEP OT WARM is always printed.'))),
@@ -1462,12 +1466,7 @@ async function otListView(main, id) {
       h('div', { class: 'otmeta' },
         h('p', {}, `Created by ${l.created_by || '—'}${l.created_at ? ` on ${stampText(l.created_at)}` : ''}`),
         (l.edits || []).length ? h('p', {}, 'Recent edits:') : null,
-        (l.edits || []).map((x) => h('p', {}, `${x.by} ${x.what} · ${stampText(x.at)}`))),
-      h('p', { class: 'muted small' },
-        h('button', { class: 'link small danger', onclick: async () => {
-          if (!confirm(`Delete the whole ${otName(l.ot)} list for ${fmtDate(l.date)}${live.length ? ` with its ${live.length} patients` : ''}?`)) return;
-          try { await api('DELETE', '/api/otlists/' + encodeURIComponent(id)); toast('List deleted'); location.hash = 'ot/' + l.ot; } catch (x) { toast(x.message, true); }
-        } }, 'Delete this list'))),
+        (l.edits || []).map((x) => h('p', {}, `${x.by} ${x.what} · ${stampText(x.at)}`)))),
     sheet);
 }
 
