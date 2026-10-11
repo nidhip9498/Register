@@ -522,3 +522,4 @@ details.fold[open] > summary { margin-bottom: .4rem; }
 .invday + .invday { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .6rem; }
 .invdate { color: var(--accent); margin: .2rem 0 .4rem; }
 .invday .ptcols h3 { font-size: .95rem; }
+.undodis .undo { margin-left: .7rem; padding: .2rem .6rem; }

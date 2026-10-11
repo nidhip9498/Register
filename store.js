@@ -407,6 +407,9 @@ const Store = (() => {
 
   route('POST', '/api/admissions/:id/undo-discharge', EDITORS, ({ params: p }) => {
     const a = getAdmission(p.id);
+    // The bed may have been given to someone else since; the patient can't come back into an occupied bed.
+    const occ = occupants(a.bed, a.id);
+    if (occ.length) throw new HttpError(409, `${a.bed} now has ${occ.map((o) => o.name).join(', ')}. Free the bed or move them first.`);
     put(a.id, 'admission', { ...strip(a), discharge_date: null, outcome: '' });
     audit('undo discharge', a.name);
     return { ok: true };

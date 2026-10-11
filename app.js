@@ -1216,7 +1216,7 @@ async function patientView(main, id) {
       h('div', { class: 'actions' },
         canEdit() && a.discharge_date && h('button', { class: 'ghost', onclick: async () => {
           if (!confirm('Bring this patient back into the ward register?')) return;
-          await api('POST', `/api/admissions/${a.id}/undo-discharge`); toast('Discharge undone'); render();
+          try { await api('POST', `/api/admissions/${a.id}/undo-discharge`); toast('Discharge undone'); render(); } catch (e) { toast(e.message, true); }
         } }, 'Undo discharge'),
         h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
     h('div', { class: 'card' },
@@ -1282,6 +1282,20 @@ async function statusView(main) {
         h('td', {}, a.instructions, a.unit_note ? h('div', {}, h('b', {}, `${a.unit}: `), a.unit_note) : null)))))))));
   }
   if (!pts.length) box.append(h('p', { class: 'muted empty-note' }, 'No patients on this date.'));
+  // Discharged by mistake? The last week's discharges, each with Undo (back into the same bed).
+  if (canEdit()) {
+    const recent = (await api('GET', '/api/patients?from=' + addDays(S.meta.today, -7))).filter((a) => a.discharge_date)
+      .sort((x, y) => (x.discharge_date < y.discharge_date ? 1 : -1));
+    main.append(h('section', { class: 'noprint undodis' }, h('h3', {}, 'Recent discharges'),
+      h('p', { class: 'muted small' }, 'Discharged in the last 7 days. Undo brings the patient back into the same bed.'),
+      recent.length ? h('ul', { class: 'invlist' }, recent.map((a) => h('li', {},
+        h('b', {}, fmtDate(a.discharge_date)), ` · ${a.bed} · `, h('a', { href: '#patient/' + a.id }, a.name), a.diagnosis ? h('span', { class: 'muted small' }, ` · ${a.diagnosis}`) : null,
+        a.outcome && a.outcome !== 'Discharged' ? h('span', { class: 'small outcome-bad' }, ` · ${a.outcome}`) : null,
+        h('button', { type: 'button', class: 'ghost small undo', onclick: async () => {
+          if (!confirm(`Undo the discharge of ${a.name} and bring them back into ${a.bed}?`)) return;
+          try { await api('POST', `/api/admissions/${a.id}/undo-discharge`); toast(`${a.name} is back in ${a.bed}`); render(); } catch (e) { toast(e.message, true); }
+        } }, 'Undo discharge')))) : h('p', { class: 'muted' }, 'No discharges in the last 7 days.')));
+  }
   const search = h('section', { class: 'noprint' }, h('h3', {}, 'Find any patient, including discharged'));
   main.append(search);
   patientSearch(search);
