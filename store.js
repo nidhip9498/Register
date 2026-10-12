@@ -1070,6 +1070,8 @@ const Store = (() => {
   route('GET', '/api/otlog', ANY, ({ query }) => {
     const who = str(query.who, 60).toLowerCase();
     if (!who) return [];
+    // A consultant can read only their own logbook.
+    if (currentUser.role === 'consultant' && currentUser.initials && who !== currentUser.initials.toLowerCase()) throw new HttpError(403, 'You can see only your own OT log');
     const rows = [];
     // From the scrub team on each OT list entry…
     for (const e of all('otentry')) {

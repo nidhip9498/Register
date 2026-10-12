@@ -270,7 +270,7 @@ function topBar(route) {
   const link = (r, label) => h('a', { href: '#' + r, class: route === r || (r === 'ot' && route === 'otlist') ? 'active' : '' }, label);
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '' }), h('div', {}, h('b', {}, 'Register'), h('small', {}, 'Department of Pediatric Surgery'))),
-    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'OT Log'), link('patients', 'Status'), S.user.role === 'admin' && link('admin', 'Admin')),
+    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), S.user.role === 'admin' && link('admin', 'Admin')),
     h('div', { class: 'me' },
       h('button', { id: 'sync-chip', class: 'sync-chip', onclick: async () => {
         if (updatesWaiting) { if (!confirmLeave()) return; updatesWaiting = false; S.dirty.clear(); S.meta = await api('GET', '/api/meta'); render(); }
@@ -1732,6 +1732,12 @@ function admitFromOt(e, onDone) {
 
 // ---------- OT Log: each person's logbook from the scrub teams added on OT lists ----------
 async function otLogView(main, who) {
+  // Consultants see only their own logbook. Residents and admins can open anyone's.
+  const own = S.user.role === 'consultant';
+  if (own) {
+    who = myInitials();
+    if (!who) return main.append(h('h2', {}, 'Logbook'), h('p', { class: 'muted' }, 'Your initials are not set yet. Ask the admin to add them in Admin > Users, then your logbook shows here.'));
+  }
   who = who || myInitials() || SURGEONS[0][0];
   const [counts, rows] = await Promise.all([api('GET', '/api/otpeople'), api('GET', '/api/otlog?who=' + encodeURIComponent(who))]);
   const people = Object.keys(counts);
@@ -1746,10 +1752,10 @@ async function otLogView(main, who) {
     others.length ? h('optgroup', { label: 'Others' }, others.map((o) => opt([o]))) : null);
   const byRole = {};
   for (const r of rows) byRole[r.role] = (byRole[r.role] || 0) + 1;
-  const title = `OT Log · ${personName(who)}${personName(who) !== who ? ` (${who})` : ''}`;
+  const title = `Logbook · ${personName(who)}${personName(who) !== who ? ` (${who})` : ''}`;
   main.append(
-    h('div', { class: 'toolbar' }, h('h2', {}, 'OT Log'),
-      h('div', { class: 'actions' }, h('label', { class: 'inline' }, 'Logbook of ', sel), h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
+    h('div', { class: 'toolbar' }, h('h2', {}, 'Logbook'),
+      h('div', { class: 'actions' }, own ? h('span', {}, `Your logbook · ${personName(who)}`) : h('label', { class: 'inline' }, 'Logbook of ', sel), h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
     h('h2', { class: 'printonly' }, title),
     h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : `No operations logged for ${who} yet. A log fills when ${who} is in a scrub team on an OT list.`),
     rows.length ? h('input', { type: 'search', class: 'otlogsearch noprint', placeholder: 'Search name, UHID, diagnosis or surgery', oninput: (ev) => {
@@ -1940,7 +1946,7 @@ function occupancyPanel(title, pts, icuPts, date, isUnit) {
       h('div', { class: 'mhead' }, h('h2', {}, `${title} · ${pts.length} patient${pts.length === 1 ? '' : 's'}`),
         h('div', { class: 'btns' },
           isUnit && h('a', { class: 'button ghost small', href: '#notes/' + encodeURIComponent(title), onclick: close }, 'Round notes'),
-          isUnit && h('a', { class: 'button ghost small', href: '#otlog/' + encodeURIComponent(title), onclick: close }, 'OT log'),
+          isUnit && S.user.role !== 'consultant' && h('a', { class: 'button ghost small', href: '#otlog/' + encodeURIComponent(title), onclick: close }, 'Logbook'),
           h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       table(pts),
       isUnit && [h('h3', { class: 'icuhead' }, `ICU (6C) · ${icuPts.length}`), table(icuPts, true)])));
@@ -2014,7 +2020,7 @@ async function adminArchive(body) {
   } }, 'Move to archive') : null;
   body.append(h('div', { class: 'card' },
     h('h3', {}, 'Archive old patients'),
-    h('p', {}, `This moves patients discharged before ${fmtDate(plan.cutoff)} (more than a year ago), with their rounds, notes and OT findings, to an "archive" tab in your Google Sheet. Phones and laptops then stop carrying them, which keeps the app quick. OT lists and the OT Log are not affected.`),
+    h('p', {}, `This moves patients discharged before ${fmtDate(plan.cutoff)} (more than a year ago), with their rounds, notes and OT findings, to an "archive" tab in your Google Sheet. Phones and laptops then stop carrying them, which keeps the app quick. OT lists and the Logbook are not affected.`),
     h('p', {}, 'Archived patients can still be found with "Search the archive" at the bottom of the Status tab.'),
     h('p', {}, h('b', {}, plan.patients ? `${plan.patients} patient${plan.patients === 1 ? '' : 's'} can be archived now.` : 'No one was discharged more than a year ago, so there is nothing to archive yet.')),
     btn,
