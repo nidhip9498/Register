@@ -1191,11 +1191,28 @@ function admitModal(bed, a, opts = {}) {
     ];
   }
 
+  // A UHID seen before (earlier admission or an OT list) fills the empty boxes; nothing typed is overwritten.
+  const uhidNote = h('small', { class: 'muted' });
+  const uhidPrefill = async (form) => {
+    const u = form.ip_no.value.trim();
+    if (!u) return;
+    const r = await api('GET', `/api/uhid/${encodeURIComponent(u)}?date=${form.admit_date.value || S.date}`).catch(() => ({}));
+    if (!r || !r.name) { uhidNote.textContent = 'New UHID.'; return; }
+    const set = (n, val) => { const el = form.elements.namedItem(n); if (el && val && !el.value.trim()) el.value = val; };
+    set('name', r.name); set('age', r.age); set('sex', r.sex); set('diagnosis', r.diagnosis);
+    const first = (r.consultant || '').split('/')[0].trim();
+    const ini = (SURGEONS.find(([i, n]) => n === first || i === first) || [])[0];
+    if (ini && S.meta.units.some((x) => x.name === ini)) set('unit', ini);
+    uhidNote.textContent = r.bed ? `${r.name} is already admitted in ${r.bed}.` : `Found ${r.name}: details filled in. Check them.`;
+    uhidNote.className = r.bed ? 'warntext small' : 'muted small';
+  };
+
   const body = h('div', { class: 'grid2' },
     editing ? h('label', {}, 'Bed', h('input', { value: a.bed, disabled: true })) : h('label', {}, 'Bed', bedSelect('bed', bed, (b) => isIcu(b) === icu)),
     input('Admission date', 'admit_date', { type: 'date' }),
     input('Patient name / initials', 'name', { required: true }, 'span2'),
-    input('UHID', 'ip_no'),
+    editing ? input('UHID', 'ip_no') : h('label', {}, 'UHID', h('input', { name: 'ip_no', value: a.ip_no || '', inputmode: 'numeric', autocomplete: 'off',
+      onchange: (ev) => uhidPrefill(ev.target.form), onkeydown: (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); uhidPrefill(ev.target.form); } } }), uhidNote),
     h('label', {}, 'Consultant / unit', h('select', { name: 'unit' }, h('option', { value: '' }, '—'),
       [...S.meta.units.map((u) => u.name), ...(a.unit && !S.meta.units.some((u) => u.name === a.unit) ? [a.unit] : [])]
         .map((u) => h('option', { value: u, selected: u === a.unit }, u)))),
@@ -1889,14 +1906,20 @@ function otEntryModal(l, e, onSaved) {
     const r = await api('GET', `/api/uhid/${encodeURIComponent(u)}?date=${l.date}`).catch(() => ({}));
     if (!r || !r.name) { found.textContent = 'New UHID: fill in the details.'; return; }
     for (const k of ['name', 'age', 'sex', 'bed', 'diagnosis', 'surgery', 'blood', 'special']) if (r[k] && !form[k].value.trim()) form[k].value = r[k];
-    if (r.consultant && !form.consultant.value) { const n = fullNames(r.consultant); if (![...form.consultant.options].some((o) => o.value === n)) form.consultant.append(h('option', { value: n }, n)); form.consultant.value = n; }
+    if (r.consultant && !form.consultant.value) {
+      const [n1, n2] = fullNames(r.consultant).split('/');
+      const put = (sel, n) => { if (!n) return; if (![...sel.options].some((o) => o.value === n)) sel.append(h('option', { value: n }, n)); sel.value = n; };
+      put(form.consultant, n1); if (!form.consultant2.value) put(form.consultant2, n2);
+    }
     if (r.admission_id) form.admission_id.value = r.admission_id;
     found.textContent = `Found ${r.name}: details filled in${r.bed ? `, now in ${r.bed}` : ''}. Check and change anything needed.`;
   };
   const beds = h('datalist', { id: 'otbeds' }, h('option', { value: DAY_CARE }, 'Day care'), S.meta.sections.flatMap((x) => x.beds).map((b) => h('option', { value: b })));
   // The consultant starts as the OT's surgeon(s) and can be changed, e.g. Dr Ajay Verma operating in Dr Anjan Dhua's OT.
-  const listSurgeon = fullNames(l.surgeon);
-  const consultant = surgeonSelect(e ? fullNames(v.consultant) : listSurgeon, '—', listSurgeon.includes('/') ? [listSurgeon] : [], { name: 'consultant' });
+  // A second consultant can join any case (common in the Em OT, which has no single surgeon).
+  const [c1, c2] = (e ? fullNames(v.consultant) : fullNames(l.surgeon)).split('/');
+  const consultant = surgeonSelect(c1 || '', '—', [], { name: 'consultant' });
+  const consultant2 = surgeonSelect(c2 || '', 'None', [], { name: 'consultant2' });
   const form = modal(e ? `Edit · ${e.name}` : `Add patient · ${otName(l.ot)} ${fmtDate(l.date)}`, h('div', { class: 'grid2 otform' },
     h('label', { class: 'span2' }, 'UHID', h('input', { name: 'uhid', value: v.uhid || '', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Type the UHID first',
       onchange: () => lookup(form), onkeydown: (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); lookup(form); } } }), found),
@@ -1908,11 +1931,13 @@ function otEntryModal(l, e, onSaved) {
     h('label', { class: 'span2' }, 'Diagnosis', h('textarea', { name: 'diagnosis', rows: 2 }, v.diagnosis || '')),
     h('label', { class: 'span2' }, 'Surgery', h('textarea', { name: 'surgery', rows: 2 }, v.surgery || '')),
     h('label', {}, 'Consultant', consultant),
+    h('label', {}, 'Second consultant (optional)', consultant2),
     input('Blood arrangement', 'blood', { placeholder: 'e.g. 1-1-1' }),
     h('label', { class: 'span2' }, 'Special requirements', h('textarea', { name: 'special', rows: 3, placeholder: 'Ports, instruments, positioning, ventilation…' }, v.special || '')),
     h('input', { type: 'hidden', name: 'admission_id', value: v.admission_id || '' })),
   async (f) => {
     const body = Object.fromEntries(['uhid', 'name', 'age', 'sex', 'bed', 'diagnosis', 'surgery', 'consultant', 'blood', 'special', 'admission_id'].map((k) => [k, f[k].value]));
+    body.consultant = [f.consultant.value, f.consultant2.value].filter((n, i, a) => n && a.indexOf(n) === i).join('/');
     if (e) await api('PUT', '/api/otentries/' + encodeURIComponent(e.id), body);
     else await api('POST', `/api/otlists/${encodeURIComponent(l.id)}/entries`, body);
     toast(e ? 'Saved' : `${body.name} added`);
