@@ -867,6 +867,7 @@ const Store = (() => {
     };
   }
   // A child already on a coming OT list who is then admitted (same UHID) gets linked to the admission, so the list shows the bed.
+  const isDayCare = (bed) => /^mch\s*2\s*\/\s*par$/i.test((bed || '').trim());
   function linkOtEntries(admId) {
     const a = get(admId);
     if (!a || a.discharge_date || !a.ip_no) return;
@@ -875,7 +876,7 @@ const Store = (() => {
       if (e.cancelled || e.admission_id || (e.uhid || '').toLowerCase() !== u) continue;
       const l = get(e.list_id);
       if (!l || l.date < from) continue;
-      put(e.id, 'otentry', { ...strip(e), admission_id: a.id, bed: a.bed });
+      put(e.id, 'otentry', { ...strip(e), admission_id: a.id, bed: a.bed, ...(isDayCare(e.bed) ? { from_daycare: true } : {}) });
       touchOtList(l.id, `linked ${e.name} to bed ${a.bed}`);
     }
   }
@@ -1001,7 +1002,9 @@ const Store = (() => {
     const e = getEntry(p.id);
     const f = otEntryFields({ ...e, ...body });
     if (!f.name) throw new HttpError(400, 'Name is required');
-    put(e.id, 'otentry', { ...strip(e), ...f, updated_by: currentUser.id, updated_at: stamp() });
+    // A day-care child (MCH2/PAR) who is admitted to a ward bed counts as "day care converted to ward" in the census.
+    const conv = isDayCare(e.bed) && f.admission_id && !isDayCare(f.bed) ? { from_daycare: true } : {};
+    put(e.id, 'otentry', { ...strip(e), ...f, ...conv, updated_by: currentUser.id, updated_at: stamp() });
     touchOtList(e.list_id, `edited ${f.name}`);
     return { ok: true };
   });
@@ -1121,6 +1124,81 @@ const Store = (() => {
     put('setting:roster_names', 'setting', { value: names });
     audit('import duty roster', `${n} days`);
     return { days: n };
+  });
+
+  // ---------- Census: monthly figures for 6A, 6B and 6C (ICU) ----------
+  const CENSUS_WARDS = ['6A', '6B', '6C'];
+  const wardOfBed = (bed) => (bed || '').split('/')[0].toUpperCase();
+  function monthDays(m) {
+    const out = [], end = today();
+    for (let d = m + '-01'; d.slice(0, 7) === m && d <= end; d = shiftDate(d, 1)) out.push(d);
+    return out;
+  }
+  function censusMonth(m, full) {
+    const days = monthDays(m), inM = (d) => !!d && d.slice(0, 7) === m;
+    const adms = all('admission'), moves = all('move');
+    const beds = {}; for (const sec of getBedSections()) for (const b of sec.beds) { const w = wardOfBed(b); beds[w] = (beds[w] || 0) + 1; }
+    const blank = () => ({ beds: 0, admissions: 0, discharges: 0, operated: 0, outcomes: {}, byUnit: {}, stays: [], occupancy: days.map(() => 0), admitsByDay: days.map(() => 0), dischByDay: days.map(() => 0) });
+    const W = Object.fromEntries(CENSUS_WARDS.map((w) => [w, { ...blank(), beds: beds[w] || 0 }]));
+    for (const a of adms) {
+      if (inM(a.admit_date)) {
+        const w = W[wardOfBed(bedOnDate(a, a.admit_date, moves))];
+        if (w) { w.admissions++; w.admitsByDay[days.indexOf(a.admit_date)] += days.includes(a.admit_date) ? 1 : 0; const u = a.unit || '—'; w.byUnit[u] = (w.byUnit[u] || 0) + 1; }
+      }
+      if (inM(a.discharge_date)) {
+        const w = W[wardOfBed(bedOnDate(a, a.discharge_date, moves))];
+        if (w) {
+          w.discharges++; const o = a.outcome || 'Discharged'; w.outcomes[o] = (w.outcomes[o] || 0) + 1;
+          const i = days.indexOf(a.discharge_date); if (i >= 0) w.dischByDay[i]++;
+          if (a.admit_date) w.stays.push(Math.max(0, Math.round((new Date(a.discharge_date) - new Date(a.admit_date)) / 864e5)));
+        }
+      }
+      if (full) days.forEach((d, i) => {
+        if ((a.admit_date && a.admit_date > d) || (a.discharge_date && a.discharge_date <= d)) return;
+        const w = W[wardOfBed(bedOnDate(a, d, moves))]; if (w) w.occupancy[i]++;
+      });
+    }
+    // Operations: OT list entries this month that were not shifted or cancelled and have a scrub team or a procedure done.
+    const lists = new Map(all('otlist').filter((l) => inM(l.date)).map((l) => [l.id, l]));
+    const ot = { cases: 0, planned: 0, cancelled: 0, patients: 0, daycare: 0, daycareConverted: 0, byOt: {}, byConsultant: {}, perDay: days.map(() => 0) };
+    const seen = new Set();
+    for (const e of all('otentry')) {
+      const l = lists.get(e.list_id);
+      if (!l || e.cancelled) continue;
+      ot.planned++;
+      if (e.case_cancelled) { ot.cancelled++; continue; }
+      if (!(e.scrub || []).length && !e.done) continue;
+      ot.cases++;
+      seen.add((e.uhid || e.name || e.id).toLowerCase());
+      ot.byOt['OT ' + l.ot] = (ot.byOt['OT ' + l.ot] || 0) + 1;
+      for (const c of (e.consultant || l.surgeon || '—').split('/')) { const k = c.trim() || '—'; ot.byConsultant[k] = (ot.byConsultant[k] || 0) + 1; }
+      const i = days.indexOf(l.date); if (i >= 0) ot.perDay[i]++;
+      if (isDayCare(e.bed) || e.from_daycare) { ot.daycare++; if (e.from_daycare) ot.daycareConverted++; }
+      const a = e.admission_id && get(e.admission_id);
+      const w = a && W[wardOfBed(bedOnDate(a, l.date, moves))]; if (w) w.operated++;
+    }
+    ot.patients = seen.size;
+    for (const w of Object.values(W)) {
+      w.avgStay = w.stays.length ? +(w.stays.reduce((x, y) => x + y, 0) / w.stays.length).toFixed(1) : null;
+      w.avgOccupied = days.length && full ? +(w.occupancy.reduce((x, y) => x + y, 0) / days.length).toFixed(1) : null;
+      w.occupancyPct = w.beds && w.avgOccupied != null ? Math.round((w.avgOccupied / w.beds) * 100) : null;
+      delete w.stays;
+    }
+    return { month: m, days, wards: W, ot };
+  }
+  route('GET', '/api/monthly', ANY, ({ query }) => {
+    const m = /^\d{4}-\d{2}$/.test(query.month || '') ? query.month : today().slice(0, 7);
+    const out = censusMonth(m, true);
+    // The six months up to this one, for the trend charts.
+    out.trend = [];
+    for (let k = 5; k >= 0; k--) {
+      const d = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1 - k, 1);
+      const mm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const c = k ? censusMonth(mm, false) : out;
+      const sum = (f) => CENSUS_WARDS.reduce((x, w) => x + c.wards[w][f], 0);
+      out.trend.push({ month: mm, admissions: sum('admissions'), discharges: sum('discharges'), operated: c.ot.cases });
+    }
+    return out;
   });
 
   route('GET', '/api/otlog', ANY, ({ query }) => {

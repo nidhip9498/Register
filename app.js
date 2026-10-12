@@ -272,6 +272,7 @@ function view(route, arg, main) {
   if (route === 'patient') return patientView(main, arg);
   if (route === 'print') return printView(main, arg || S.date, location.hash.split('/')[2] || '');
   if (route === 'census') return censusView(main);
+  if (route === 'monthly') return monthlyView(main, arg);
   if (route === 'ot') return arg ? otDatesView(main, arg) : otHomeView(main);
   if (route === 'otlist') return otListView(main, decodeURIComponent(arg || ''));
   if (route === 'otlog') return otLogView(main, decodeURIComponent(arg || ''));
@@ -286,7 +287,7 @@ function topBar(route) {
   const link = (r, label) => h('a', { href: '#' + r, class: route === r || (r === 'ot' && route === 'otlist') ? 'active' : '' }, label);
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '' }), h('div', {}, h('b', {}, 'Register'), h('small', {}, 'Department of Pediatric Surgery'))),
-    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), S.user.role === 'admin' && link('admin', 'Admin')),
+    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('monthly', 'Census'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), S.user.role === 'admin' && link('admin', 'Admin')),
     h('div', { class: 'me' },
       h('button', { id: 'sync-chip', class: 'sync-chip', onclick: async () => {
         if (updatesWaiting) { if (!confirmLeave()) return; updatesWaiting = false; S.dirty.clear(); S.meta = await api('GET', '/api/meta'); render(); }
@@ -2392,6 +2393,123 @@ async function adminLog(body) {
   body.append(h('div', { class: 'tablewrap' }, h('table', { class: 'list' },
     h('thead', {}, h('tr', {}, ['When', 'Who', 'What', 'Details'].map((t) => h('th', {}, t)))),
     h('tbody', {}, rows.map((r) => h('tr', {}, h('td', {}, r.at), h('td', {}, r.name || ''), h('td', {}, r.action), h('td', {}, r.detail)))))));
+}
+
+// ---------- Census: monthly totals for the department, then 6A / 6B / 6C ----------
+const svgEsc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Vertical bars, one series. Each bar has a hover title; only a few axis labels are drawn so they never collide.
+function barSvg(values, labels, tips, opts = {}) {
+  const W = opts.w || 420, H = opts.h || 170, L = 26, B = 22, T = opts.showValues ? 20 : 8, n = Math.max(1, values.length);
+  const max = Math.max(1, ...values), step = (W - L) / n, bw = Math.max(2, Math.min(36, step - 2));
+  const y = (v) => T + (H - T - B) * (1 - v / max);
+  const every = opts.every || Math.ceil(n / 8);
+  let s = `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${svgEsc(opts.label || '')}">`;
+  for (const g of [0, 0.5, 1]) { const v = Math.round(max * g), yy = y(v); s += `<line x1="${L}" x2="${W}" y1="${yy}" y2="${yy}" class="grid"/><text x="${L - 4}" y="${yy + 4}" class="ax" text-anchor="end">${v}</text>`; }
+  values.forEach((v, i) => {
+    const x = L + i * step + (step - bw) / 2, yy = y(v), hgt = H - B - yy;
+    s += `<g class="bar"><rect x="${L + i * step}" y="${T}" width="${step}" height="${H - B - T}" class="hit"/>`;
+    if (v) s += `<path d="M${x},${H - B} V${yy + Math.min(3, hgt)} q0,-3 3,-3 h${bw - 6} q3,0 3,3 V${H - B} Z" class="mark"/>`;
+    s += `<title>${svgEsc(tips[i])}</title></g>`;
+    if (i % every === 0 || i === n - 1) s += `<text x="${L + i * step + step / 2}" y="${H - 6}" class="ax" text-anchor="middle">${svgEsc(labels[i])}</text>`;
+    if (opts.showValues && v) s += `<text x="${x + bw / 2}" y="${yy - 4}" class="val" text-anchor="middle">${v}</text>`;
+  });
+  return s + '</svg>';
+}
+// Daily line (occupied beds), with a dashed line for the number of beds.
+function lineSvg(values, labels, cap, label) {
+  const W = 420, H = 180, L = 26, B = 22, T = 16, n = values.length;
+  const max = Math.max(1, cap || 0, ...values), step = n > 1 ? (W - L - 8) / (n - 1) : 0;
+  const x = (i) => L + 4 + i * step, y = (v) => T + (H - T - B) * (1 - v / max);
+  const every = Math.ceil(n / 8);
+  let s = `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${svgEsc(label)}">`;
+  for (const g of [0, 0.5, 1]) { const v = Math.round(max * g), yy = y(v); s += `<line x1="${L}" x2="${W}" y1="${yy}" y2="${yy}" class="grid"/><text x="${L - 4}" y="${yy + 4}" class="ax" text-anchor="end">${v}</text>`; }
+  if (cap) s += `<line x1="${L}" x2="${W}" y1="${y(cap)}" y2="${y(cap)}" class="cap"/><text x="${W - 2}" y="${y(cap) - 4}" class="ax" text-anchor="end">${cap} beds</text>`;
+  if (n) s += `<polyline points="${values.map((v, i) => `${x(i)},${y(v)}`).join(' ')}" class="line"/>`;
+  values.forEach((v, i) => {
+    s += `<g class="pt"><rect x="${x(i) - step / 2}" y="${T}" width="${Math.max(step, 8)}" height="${H - B - T}" class="hit"/><circle cx="${x(i)}" cy="${y(v)}" r="4" class="dot"/><title>${svgEsc(labels[i])}: ${v} occupied${cap ? ' of ' + cap : ''}</title></g>`;
+    if (i % every === 0 || i === n - 1) s += `<text x="${x(i)}" y="${H - 6}" class="ax" text-anchor="middle">${svgEsc(labels[i])}</text>`;
+  });
+  return s + '</svg>';
+}
+const chartBox = (title, svg, note) => { const d = h('div', { class: 'chartbox' }, h('h4', {}, title), note && h('p', { class: 'muted small' }, note)); const c = h('div'); c.innerHTML = svg; d.append(c); return d; };
+// Horizontal bars in HTML for named counts (OTs, consultants, units, outcomes), largest first.
+function hbars(title, obj, empty) {
+  const rows = Object.entries(obj).sort((a, b) => b[1] - a[1]), max = Math.max(1, ...rows.map((r) => r[1]));
+  return h('div', { class: 'chartbox' }, h('h4', {}, title),
+    rows.length ? h('div', { class: 'hbars' }, rows.map(([k, v]) => h('div', { class: 'hbar', title: `${k}: ${v}` },
+      h('span', { class: 'hlabel' }, k), h('span', { class: 'htrack' }, h('i', { style: `width:${(v / max) * 100}%` })), h('b', {}, v))))
+      : h('p', { class: 'muted' }, empty || 'Nothing recorded this month.'));
+}
+
+async function monthlyView(main, arg) {
+  const m = /^\d{4}-\d{2}$/.test(arg || '') ? arg : S.meta.today.slice(0, 7);
+  const d = await api('GET', '/api/monthly?month=' + m);
+  const monthName = (mm, short) => new Date(+mm.slice(0, 4), +mm.slice(5, 7) - 1, 1).toLocaleDateString('en-GB', short ? { month: 'short' } : { month: 'long', year: 'numeric' });
+  const shiftM = (k) => { const x = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1 + k, 1); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
+  const next = shiftM(1), thisM = S.meta.today.slice(0, 7);
+  const W = d.wards, ot = d.ot, sum = (f) => ['6A', '6B', '6C'].reduce((x, w) => x + W[w][f], 0);
+  const dayLbl = d.days.map((x) => String(+x.slice(8)));
+  const dayTip = (x) => fmtDate(x);
+  const stat = (n, label, sub, cls) => h('div', { class: 'stat ' + (cls || '') }, h('b', {}, n), h('span', {}, label), sub && h('small', { class: 'muted' }, sub));
+
+  const top = h('div', { class: 'summary census' },
+    stat(sum('admissions'), 'Admissions', `6A ${W['6A'].admissions} · 6B ${W['6B'].admissions} · 6C ${W['6C'].admissions}`),
+    stat(sum('discharges'), 'Discharges', `6A ${W['6A'].discharges} · 6B ${W['6B'].discharges} · 6C ${W['6C'].discharges}`),
+    stat(ot.cases, 'Operations done', `${ot.planned} cases listed`),
+    stat(ot.patients, 'Patients operated'),
+    stat(W['6A'].admissions + W['6B'].admissions, 'Ward admissions', '6A + 6B'),
+    stat(ot.daycare, 'Day care cases', 'MCH2 / PAR'),
+    stat(ot.daycareConverted, 'Day care → ward', 'admitted after surgery'),
+    stat(ot.cancelled, 'Cases cancelled', 'on the day', ot.cancelled ? 'warn' : ''));
+
+  const t = d.trend, tl = t.map((x) => monthName(x.month, true));
+  const trend = h('div', { class: 'chartgrid three' },
+    chartBox('Admissions, last 6 months', barSvg(t.map((x) => x.admissions), tl, t.map((x) => `${monthName(x.month)}: ${x.admissions} admissions`), { w: 300, h: 150, every: 1, showValues: true, label: 'Admissions by month' })),
+    chartBox('Discharges, last 6 months', barSvg(t.map((x) => x.discharges), tl, t.map((x) => `${monthName(x.month)}: ${x.discharges} discharges`), { w: 300, h: 150, every: 1, showValues: true, label: 'Discharges by month' })),
+    chartBox('Operations, last 6 months', barSvg(t.map((x) => x.operated), tl, t.map((x) => `${monthName(x.month)}: ${x.operated} operations`), { w: 300, h: 150, every: 1, showValues: true, label: 'Operations by month' })));
+
+  const otPart = h('div', { class: 'chartgrid' },
+    chartBox('Operations each day', barSvg(ot.perDay, dayLbl, d.days.map((x, i) => `${dayTip(x)}: ${ot.perDay[i]} operations`), { label: 'Operations each day' })),
+    hbars('Operations by OT', ot.byOt),
+    hbars('Operations by consultant', ot.byConsultant));
+
+  // Ward tabs
+  let ward = S.censusWard || '6B';
+  const wardBox = h('div');
+  const tabs = h('div', { class: 'seg seg3 wardtabs' });
+  const drawWard = () => {
+    tabs.replaceChildren(...['6A', '6B', '6C'].map((w) => h('button', { class: w === ward ? 'on' : '', onclick: () => { ward = S.censusWard = w; drawWard(); } }, w === '6C' ? '6C · ICU' : w)));
+    const x = W[ward];
+    const today = d.days.length ? x.occupancy[x.occupancy.length - 1] : 0;
+    wardBox.replaceChildren(
+      h('div', { class: 'summary census' },
+        stat(x.admissions, 'Admissions'),
+        stat(x.discharges, 'Discharges'),
+        stat(x.operated, 'Operated', 'patients in this ward'),
+        stat(x.beds, 'Beds'),
+        stat(x.avgOccupied ?? '—', 'Average beds occupied', x.occupancyPct != null ? `${x.occupancyPct}% occupancy` : ''),
+        stat(x.avgStay ?? '—', 'Average stay (days)', 'of those discharged'),
+        m === thisM && stat(today, 'Occupied today', `of ${x.beds}`)),
+      h('div', { class: 'chartgrid' },
+        chartBox('Beds occupied each day', lineSvg(x.occupancy, dayLbl, x.beds, 'Beds occupied each day')),
+        chartBox('Admissions each day', barSvg(x.admitsByDay, dayLbl, d.days.map((z, i) => `${dayTip(z)}: ${x.admitsByDay[i]} admitted`), { h: 140, label: 'Admissions each day' })),
+        chartBox('Discharges each day', barSvg(x.dischByDay, dayLbl, d.days.map((z, i) => `${dayTip(z)}: ${x.dischByDay[i]} discharged`), { h: 140, label: 'Discharges each day' })),
+        hbars('Admissions by consultant unit', x.byUnit),
+        hbars('Discharge outcomes', x.outcomes)));
+  };
+  drawWard();
+
+  main.append(
+    h('div', { class: 'toolbar' }, h('h2', {}, 'Census · ', monthName(m)),
+      h('div', { class: 'actions otdaynav' },
+        h('a', { class: 'button', href: '#monthly/' + shiftM(-1) }, '‹ ', monthName(shiftM(-1), true)),
+        m !== thisM && h('a', { class: 'button', href: '#monthly/' + thisM }, 'This month'),
+        next <= thisM && h('a', { class: 'button', href: '#monthly/' + next }, monthName(next, true), ' ›'))),
+    m === thisM && h('p', { class: 'muted' }, `Up to today, ${fmtDay(S.meta.today)}. Patients imported without an admission date are not counted as admissions.`),
+    top,
+    h('h3', { class: 'censushead' }, 'Trend'), trend,
+    h('h3', { class: 'censushead' }, 'Operations'), otPart,
+    h('h3', { class: 'censushead' }, 'Wards'), tabs, wardBox);
 }
 
 boot().catch((e) => { document.getElementById('app').replaceChildren(h('p', { class: 'error center' }, 'The app could not start on this browser. ' + e.message)); });
