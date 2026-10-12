@@ -94,7 +94,7 @@ function stayBadges(a, date) {
 function podText(a, date) {
   const pods = [a.surgery_date, a.surgery_date2, a.surgery_date3].filter((d) => d && d <= date).map((d) => daysBetween(d, date));
   if (!pods.length) return '';
-  return pods.length === 1 && pods[0] === 0 ? 'Op day' : 'POD ' + pods.join('/');
+  return 'POD ' + pods.join('/');
 }
 
 // A patient's own extra fields, as { key, label, type, unit }. Older records stored just the name.
