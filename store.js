@@ -273,7 +273,13 @@ const Store = (() => {
   const SESSION_HOURS = 12;
   const IDLE_MINUTES = 15; // keep in step with LOCK_MINUTES in app.js
 
-  function publicUser(u) { return { id: u.id, username: u.username, name: u.name, role: u.role }; }
+  function publicUser(u) { return { id: u.id, username: u.username, name: u.name, role: u.role, initials: u.initials || '' }; }
+  // Initials (NP for Nidhi Patil) name the person on scrub teams and the OT log. Letters only, 1-4, unique.
+  function cleanInitials(v, selfId) {
+    const x = str(v, 4).toUpperCase().replace(/[^A-Z]/g, '');
+    if (x && all('user').some((u) => u.id !== selfId && (u.initials || '') === x)) throw new HttpError(400, `Initials ${x} are already used by someone else`);
+    return x;
+  }
   async function startSession(u) {
     currentUser = publicUser(u);
     await setMeta('session', { user_id: u.id, expires: now() + SESSION_HOURS * 3600e3, last: now() });
@@ -297,8 +303,9 @@ const Store = (() => {
     validatePassword(body.password);
     if (all('user').some((u) => u.username === username)) throw new HttpError(400, 'That username is taken');
     const id = 'user:' + uuid();
-    put(id, 'user', { username, name, role: body.role, pass_hash: await hashPassword(body.password), active: 1, created_at: stamp() });
-    return { id, username, name, role: body.role };
+    const initials = cleanInitials(body.initials, id);
+    put(id, 'user', { username, name, initials, role: body.role, pass_hash: await hashPassword(body.password), active: 1, created_at: stamp() });
+    return { id, username, name, initials, role: body.role };
   }
 
   route('GET', '/api/state', PUBLIC, () => ({ setupNeeded: !all('user').length, user: currentUser, today: today() }));
@@ -349,6 +356,8 @@ const Store = (() => {
   route('GET', '/api/meta', ANY, () => ({
     sections: getBedSections(), params: params(), bedsText: getSetting('beds'),
     units: getUnits(), unitsText: getSetting('units'), emergencyBeds: getEmergencyBeds(), icuBeds: getIcuBeds(), theme: getSetting('theme') || 'auto', today: today(),
+    // Everyone with initials, for the scrub-team tiles.
+    people: all('user').filter((u) => u.active && u.initials).map((u) => ({ initials: u.initials, name: u.name, role: u.role })),
   }));
 
   route('GET', '/api/register', ANY, ({ query }) => {
@@ -574,7 +583,7 @@ const Store = (() => {
     for (const e of all('otentry')) {
       if (e.cancelled || !e.admission_id || (!e.done && !(e.scrub || []).length)) continue;
       const l = get(e.list_id);
-      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || '', scrub: e.scrub || [] });
+      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id });
     }
     for (const k in out) out[k].sort((x, y) => (x.date < y.date ? -1 : 1));
     return out;
@@ -595,8 +604,9 @@ const Store = (() => {
     const lists = new Set(all('otlist').filter((l) => l.date === day).map((l) => l.id));
     return all('otentry').find((e) => !e.cancelled && lists.has(e.list_id) && (e.admission_id === a.id || (a.ip_no && (e.uhid || '').toLowerCase() === a.ip_no.toLowerCase())));
   }
-  function surgeryFromOtList(a, day = otDay()) {
-    if (!otEntryOn(a, day)) return null;
+  // any: count the day even if the patient was not on an OT list (OT findings posted from Rounds).
+  function surgeryFromOtList(a, day = otDay(), any = false) {
+    if (!any && !otEntryOn(a, day)) return null;
     const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
     const dates = keys.map((k) => a[k]).filter(Boolean);
     if (dates.includes(day)) return { n: dates.indexOf(day) + 1, date: day, already: true };
@@ -617,7 +627,8 @@ const Store = (() => {
     if (scrub.length && !surgery) { const ent = otEntryOn(a, day); surgery = (ent && ent.surgery) || a.procedure_done || ''; }
     put('ot:' + uuid(), 'ot', { admission_id: a.id, text, by: currentUser.id, at: stamp(), day, scrub, surgery });
     audit('OT note', a.name);
-    return { ok: true, surgery: surgeryFromOtList(a) };
+    // Posting OT findings counts as operated that day, unless the poster unticked it (plain instructions).
+    return { ok: true, surgery: body.operated === false ? null : surgeryFromOtList(a, day, true) };
   });
   // Investigations booked for a date (barium swallow, CT under GA, PET CT…): shown in Rounds, on the register for the next day, and in the alert bar on the day.
   function invByAdmission() {
@@ -691,7 +702,7 @@ const Store = (() => {
       .sort((a, b) => ((a.admit_date || '') < (b.admit_date || '') ? 1 : -1)).slice(0, 300);
   });
 
-  route('GET', '/api/users', ADMIN, () => all('user').map((u) => ({ id: u.id, username: u.username, name: u.name, role: u.role, active: u.active, created_at: u.created_at }))
+  route('GET', '/api/users', ADMIN, () => all('user').map((u) => ({ id: u.id, username: u.username, name: u.name, initials: u.initials || '', role: u.role, active: u.active, created_at: u.created_at }))
     .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name)));
 
   route('POST', '/api/users', ADMIN, async ({ body }) => { const u = await createUser(body); audit('create user', u.username); return u; });
@@ -703,6 +714,7 @@ const Store = (() => {
     const active = body.active === undefined ? u.active : (body.active ? 1 : 0);
     if (u.id === currentUser.id && (role !== 'admin' || !active)) throw new HttpError(400, "You can't remove your own admin access");
     const next = { ...strip(u), name: str(body.name, 80) || u.name, role, active };
+    if (body.initials !== undefined) next.initials = cleanInitials(body.initials, u.id);
     if (body.password) { validatePassword(body.password); next.pass_hash = await hashPassword(body.password); }
     put(u.id, 'user', next);
     audit('edit user', u.username);

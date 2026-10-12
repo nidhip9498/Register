@@ -774,8 +774,12 @@ const SR_INITIALS = [['KI', 'Kiran'], ['JD', 'Jagadish'], ['SY', 'Shreya'], ['PA
 const ORDINALS = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth'];
 const roleName = (n) => (n === 1 ? 'Operating surgeon' : `${ORDINALS[n - 2] || n - 1 + 'th'} assistant`);
 const roleShort = (n) => (n === 1 ? 'operating' : `${['1st', '2nd', '3rd'][n - 2] || n - 1 + 'th'} asst`);
-const personName = (i) => { const p = [...SURGEONS, ...SR_INITIALS].find(([x]) => x === i); return p ? p[1] : i; };
+// Users added with initials (Admin > Users) join the tiles: consultants with the consultants, everyone else with the residents.
+const userPeople = (consultant) => ((S.meta && S.meta.people) || []).filter((u) => (u.role === 'consultant') === consultant).map((u) => [u.initials, u.name]);
+const allPeople = () => [...SURGEONS, ...SR_INITIALS, ...userPeople(true), ...userPeople(false)];
+const personName = (i) => { const p = allPeople().find(([x]) => x === i); return p ? p[1] : i; };
 function myInitials() {
+  if (S.user && S.user.initials) return S.user.initials;
   const name = (S.user && S.user.name || '').trim().replace(/^dr\.?\s+/i, ''), first = name.split(/\s+/)[0] || '';
   const c = SURGEONS.find(([, n]) => squash(n).replace(/^dr/, '') === squash(name).replace(/^dr/, ''));
   if (c) return c[0];
@@ -786,7 +790,9 @@ function myInitials() {
 // Tap the people who scrubbed in, in order: 1 operating surgeon, 2 first assistant, 3 second assistant… Opens in place, no pop-up.
 function scrubPicker(initial, onSave) {
   let team = [...(initial || [])];
-  const known = new Set([...SURGEONS, ...SR_INITIALS].map(([i]) => i));
+  const known = new Set(allPeople().map(([i]) => i));
+  const builtIn = new Set([...SURGEONS, ...SR_INITIALS].map(([i]) => i));
+  const extraCons = userPeople(true).filter(([i]) => !builtIn.has(i)), extraRes = userPeople(false).filter(([i]) => !builtIn.has(i) && !extraCons.some(([c]) => c === i));
   const addIn = h('input', { placeholder: 'Name of the person', onkeydown: (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } } });
   const add = () => { const v = addIn.value.trim(); if (v && !team.includes(v)) team.push(v); addIn.value = ''; addRow.hidden = true; draw(); };
   const addRow = h('div', { class: 'saddrow' }, addIn, h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add'));
@@ -796,8 +802,8 @@ function scrubPicker(initial, onSave) {
     n ? h('span', { class: 'snum' }, n) : null, i); };
   const draw = () => grid.replaceChildren(
     h('small', { class: 'muted' }, 'Tap in order: 1 operating surgeon, 2 first assistant, 3 second assistant… Tap again to remove.'),
-    h('div', { class: 'slabel' }, 'Consultants'), h('div', { class: 'stiles' }, SURGEONS.map(([i]) => tile(i))),
-    h('div', { class: 'slabel' }, 'Residents'), h('div', { class: 'stiles' }, SR_INITIALS.map(([i]) => tile(i)), team.filter((x) => !known.has(x)).map(tile),
+    h('div', { class: 'slabel' }, 'Consultants'), h('div', { class: 'stiles' }, SURGEONS.map(([i]) => tile(i)), extraCons.map(([i]) => tile(i))),
+    h('div', { class: 'slabel' }, 'Residents'), h('div', { class: 'stiles' }, SR_INITIALS.map(([i]) => tile(i)), extraRes.map(([i]) => tile(i)), team.filter((x) => !known.has(x)).map(tile),
       h('button', { type: 'button', class: 'stile add', title: 'Someone else', onclick: () => { addRow.hidden = false; addIn.focus(); } }, '+')),
     addRow,
     h('div', { class: 'btns' }, h('span', { class: 'small grow' }, team.length ? team.map((x, k) => `${k + 1} ${x}`).join(' · ') : 'No one chosen'),
@@ -806,7 +812,7 @@ function scrubPicker(initial, onSave) {
   return grid;
 }
 
-const postedText = (r) => { const s = r && r.surgery; return !s || s.already ? 'Posted' : s.full ? 'Posted. Three surgery dates are already filled, so this one was not added.' : `Posted. ${fmtDate(s.date)} saved as surgery ${s.n} because the patient was on that day's OT list. POD counts from it.`; };
+const postedText = (r) => { const s = r && r.surgery; return !s || s.already ? 'Posted' : s.full ? 'Posted. Three surgery dates are already filled, so this one was not added.' : `Posted. ${fmtDate(s.date)} saved as surgery ${s.n}. POD counts from it.`; };
 // Rounds boxes fold into a dropdown; one left open stays open when its card is redrawn.
 const openBoxes = new Set();
 function foldBox(key, cls, title, hint, kids) {
@@ -816,19 +822,23 @@ function foldBox(key, cls, title, hint, kids) {
 }
 function otBox(a, onChanged) {
   const ta = h('textarea', { rows: 2, placeholder: 'Type OT findings or instructions for the ward…' });
+  // Ticked: posting marks today as a surgery day (POD 0). Untick for plain ward instructions.
+  const op = h('input', { type: 'checkbox', checked: true });
   const post = async () => {
     if (!ta.value.trim()) return;
     try {
-      const r = await api('POST', '/api/ot/' + a.id, { text: ta.value });
+      const r = await api('POST', '/api/ot/' + a.id, { text: ta.value, operated: op.checked });
       toast(postedText(r));
       onChanged();
     } catch (e) { toast(e.message, true); }
   };
   const n = a.ot.length + (a.otprocs || []).length;
   return foldBox('ot:' + a.id, '', 'OT findings & instructions', n ? `${a.ot.length} posted${(a.otprocs || []).length ? ` · ${a.otprocs.length} OT` : ''}` : '', [
-    (a.otprocs || []).map((x) => h('p', { class: 'otproc small' }, h('b', {}, `${otName(x.ot)} · ${fmtDate(x.date)}: `), x.done || 'Procedure not noted yet', x.scrub.length ? h('span', { class: 'muted' }, ` · ${x.scrub.join('/')}`) : null)),
+    (a.otprocs || []).map((x) => h('div', { class: 'othdrrow otprocrow' }, h('p', { class: 'otproc small' }, h('b', {}, `${otName(x.ot)} · ${fmtDate(x.date)}: `), x.done || 'Procedure not noted yet', x.scrub.length ? h('span', { class: 'muted' }, ` · ${x.scrub.join('/')}`) : null),
+      canEdit() && x.list_id && pencilLink(`#otlist/${x.list_id}/${x.entry_id}`, 'Edit on the OT list'))),
     a.ot.length ? otList(a.ot, onChanged) : null,
-    h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post'))]);
+    h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post')),
+    h('label', { class: 'opcheck small' }, op, ' Operated today (counts as surgery date, POD 0)')]);
 }
 
 // Investigations booked for a date (Barium swallow, CT under GA, PET CT…). The register shows tomorrow's; the alert bar shows today's.
@@ -938,9 +948,18 @@ function patientCard(a, date, refresh) {
 }
 
 // Rounds: every patient, ward by ward and then the ICU, in bed order, with the fields chosen for them.
+// The Rounds form clears at 11:30 am: from then on it opens on tomorrow's date (blank), for the next morning's SR.
+// Today's entries stay on the register, Status and the prints until midnight. Every day's rounds stay in the patient's history.
+const ROUNDS_CLEAR_MIN = 11 * 60 + 30;
+function roundsDay() {
+  const n = new Date(), d = localStamp(n).slice(0, 10);
+  return n.getHours() * 60 + n.getMinutes() >= ROUNDS_CLEAR_MIN ? addDays(d, 1) : d;
+}
 async function roundsView(main) {
-  const date = S.date;
-  const go = (d) => { if (confirmLeave()) { S.date = d; render(); } };
+  const def = roundsDay();
+  // A day picked with the arrows holds until the next 11:30 switch.
+  const date = S.roundsPick && S.roundsPick.for === def ? S.roundsPick.d : def;
+  const go = (d) => { if (confirmLeave()) { S.roundsPick = { d, for: roundsDay() }; render(); } };
   const wards = [...new Set(S.meta.sections.flatMap((s) => s.beds).map(wardOf))];
   const wardSel = h('select', { onchange: (e) => { S.filters.ward = e.target.value; draw(); } },
     h('option', { value: '' }, 'All wards'), wards.map((w) => h('option', { value: w }, wardTitle(w))));
@@ -952,9 +971,11 @@ async function roundsView(main) {
         h('button', { class: 'ghost', onclick: () => go(addDays(date, -1)), 'aria-label': 'Previous day' }, '‹'),
         h('input', { type: 'date', value: date, onchange: (e) => e.target.value && go(e.target.value) }),
         h('button', { class: 'ghost', onclick: () => go(addDays(date, 1)), 'aria-label': 'Next day' }, '›'),
-        date !== S.meta.today && h('button', { class: 'ghost small', onclick: () => go(S.meta.today) }, 'Today')),
+        date !== def && h('button', { class: 'ghost small', onclick: () => go(def) }, 'Current rounds')),
       h('div', { class: 'filters' }, wardSel, search)),
-    h('h2', { class: 'daytitle' }, 'Rounds · ', fmtDay(date)));
+    h('h2', { class: 'daytitle' }, 'Rounds · ', fmtDay(date)),
+    date === def && def !== localStamp(new Date()).slice(0, 10) ? h('p', { class: 'muted small roundsnote' },
+      `Cleared at 11:30 am for the next rounds. What you save now goes under ${fmtDay(date)}. Today's rounds stay on Status and the print until midnight, and in each patient's history.`) : '');
   const list = h('div', { class: 'register' }, h('p', { class: 'loading' }, 'Loading…'));
   main.append(list);
   let data = await api('GET', '/api/register?date=' + date);
@@ -1714,7 +1735,9 @@ async function otLogView(main, who) {
   who = who || myInitials() || SURGEONS[0][0];
   const [counts, rows] = await Promise.all([api('GET', '/api/otpeople'), api('GET', '/api/otlog?who=' + encodeURIComponent(who))]);
   const people = Object.keys(counts);
-  const known = new Set([...SURGEONS, ...SR_INITIALS].map(([i]) => i));
+  const known = new Set(allPeople().map(([i]) => i));
+  const builtIn = new Set([...SURGEONS, ...SR_INITIALS].map(([i]) => i));
+  const extraCons = userPeople(true).filter(([i]) => !builtIn.has(i)), extraRes = userPeople(false).filter(([i]) => !builtIn.has(i) && !extraCons.some(([c]) => c === i));
   const others = people.filter((p) => !known.has(p));
   if (!known.has(who) && !others.includes(who)) others.push(who);
   const opt = ([i, n]) => h('option', { value: i, selected: i === who }, n ? `${i} · ${n}` : i);
@@ -2004,13 +2027,15 @@ async function adminUsers(body) {
   const form = h('form', { class: 'card grid4', onsubmit: async (e) => {
     e.preventDefault();
     try {
-      await api('POST', '/api/users', { name: form.fullname.value, username: form.username.value, role: form.role.value, password: form.password.value });
+      await api('POST', '/api/users', { name: form.fullname.value, username: form.username.value, initials: form.initials.value, role: form.role.value, password: form.password.value });
+      S.meta = await api('GET', '/api/meta');
       toast('User added'); render();
     } catch (x) { err.textContent = x.message; }
   } },
   h('h3', { class: 'span4' }, 'Add a user'),
   h('label', {}, 'Name', h('input', { name: 'fullname', required: true, placeholder: 'Dr A. Sharma' })),
   h('label', {}, 'Username', h('input', { name: 'username', required: true, autocapitalize: 'none' })),
+  h('label', {}, 'Initials (for scrub team)', h('input', { name: 'initials', maxlength: 4, placeholder: 'NP', autocapitalize: 'characters', style: 'text-transform: uppercase' })),
   h('label', {}, 'Role', h('select', { name: 'role' }, Object.entries(ROLE_NAMES).map(([k, v]) => h('option', { value: k, selected: k === 'jr' }, v)))),
   h('label', {}, 'Starting password', h('input', { name: 'password', required: true, minlength: 6 })),
   err, h('button', { class: 'primary span4' }, 'Add user'));
@@ -2018,12 +2043,14 @@ async function adminUsers(body) {
   body.append(
     h('p', { class: 'muted' }, 'SR and JR: admit, edit, move and discharge patients, fill rounds and post OT notes. Consultant: sees the registers, Bed Occupancy and Status, and adds their own round notes (Bed Occupancy > their box > Round notes). Admin (SR): everything, plus this page.'),
     h('div', { class: 'tablewrap' }, h('table', { class: 'list' },
-      h('thead', {}, h('tr', {}, ['Name', 'Username', 'Role', 'Active', ''].map((t) => h('th', {}, t)))),
+      h('thead', {}, h('tr', {}, ['Name', 'Initials', 'Username', 'Role', 'Active', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, users.map((u) => {
         const role = h('select', { onchange: async () => { await update(u, { role: role.value }); } },
           Object.entries(ROLE_NAMES).map(([k, v]) => h('option', { value: k, selected: k === u.role }, v)));
         return h('tr', { class: u.active ? '' : 'inactive' },
-          h('td', {}, u.name), h('td', {}, u.username), h('td', {}, role),
+          h('td', {}, u.name),
+          h('td', {}, h('input', { class: 'initin', value: u.initials || '', maxlength: 4, placeholder: '—', style: 'text-transform: uppercase', onchange: async (e) => { await update(u, { initials: e.target.value }); S.meta = await api('GET', '/api/meta'); } })),
+          h('td', {}, u.username), h('td', {}, role),
           h('td', {}, h('input', { type: 'checkbox', checked: !!u.active, onchange: (e) => update(u, { active: e.target.checked }) })),
           h('td', {}, h('button', { class: 'ghost small', onclick: async () => {
             const p = prompt(`New password for ${u.name} (at least 6 characters):`);

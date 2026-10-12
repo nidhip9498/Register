@@ -558,3 +558,7 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .otdayhead .grow { flex: 1; }
 .pencil { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; }
 .pencil svg { display: block; }
+.opcheck { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--muted, #666); }
+.otprocrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.roundsnote { margin: -4px 0 10px; }
+.initin { width: 4.5em; }
