@@ -1577,12 +1577,15 @@ const pencilLink = (href, title) => { const a = h('a', { class: 'pencil', href, 
 // Scrub team in a pop-up (tap the initials in order, Save team).
 function scrubPopup(e, done) {
   const root = document.getElementById('modal-root');
+  const doneIn = h('textarea', { rows: 2, placeholder: 'Procedure actually done' }, e.done || e.surgery || '');
   const close = () => root.replaceChildren();
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
     h('div', { class: 'modal card panel' },
       h('div', { class: 'mhead' }, h('h2', {}, `Scrub team · ${e.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+      // First: the procedure actually done (starts as the planned surgery). It goes to the Logbook, Rounds and the Ward Register.
+      h('label', { class: 'field donefield' }, h('span', { class: 'flabel' }, 'Procedure done'), doneIn),
       scrubPicker(e.scrub, async (team) => {
-        try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); close(); toast(res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); done(); } catch (x) { toast(x.message, true); }
+        try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team, done: doneIn.value.trim() }); close(); toast(res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); done(); } catch (x) { toast(x.message, true); }
       }),
       caseCancelForm(e, () => { close(); done(); }))));
 }

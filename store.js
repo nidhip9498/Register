@@ -1036,6 +1036,14 @@ const Store = (() => {
     return all('ot').filter((o) => o.entry_id === e.id || (!o.entry_id && e.admission_id && o.admission_id === e.admission_id && (o.day || o.at.slice(0, 10)) === l.date))
       .sort((x, y) => (x.at < y.at ? -1 : 1)).map((o) => ({ id: o.id, text: o.text, at: o.at, by: userName(o.by), mine: o.by === currentUser.id, edited: o.edited_at ? `${userName(o.edited_by)} ${o.edited_at.slice(11, 16)}` : '' }));
   }
+  // The procedure done on an OT day goes into the patient's "Surgery" on the register: filled if empty,
+  // replaced if it was this same entry's earlier wording, otherwise added after the earlier surgery (second operation).
+  function noteProcedure(a, done, prevDone) {
+    if (!a || !done) return;
+    const cur = a.procedure_done || '';
+    const next = !cur || cur === prevDone ? done : cur.toLowerCase().includes(done.toLowerCase()) ? cur : `${cur}; ${done}`;
+    if (next !== cur) put(a.id, 'admission', { ...strip(a), procedure_done: str(next, 500), updated_at: stamp() });
+  }
   route('POST', '/api/otentries/:id/findings', EDITORS, ({ body, params: p }) => {
     const e = getEntry(p.id), l = getOtList(e.list_id);
     const text = str(body.text, 3000), done = body.done != null ? str(body.done, 300) : (e.done || '');
@@ -1046,7 +1054,7 @@ const Store = (() => {
     if (done !== (e.done || '')) {
       put(e.id, 'otentry', { ...strip(e), done, updated_by: currentUser.id, updated_at: stamp() });
       touchOtList(l.id, `noted the procedure done for ${e.name}`);
-      if (a && done && !a.procedure_done) put(a.id, 'admission', { ...strip(a), procedure_done: done, updated_at: stamp() });
+      noteProcedure(a, done, e.done || '');
     }
     // Admitted patients' findings also show in Rounds and the ward's OT alerts; day-care findings stay with the OT list.
     if (text) { put('ot:' + uuid(), 'ot', { admission_id: a ? a.id : null, entry_id: e.id, text, by: currentUser.id, at: stamp(), day: l.date }); audit('OT note', e.name); }
@@ -1055,15 +1063,16 @@ const Store = (() => {
   route('PUT', '/api/otentries/:id/scrub', ANY, ({ body, params: p }) => {
     const e = getEntry(p.id);
     const scrub = (Array.isArray(body.scrub) ? body.scrub : []).map((x) => str(x, 60)).filter((x, i, l) => x && l.indexOf(x) === i).slice(0, 10);
-    put(e.id, 'otentry', { ...strip(e), scrub, updated_by: currentUser.id, updated_at: stamp() });
+    const done = body.done != null ? str(body.done, 300) : (e.done || '');
+    put(e.id, 'otentry', { ...strip(e), scrub, done, updated_by: currentUser.id, updated_at: stamp() });
     touchOtList(e.list_id, `set the scrub team for ${e.name}`);
     // A scrub team means the operation happened: that list's day becomes a surgery date for an admitted patient (POD counts from it).
     const l = get(e.list_id);
     let surgery = null;
     if (e.case_cancelled && scrub.length) throw new HttpError(400, 'This case was marked cancelled. Undo that first.');
-    if (scrub.length && !e.cancelled && l && l.date <= today()) {
+    if ((scrub.length || done) && !e.cancelled && l && l.date <= today()) {
       const a = (e.admission_id && get(e.admission_id)) || (e.uhid && all('admission').find((x) => !x.discharge_date && (x.ip_no || '').toLowerCase() === e.uhid.toLowerCase()));
-      if (a) surgery = surgeryFromOtList(get(a.id), l.date);
+      if (a) { noteProcedure(a, done, e.done || ''); surgery = surgeryFromOtList(get(a.id), l.date); }
     }
     return { ok: true, surgery };
   });
