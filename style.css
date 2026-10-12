@@ -589,10 +589,18 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .shortnotes .grow { flex: 1; min-width: 0; }
 .shortnotes textarea { display: block; width: 100%; box-sizing: border-box; min-height: 5.5em; }
 .roster { display: flex; align-items: flex-start; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; }
-.rosterrows { display: grid; gap: 6px; }
-.rosterrow { display: flex; flex-wrap: wrap; gap: 6px 22px; }
-.rcell { display: inline-flex; align-items: baseline; gap: 6px; }
-.rlabel { font-size: .75rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .02em; }
+
+
+
+
 .rosteredit { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 6px 0; }
 .rosteredit label { display: flex; flex-direction: column; font-size: .8rem; gap: 3px; }
-.rosterrow + .rosterrow { border-top: 1px dashed var(--line); padding-top: 6px; }
+
+
+/* Duty roster as tiles: on phones three rows, each split equally; on wider screens the three groups sit side by side. */
+.rosterrows { display: grid; gap: 8px; }
+.rosterrow { display: grid; gap: 8px; }
+.rcell { background: var(--accent-soft); border-radius: 10px; padding: .45rem .65rem; display: flex; flex-direction: column; min-width: 0; }
+.rlabel { font-size: .72rem; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .02em; }
+.rcell b { font-size: .95rem; line-height: 1.25; overflow-wrap: anywhere; }
+@media (min-width: 900px) { .rosterrows { grid-template-columns: 2fr 2fr 3fr; } }

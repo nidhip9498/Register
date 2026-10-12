@@ -2249,8 +2249,8 @@ function rosterStrip(date) {
     const pen = canEdit() && (() => { const b = h('button', { type: 'button', class: 'pencil', title: 'Edit today\'s duties', 'aria-label': 'Edit duties', onclick: () => edit(day, names) }); b.innerHTML = PENCIL_SVG; return b; })();
     if (!day) { box.replaceChildren(...(canEdit() ? [h('p', { class: 'muted small grow' }, 'No duty roster for this day. Import the month in Admin > Import, or tap the pencil to fill it in.'), pen] : [])); box.hidden = !canEdit(); return; }
     box.hidden = false;
-    box.replaceChildren(h('div', { class: 'rosterrows grow' }, ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow' },
-      row.map(([k, label]) => h('span', { class: 'rcell' }, h('span', { class: 'rlabel' }, label), h('b', {}, rosterName(day[k], names) || '—')))))), pen || '');
+    box.replaceChildren(h('div', { class: 'rosterrows grow' }, ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow', style: `grid-template-columns: repeat(${row.length}, minmax(0, 1fr))` },
+      row.map(([k, label]) => h('div', { class: 'rcell' }, h('span', { class: 'rlabel' }, label), h('b', {}, rosterName(day[k], names) || '—')))))), pen || '');
   };
   const edit = (day, names) => {
     const d = day || {};
