@@ -1732,8 +1732,8 @@ function admitFromOt(e, onDone) {
 
 // ---------- OT Log: each person's logbook from the scrub teams added on OT lists ----------
 async function otLogView(main, who) {
-  // Consultants see only their own logbook. Residents and admins can open anyone's.
-  const own = S.user.role === 'consultant';
+  // Everyone sees only their own logbook; admins can open anyone's.
+  const own = S.user.role !== 'admin';
   if (own) {
     who = myInitials();
     if (!who) return main.append(h('h2', {}, 'Logbook'), h('p', { class: 'muted' }, 'Your initials are not set yet. Ask the admin to add them in Admin > Users, then your logbook shows here.'));
@@ -1946,7 +1946,7 @@ function occupancyPanel(title, pts, icuPts, date, isUnit) {
       h('div', { class: 'mhead' }, h('h2', {}, `${title} · ${pts.length} patient${pts.length === 1 ? '' : 's'}`),
         h('div', { class: 'btns' },
           isUnit && h('a', { class: 'button ghost small', href: '#notes/' + encodeURIComponent(title), onclick: close }, 'Round notes'),
-          isUnit && S.user.role !== 'consultant' && h('a', { class: 'button ghost small', href: '#otlog/' + encodeURIComponent(title), onclick: close }, 'Logbook'),
+          isUnit && S.user.role === 'admin' && h('a', { class: 'button ghost small', href: '#otlog/' + encodeURIComponent(title), onclick: close }, 'Logbook'),
           h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       table(pts),
       isUnit && [h('h3', { class: 'icuhead' }, `ICU (6C) · ${icuPts.length}`), table(icuPts, true)])));
