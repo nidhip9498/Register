@@ -582,7 +582,7 @@ const Store = (() => {
   function otByAdmission() {
     const out = {};
     for (const o of all('ot').sort((x, y) => (x.at < y.at ? -1 : 1))) {
-      (out[o.admission_id] = out[o.admission_id] || []).push({ id: o.id, text: o.text, at: o.at, scrub: o.scrub || [], surgery: o.surgery || '', by: userName(o.by), mine: !!currentUser && o.by === currentUser.id });
+      (out[o.admission_id] = out[o.admission_id] || []).push({ id: o.id, text: o.text, at: o.at, scrub: o.scrub || [], surgery: o.surgery || '', by: userName(o.by), mine: !!currentUser && o.by === currentUser.id, edited: o.edited_at ? `${userName(o.edited_by)} ${o.edited_at.slice(11, 16)}` : '' });
     }
     return out;
   }
@@ -641,6 +641,16 @@ const Store = (() => {
     if (!v || !p.iid.startsWith('inv:')) throw new HttpError(404, 'Investigation not found');
     put(p.iid, 'inv', null);
     audit('delete investigation', v.text);
+    return { ok: true };
+  });
+  // Fix the wording of OT findings already posted (any resident; who edited it and when is kept).
+  route('PUT', '/api/ot/:oid', EDITORS, ({ body, params: p }) => {
+    const o = get(p.oid);
+    if (!o || !p.oid.startsWith('ot:')) throw new HttpError(404, 'Entry not found');
+    const text = str(body.text, 3000);
+    if (!text && !(o.scrub || []).length) throw new HttpError(400, 'Type something first');
+    put(p.oid, 'ot', { ...strip(o), text, edited_by: currentUser.id, edited_at: stamp() });
+    audit('edit OT note', userName(o.by));
     return { ok: true };
   });
   route('DELETE', '/api/ot/:oid', ANY, ({ params: p }) => {
@@ -1012,7 +1022,7 @@ const Store = (() => {
   // OT findings for one patient on one list: posted from the OT list, or from Rounds on that day.
   function otFindings(e, l) {
     return all('ot').filter((o) => o.entry_id === e.id || (!o.entry_id && e.admission_id && o.admission_id === e.admission_id && (o.day || o.at.slice(0, 10)) === l.date))
-      .sort((x, y) => (x.at < y.at ? -1 : 1)).map((o) => ({ id: o.id, text: o.text, at: o.at, by: userName(o.by), mine: o.by === currentUser.id }));
+      .sort((x, y) => (x.at < y.at ? -1 : 1)).map((o) => ({ id: o.id, text: o.text, at: o.at, by: userName(o.by), mine: o.by === currentUser.id, edited: o.edited_at ? `${userName(o.edited_by)} ${o.edited_at.slice(11, 16)}` : '' }));
   }
   route('POST', '/api/otentries/:id/findings', EDITORS, ({ body, params: p }) => {
     const e = getEntry(p.id), l = getOtList(e.list_id);

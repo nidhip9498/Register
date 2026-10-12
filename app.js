@@ -742,14 +742,30 @@ function fieldFor(p, value, onInput) {
 
 // OT findings and instructions: anyone can post; each post shows who wrote it and when.
 function otList(entries, onChanged) {
-  return h('ul', { class: 'otlist' }, entries.map((o) => h('li', {},
-    h('small', { class: 'muted' }, `${fmtDate(o.at.slice(0, 10))} ${o.at.slice(11, 16)} · ${o.by || ''}`),
-    onChanged && o.mine && h('button', { type: 'button', class: 'link small del', onclick: async () => {
-      if (!confirm('Delete this entry?')) return;
-      try { await api('DELETE', '/api/ot/' + encodeURIComponent(o.id)); toast('Deleted'); onChanged(); } catch (e) { toast(e.message, true); }
-    } }, 'Delete'),
-    o.text && h('div', {}, o.text),
-    (o.scrub || []).length ? h('div', { class: 'team small' }, h('b', {}, 'Scrubbed: '), o.scrub.join('/'), o.surgery ? h('div', { class: 'muted' }, o.surgery) : null) : null)));
+  return h('ul', { class: 'otlist' }, entries.map((o) => {
+    const li = h('li', {});
+    const show = () => li.replaceChildren(...[
+      h('div', { class: 'othdrrow' }, h('small', { class: 'muted' }, `${fmtDate(o.at.slice(0, 10))} ${o.at.slice(11, 16)} · ${o.by || ''}${o.edited ? ` · edited by ${o.edited}` : ''}`),
+        onChanged && canEdit() && h('button', { type: 'button', class: 'pencil', title: 'Edit', 'aria-label': 'Edit', onclick: edit }, '✎')),
+      o.text && h('div', {}, o.text),
+      (o.scrub || []).length ? h('div', { class: 'team small' }, h('b', {}, 'Scrubbed: '), o.scrub.join('/'), o.surgery ? h('div', { class: 'muted' }, o.surgery) : null) : null].filter(Boolean));
+    // The pencil opens the text in place; Save keeps the change, Delete (own posts) removes it.
+    const edit = () => {
+      const ta = h('textarea', { rows: Math.min(10, Math.max(3, Math.ceil((o.text || '').length / 80))) }, o.text || '');
+      li.replaceChildren(ta, h('div', { class: 'btns' },
+        o.mine && h('button', { type: 'button', class: 'link small del', onclick: async () => {
+          if (!confirm('Delete this entry?')) return;
+          try { await api('DELETE', '/api/ot/' + encodeURIComponent(o.id)); toast('Deleted'); onChanged(); } catch (e) { toast(e.message, true); }
+        } }, 'Delete'),
+        h('button', { type: 'button', class: 'ghost small', onclick: show }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary small', onclick: async () => {
+          try { await api('PUT', '/api/ot/' + encodeURIComponent(o.id), { text: ta.value }); toast('Saved'); onChanged(); } catch (e) { toast(e.message, true); }
+        } }, 'Save')));
+      ta.focus();
+    };
+    show();
+    return li;
+  }));
 }
 
 // Scrub-team initials. Consultants as in SURGEONS (SN is Dr Sachit Anand, SA is Dr Sandeep Agarwala), then the residents.
@@ -1436,23 +1452,30 @@ async function otHomeView(main) {
     full.length ? h('div', { class: 'otmonths' }, full.map(todayDrop)) : h('p', { class: 'muted' }, 'No lists for today yet.'));
 }
 
-// Today's list of one OT as a dropdown; each patient opens in turn to show their details.
+// Today's list of one OT as a dropdown; inside, one box with a row per patient, each with its scrub team and a pencil to the full card.
 function todayDrop(l) {
   const live = l.entries.filter((e) => !e.cancelled);
+  const href = (e) => '#otlist/' + encodeURIComponent(l.id) + '/' + encodeURIComponent(e.id);
+  const row = (e, i) => {
+    const r = h('div', { class: 'otrow' });
+    const extra = h('div', { class: 'otrowextra' });
+    const scrubBtn = h('button', { type: 'button', class: 'ottile small', onclick: () => {
+      if (extra.childNodes.length) return extra.replaceChildren();
+      extra.replaceChildren(scrubPicker(e.scrub, async (team) => {
+        try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast(res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); render(); } catch (x) { toast(x.message, true); }
+      }));
+    } }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team');
+    r.append(h('div', { class: 'otrowmain' },
+      h('div', { class: 'grow' },
+        h('div', {}, h('b', {}, `${i + 1}. ${e.name}`), h('span', { class: 'muted small' }, ` · ${bedLabel(e.bed)}${[e.age, e.sex].filter(Boolean).length ? ' · ' + [e.age, e.sex].filter(Boolean).join(' / ') : ''}`)),
+        h('div', { class: 'small' }, [e.diagnosis, e.done ? `Done: ${e.done}` : e.surgery].filter(Boolean).join(' · ') || h('span', { class: 'warntext' }, 'Surgery not filled yet'))),
+      h('div', { class: 'otrowbtns' }, scrubBtn, h('a', { class: 'pencil', href: href(e), title: 'Edit, repost and more', 'aria-label': 'Edit' }, '✎'))), extra);
+    return r;
+  };
   return h('details', { class: 'otmonth' },
     h('summary', {}, h('b', {}, otName(l.ot)), h('span', { class: 'muted small' }, ' · ' + [fullNames(l.surgeon), `${live.length} patient${live.length === 1 ? '' : 's'}`].filter(Boolean).join(' · '))),
     h('div', { class: 'otsub' },
-      live.length ? live.map((e, i) => h('details', { class: 'otpt' },
-        h('summary', {}, h('b', {}, `${i + 1}. ${e.name}`), h('span', { class: 'muted small' }, ` · ${bedLabel(e.bed)}${e.done || e.surgery ? ' · ' + (e.done || e.surgery) : ''}`)),
-        h('dl', { class: 'otfacts' },
-          [h('dt', {}, 'Age / Sex'), h('dd', {}, [e.age, e.sex].filter(Boolean).join(' / ') || '—')],
-          e.uhid && [h('dt', {}, 'UHID'), h('dd', {}, e.uhid)],
-          e.diagnosis && [h('dt', {}, 'Diagnosis'), h('dd', {}, e.diagnosis)],
-          [h('dt', {}, 'Surgery'), h('dd', {}, e.surgery || h('span', { class: 'warntext' }, 'Not filled yet'))],
-          e.done && [h('dt', {}, 'Done'), h('dd', {}, h('b', {}, e.done))],
-          e.consultant && [h('dt', {}, 'Consultant'), h('dd', {}, fullNames(e.consultant))],
-          (e.scrub || []).length ? [h('dt', {}, 'Scrub team'), h('dd', {}, h('b', {}, e.scrub.join('/')))] : null,
-          e.special && [h('dt', {}, 'Special req'), h('dd', { class: 'instr' }, e.special)]))) : h('p', { class: 'muted small' }, 'No patients yet.'),
+      live.length ? h('div', { class: 'otrows' }, live.map(row)) : h('p', { class: 'muted small' }, 'No patients yet.'),
       h('a', { class: 'button ghost small', href: '#otlist/' + encodeURIComponent(l.id) }, 'Open full list')));
 }
 
@@ -1527,7 +1550,10 @@ function createOtListModal(ot = '11', onCreated) {
 async function otListView(main, id) {
   let l;
   try { l = await api('GET', '/api/otlists/' + encodeURIComponent(id)); } catch (e) { main.append(h('p', { class: 'error' }, e.message), h('a', { href: '#ot' }, '‹ OT Lists')); return; }
-  const reload = () => { if (location.hash === '#otlist/' + encodeURIComponent(id)) render(); };
+  const reload = () => { if (location.hash.startsWith('#otlist/' + encodeURIComponent(id))) render(); };
+  // Opened from a pencil on today's lists: bring that patient's card into view.
+  const focusId = decodeURIComponent(location.hash.split('/')[2] || '');
+  if (focusId) setTimeout(() => { const c = document.querySelector(`[data-entry="${CSS.escape(focusId)}"]`); if (c) { c.classList.add('flash'); c.scrollIntoView({ block: 'center' }); } }, 50);
   // Cancelled entries stay on the day's list (greyed, not printed) with where they were reposted to.
   const live = l.entries.filter((e) => !e.cancelled), cancelled = l.entries.filter((e) => e.cancelled);
   const surgeonValue = () => [surgeon.value, surgeon2.value].filter((n, i, a) => n && a.indexOf(n) === i).join('/');
@@ -1549,7 +1575,7 @@ async function otListView(main, id) {
   drawSheet();
   const doPrint = () => { const st = h('style', {}, '@page { size: A4 landscape; margin: 16mm 15mm; }'); document.head.append(st); window.print(); st.remove(); };
   const move = async (e, dir) => { try { await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/move`, { dir }); reload(); } catch (x) { toast(x.message, true); } };
-  const card = (e, i) => h('div', { class: 'card otentry' },
+  const card = (e, i) => h('div', { class: 'card otentry', 'data-entry': e.id },
     h('div', { class: 'othead2' }, h('span', { class: 'slno' }, i + 1), h('div', { class: 'grow' }, h('b', { class: 'big' }, e.name), h('div', { class: 'muted small' }, [[e.age, e.sex].filter(Boolean).join(' / '), e.uhid && `UHID ${e.uhid}`].filter(Boolean).join(' · '))),
       h('span', { class: 'bedno' + (e.bed ? '' : ' nobed') }, bedLabel(e.bed))),
     e.reposted_from && h('p', { class: 'small reposted' }, `${e.reposted_from.kept ? 'Also on' : 'Shifted from'} ${otName(e.reposted_from.ot)}, ${fmtDate(e.reposted_from.date)}${e.reposted_from.reason ? ` (${e.reposted_from.reason})` : ''}`),
