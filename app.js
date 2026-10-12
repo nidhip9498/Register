@@ -193,6 +193,21 @@ async function refreshState() {
 }
 
 window.addEventListener('hashchange', () => render());
+// When the app stays open past midnight (or past 11:30 am on Rounds), move to the new day by itself.
+let lastRoundsDay = null;
+function checkNewDay() {
+  if (!S.meta || !S.user) return;
+  const d = localStamp(new Date()).slice(0, 10);
+  const route = (location.hash.slice(1) || 'register').split('/')[0];
+  let redraw = false;
+  if (d !== S.meta.today) { if (S.date === S.meta.today) S.date = d; S.meta.today = d; redraw = true; }
+  const rd = roundsDay();
+  if (lastRoundsDay && rd !== lastRoundsDay && route === 'rounds') redraw = true;
+  lastRoundsDay = rd;
+  if (redraw && !S.dirty.size && !document.querySelector('#modal-root > *')) render();
+}
+setInterval(checkNewDay, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkNewDay(); });
 window.addEventListener('beforeunload', (e) => { if (S.dirty.size) { e.preventDefault(); e.returnValue = ''; } });
 
 // Another device's changes arrived. Redraw unless someone is typing or has unsaved entries.
