@@ -1485,8 +1485,13 @@ const listCard = (l, withOt = true) => h('a', { class: 'otcard', href: '#otlist/
 
 async function otHomeView(main) {
   const today = S.meta.today;
-  const [lists, kinds] = await Promise.all([api('GET', '/api/otlists?from=' + today), api('GET', '/api/otrooms')]);
-  const todays = lists.filter((l) => l.date === today).sort((x, y) => (x.ot < y.ot ? -1 : 1));
+  const [lists, kinds] = await Promise.all([api('GET', '/api/otlists'), api('GET', '/api/otrooms')]);
+  // The arrows step to the previous / next day that has OT lists; the day shown is kept while you move around the app.
+  const day = S.otDay || today;
+  const dates = [...new Set(lists.map((l) => l.date))].sort();
+  const prev = dates.filter((d) => d < day).pop(), next = dates.find((d) => d > day);
+  const goDay = (d) => { S.otDay = d === today ? null : d; render(); };
+  const todays = lists.filter((l) => l.date === day).sort((x, y) => (x.ot < y.ot ? -1 : 1));
   const full = await Promise.all(todays.map((l) => api('GET', '/api/otlists/' + encodeURIComponent(l.id))));
   main.append(
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Lists'),
@@ -1494,8 +1499,12 @@ async function otHomeView(main) {
     h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot]) => h('a', { class: 'otroom' + (kinds[ot] === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot },
       h('b', {}, otName(ot))))),
     otSearchBox(),
-    h('h3', {}, 'Today · ', fmtDay(today)),
-    full.length ? h('div', { class: 'otdays' }, full.map(todayDrop)) : h('p', { class: 'muted' }, 'No lists for today yet.'));
+    h('div', { class: 'otdaynav' },
+      h('button', { type: 'button', class: 'ghost small', disabled: !prev, title: prev ? `Previous OT day: ${fmtDay(prev)}` : 'No earlier lists', 'aria-label': 'Previous OT day', onclick: () => goDay(prev) }, '‹'),
+      h('h3', {}, day === today ? 'Today · ' : day < today ? 'Earlier · ' : 'Coming up · ', fmtDay(day)),
+      h('button', { type: 'button', class: 'ghost small', disabled: !next, title: next ? `Next OT day: ${fmtDay(next)}` : 'No later lists', 'aria-label': 'Next OT day', onclick: () => goDay(next) }, '›'),
+      day !== today && h('button', { type: 'button', class: 'ghost small', onclick: () => goDay(today) }, 'Back to today')),
+    full.length ? h('div', { class: 'otdays' }, full.map(todayDrop)) : h('p', { class: 'muted' }, day === today ? 'No lists for today yet.' : 'No lists on this day.'));
 }
 
 // A pencil like the usual edit icon on websites.
@@ -1528,18 +1537,25 @@ async function undoCaseCancel(e, done) {
 }
 const caseCancelText = (c) => `Case cancelled${c.reason ? `: ${c.reason}` : ''}${c.by ? ` · ${c.by}` : ''}`;
 // Today's list of one OT, always open: one box with a row per patient, each with its scrub team; the pencil opens the list to edit.
+// One patient row: name, bed, diagnosis / surgery, the scrub team button (today and earlier lists) and a pencil to the list.
+function otRow(e, i, listId, date) {
+  const listHref = '#otlist/' + encodeURIComponent(listId);
+  return h('div', { class: 'otrow' + (e.case_cancelled || e.cancelled ? ' casecancelled' : '') }, h('div', { class: 'otrowmain' },
+    h('div', { class: 'grow' },
+      h('div', {}, h('b', {}, i == null ? e.name : `${i + 1}. ${e.name}`), e.uhid && i == null ? h('span', { class: 'muted small' }, ` · UHID ${e.uhid}`) : null, h('span', { class: 'muted small' }, ` · ${bedLabel(e.bed)}${[e.age, e.sex].filter(Boolean).length ? ' · ' + [e.age, e.sex].filter(Boolean).join(' / ') : ''}`)),
+      h('div', { class: 'small' }, [e.diagnosis, e.done ? `Done: ${e.done}` : e.surgery].filter(Boolean).join(' · ') || h('span', { class: 'warntext' }, 'Surgery not filled yet')),
+      e.case_cancelled ? h('div', { class: 'small cctag' }, caseCancelText(e.case_cancelled)) : null,
+      e.cancelled && e.reposted_to ? h('div', { class: 'small cctag' }, `Shifted to ${otName(e.reposted_to.ot)}, ${fmtDay(e.reposted_to.date)}`) : null),
+    h('div', { class: 'otrowbtns' },
+      e.cancelled ? null
+        : e.case_cancelled ? h('button', { type: 'button', class: 'ghost small', onclick: () => undoCaseCancel(e, render) }, 'Undo')
+        : date <= S.meta.today ? h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team') : null,
+      pencilLink(listHref + '/' + encodeURIComponent(e.id), `Edit ${e.name}`))));
+}
 function todayDrop(l) {
   const live = l.entries.filter((e) => !e.cancelled);
   const listHref = '#otlist/' + encodeURIComponent(l.id);
-  const row = (e, i) => h('div', { class: 'otrow' + (e.case_cancelled ? ' casecancelled' : '') }, h('div', { class: 'otrowmain' },
-    h('div', { class: 'grow' },
-      h('div', {}, h('b', {}, `${i + 1}. ${e.name}`), h('span', { class: 'muted small' }, ` · ${bedLabel(e.bed)}${[e.age, e.sex].filter(Boolean).length ? ' · ' + [e.age, e.sex].filter(Boolean).join(' / ') : ''}`)),
-      h('div', { class: 'small' }, [e.diagnosis, e.done ? `Done: ${e.done}` : e.surgery].filter(Boolean).join(' · ') || h('span', { class: 'warntext' }, 'Surgery not filled yet')),
-      e.case_cancelled ? h('div', { class: 'small cctag' }, caseCancelText(e.case_cancelled)) : null),
-    h('div', { class: 'otrowbtns' },
-      e.case_cancelled ? h('button', { type: 'button', class: 'ghost small', onclick: () => undoCaseCancel(e, render) }, 'Undo')
-        : h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team'),
-      pencilLink(listHref + '/' + encodeURIComponent(e.id), `Edit ${e.name}`))));
+  const row = (e, i) => otRow(e, i, l.id, l.date);
   return h('div', { class: 'card otday' },
     h('div', { class: 'otdayhead' }, h('b', {}, otName(l.ot)), h('span', { class: 'muted small grow' }, ' · ' + [fullNames(l.surgeon), `${live.length} patient${live.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')),
       pencilLink(listHref, `Edit the ${otName(l.ot)} list`)),
@@ -1572,14 +1588,17 @@ function otSearchBox() {
   const run = async (q) => {
     if (q.trim().length < 2) { out.replaceChildren(); return; }
     const rows = await api('GET', '/api/otsearch?q=' + encodeURIComponent(q.trim())).catch(() => []);
-    out.replaceChildren(rows.length ? h('div', { class: 'otcards' }, rows.map((r) => h('a', { class: 'otcard', href: '#otlist/' + encodeURIComponent(r.list_id) },
-      h('b', {}, r.name), h('span', { class: 'muted small' }, [[r.age, r.sex].filter(Boolean).join('/'), r.uhid && `UHID ${r.uhid}`].filter(Boolean).join(' · ')),
-      h('span', {}, `${otName(r.ot)} · ${fmtDay(r.date)}`),
-      h('span', { class: 'muted small' }, [r.surgery, fullNames(r.consultant)].filter(Boolean).join(' · '))))) : h('p', { class: 'muted' }, 'Not found on any OT list.'));
+    // Same rows as the day view, one box per OT list (newest first), headed by the OT and the date.
+    const groups = new Map();
+    for (const r of rows) { if (!groups.has(r.list_id)) groups.set(r.list_id, []); groups.get(r.list_id).push(r); }
+    out.replaceChildren(rows.length ? h('div', { class: 'otdays' }, [...groups.values()].map((rs) => h('div', { class: 'card otday' },
+      h('div', { class: 'otdayhead' }, h('b', {}, `${otName(rs[0].ot)} · ${fmtDay(rs[0].date)}`), h('span', { class: 'muted small grow' }, rs[0].surgeon ? ' · ' + fullNames(rs[0].surgeon) : ''),
+        pencilLink('#otlist/' + encodeURIComponent(rs[0].list_id), `Open the ${otName(rs[0].ot)} list`)),
+      h('div', { class: 'otrows' }, rs.map((r) => otRow(r, null, r.list_id, r.date)))))) : h('p', { class: 'muted' }, 'Not found on any OT list.'));
   };
   return h('div', { class: 'otsearch' },
-    h('input', { type: 'search', placeholder: 'Search a patient by UHID or name', autocomplete: 'off', oninput: (ev) => { clearTimeout(timer); timer = setTimeout(() => run(ev.target.value), 250); } }),
-    out);
+    h('input', { type: 'search', placeholder: 'Search a patient by UHID or name', autocomplete: 'off', value: S.otQ || '', oninput: (ev) => { S.otQ = ev.target.value; clearTimeout(timer); timer = setTimeout(() => run(ev.target.value), 250); } }),
+    out, S.otQ ? (run(S.otQ), '') : '');
 }
 
 // Every list of one OT grouped by month and year; tapping a month opens its dates right there.

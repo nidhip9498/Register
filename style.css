@@ -575,3 +575,7 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .cctag { color: var(--danger, #b42318); font-weight: 600; opacity: 1; }
 .casecancel { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line, #dde); }
 .notesrow .otnotes { margin-bottom: 2px; }
+.otdaynav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0 8px; }
+.otdaynav h3 { margin: 0; }
+.otdaynav button[disabled] { opacity: .35; }
+.otsearch .otdays { margin: 8px 0 14px; }

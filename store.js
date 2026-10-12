@@ -972,7 +972,7 @@ const Store = (() => {
     if (q.length < 2) return [];
     const lists = new Map(all('otlist').map((l) => [l.id, l]));
     return all('otentry').filter((e) => lists.has(e.list_id) && ((e.uhid || '').toLowerCase().includes(q) || (e.name || '').toLowerCase().includes(q)))
-      .map((e) => ({ ...e, ot: lists.get(e.list_id).ot, date: lists.get(e.list_id).date }))
+      .map((e) => { const l = lists.get(e.list_id); return { ...e, ot: l.ot, date: l.date, surgeon: l.surgeon || '', bed: liveBed(e, l), case_cancelled: e.case_cancelled ? { ...e.case_cancelled, by: userName(e.case_cancelled.by) } : undefined }; })
       .sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0)).slice(0, 50);
   });
   route('GET', '/api/uhid/:uhid', ANY, ({ params: p, query }) => lookupUhid(p.uhid, isDate(query.date) ? query.date : today()) || {});
