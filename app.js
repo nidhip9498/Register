@@ -2283,7 +2283,7 @@ function rosterImportCard() {
       const d = JSON.parse(await file.files[0].text());
       if (!d || d.kind !== 'register-roster' || !Array.isArray(d.days)) throw new Error('This is not a duty roster file.');
       data = d;
-      result.replaceChildren(h('p', {}, `${d.days.length} days found (${fmtDate(d.days[0].date)} to ${fmtDate(d.days[d.days.length - 1].date)}). Days already in the app are replaced.`));
+      result.replaceChildren(h('p', {}, `${d.days.length} days found (${fmtDate(d.days[0].date)} to ${fmtDate(d.days[d.days.length - 1].date)}). Duties in this file replace those days' entries; anything not in the file is kept.`));
       go.disabled = false;
     } catch (e) { result.replaceChildren(h('p', { class: 'error' }, e.message)); }
   } });

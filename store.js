@@ -1101,8 +1101,10 @@ const Store = (() => {
     let n = 0;
     for (const d of days) {
       if (!isDate(d.date)) continue;
-      const rec = { date: d.date, imported_at: stamp() };
-      for (const k of ROSTER_KEYS) rec[k] = str(d[k], 80);
+      // Only the duties in the file are replaced, so a consultant-only file keeps the SR names already imported.
+      const old = get('roster:' + d.date);
+      const rec = { ...(old ? strip(old) : {}), date: d.date, imported_at: stamp() };
+      for (const k of ROSTER_KEYS) if (d[k] !== undefined) rec[k] = str(d[k], 80);
       put('roster:' + d.date, 'roster', rec); n++;
     }
     const names = { ...rosterNames() };
