@@ -581,7 +581,7 @@ const Store = (() => {
   function otProcs() {
     const out = {};
     for (const e of all('otentry')) {
-      if (e.cancelled || !e.admission_id || (!e.done && !(e.scrub || []).length)) continue;
+      if (e.cancelled || e.case_cancelled || !e.admission_id || (!e.done && !(e.scrub || []).length)) continue;
       const l = get(e.list_id);
       if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id });
     }
@@ -602,7 +602,7 @@ const Store = (() => {
   // This patient's (not cancelled) entry on any OT list of that day.
   function otEntryOn(a, day) {
     const lists = new Set(all('otlist').filter((l) => l.date === day).map((l) => l.id));
-    return all('otentry').find((e) => !e.cancelled && lists.has(e.list_id) && (e.admission_id === a.id || (a.ip_no && (e.uhid || '').toLowerCase() === a.ip_no.toLowerCase())));
+    return all('otentry').find((e) => !e.cancelled && !e.case_cancelled && lists.has(e.list_id) && (e.admission_id === a.id || (a.ip_no && (e.uhid || '').toLowerCase() === a.ip_no.toLowerCase())));
   }
   // any: count the day even if the patient was not on an OT list (OT findings posted from Rounds).
   function surgeryFromOtList(a, day = otDay(), any = false) {
@@ -924,7 +924,7 @@ const Store = (() => {
   });
   route('GET', '/api/otlists/:id', ANY, ({ params: p }) => {
     const l = getOtList(p.id);
-    return { ...l, created_by: userName(l.created_by), updated_by: l.updated_by ? userName(l.updated_by) : '', edits: (l.edits || []).map((x) => ({ ...x, by: userName(x.by) })), entries: otEntries(l.id).map((e) => ({ ...e, bed: liveBed(e, l), by: userName(e.created_by), findings: otFindings(e, l) })) };
+    return { ...l, created_by: userName(l.created_by), updated_by: l.updated_by ? userName(l.updated_by) : '', edits: (l.edits || []).map((x) => ({ ...x, by: userName(x.by) })), entries: otEntries(l.id).map((e) => ({ ...e, bed: liveBed(e, l), by: userName(e.created_by), findings: otFindings(e, l), case_cancelled: e.case_cancelled ? { ...e.case_cancelled, by: userName(e.case_cancelled.by) } : undefined })) };
   });
   route('PUT', '/api/otlists/:id', ANY, ({ body, params: p }) => {
     const l = getOtList(p.id);
@@ -1060,11 +1060,23 @@ const Store = (() => {
     // A scrub team means the operation happened: that list's day becomes a surgery date for an admitted patient (POD counts from it).
     const l = get(e.list_id);
     let surgery = null;
+    if (e.case_cancelled && scrub.length) throw new HttpError(400, 'This case was marked cancelled. Undo that first.');
     if (scrub.length && !e.cancelled && l && l.date <= today()) {
       const a = (e.admission_id && get(e.admission_id)) || (e.uhid && all('admission').find((x) => !x.discharge_date && (x.ip_no || '').toLowerCase() === e.uhid.toLowerCase()));
       if (a) surgery = surgeryFromOtList(get(a.id), l.date);
     }
     return { ok: true, surgery };
+  });
+
+  // Case cancelled on the day (not operated): the patient stays on the list, greyed, for the record. undo:true brings it back.
+  route('PUT', '/api/otentries/:id/casecancel', ANY, ({ body, params: p }) => {
+    const e = getEntry(p.id);
+    const next = { ...strip(e), updated_by: currentUser.id, updated_at: stamp() };
+    if (body.undo) delete next.case_cancelled;
+    else { next.case_cancelled = { reason: str(body.reason, 300), by: currentUser.id, at: stamp() }; next.scrub = []; }
+    put(e.id, 'otentry', next);
+    touchOtList(e.list_id, body.undo ? `restored ${e.name} (case cancelled undone)` : `marked ${e.name}'s case cancelled`);
+    return { ok: true };
   });
 
   route('GET', '/api/otlog', ANY, ({ query }) => {
@@ -1075,7 +1087,7 @@ const Store = (() => {
     const rows = [];
     // From the scrub team on each OT list entry…
     for (const e of all('otentry')) {
-      const i = e.cancelled ? -1 : (e.scrub || []).findIndex((x) => x.toLowerCase() === who);
+      const i = e.cancelled || e.case_cancelled ? -1 : (e.scrub || []).findIndex((x) => x.toLowerCase() === who);
       const l = i >= 0 && get(e.list_id);
       if (!l) continue;
       const a = e.admission_id && get(e.admission_id);
@@ -1093,7 +1105,7 @@ const Store = (() => {
   // Everyone who has scrubbed in so far, with how many operations each.
   route('GET', '/api/otpeople', ANY, () => {
     const n = {};
-    for (const o of [...all('otentry').filter((e) => !e.cancelled), ...all('ot')]) for (const x of o.scrub || []) n[x] = (n[x] || 0) + 1;
+    for (const o of [...all('otentry').filter((e) => !e.cancelled && !e.case_cancelled), ...all('ot')]) for (const x of o.scrub || []) n[x] = (n[x] || 0) + 1;
     return n;
   });
   route('POST', '/api/otentries/:id/move', ANY, ({ body, params: p }) => {

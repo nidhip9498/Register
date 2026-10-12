@@ -259,7 +259,7 @@ function view(route, arg, main) {
   if (route === 'ot') return arg ? otDatesView(main, arg) : otHomeView(main);
   if (route === 'otlist') return otListView(main, decodeURIComponent(arg || ''));
   if (route === 'otlog') return otLogView(main, decodeURIComponent(arg || ''));
-  if (route === 'rounds' && canEdit()) return roundsView(main);
+  if (route === 'rounds' && canEdit()) return roundsView(main, decodeURIComponent(arg || ''));
   if (route === 'notes') return notesView(main, decodeURIComponent(arg || ''));
   if (route === 'admin' && S.user.role === 'admin') return adminView(main, arg || 'users');
   if (route === 'icu') return registerView(main, 'icu');
@@ -955,7 +955,9 @@ function roundsDay() {
   const n = new Date(), d = localStamp(n).slice(0, 10);
   return n.getHours() * 60 + n.getMinutes() >= ROUNDS_CLEAR_MIN ? addDays(d, 1) : d;
 }
-async function roundsView(main) {
+async function roundsView(main, focus) {
+  // Opened from a bed on the register (#rounds/<patient>): show that patient's card.
+  if (focus) { S.roundsSel = focus; history.replaceState(null, '', '#rounds'); lastHash = location.hash; }
   const def = roundsDay();
   // A day picked with the arrows holds until the next 11:30 switch.
   const date = S.roundsPick && S.roundsPick.for === def ? S.roundsPick.d : def;
@@ -976,16 +978,35 @@ async function roundsView(main) {
     h('h2', { class: 'daytitle' }, 'Rounds · ', fmtDay(date)),
     date === def && def !== localStamp(new Date()).slice(0, 10) ? h('p', { class: 'muted small roundsnote' },
       `Cleared at 11:30 am for the next rounds. What you save now goes under ${fmtDay(date)}. Today's rounds stay on Status and the print until midnight, and in each patient's history.`) : '');
+  const strips = h('div', { class: 'bedstrips' });
   const list = h('div', { class: 'register' }, h('p', { class: 'loading' }, 'Loading…'));
-  main.append(list);
+  main.append(strips, list);
   let data = await api('GET', '/api/register?date=' + date);
   S.dirty.clear();
   const order = S.meta.sections.flatMap((s) => s.beds);
   const cards = new Map();
   const cardFor = (a) => { const c = patientCard(a, date, reloadOne); cards.set(a.id, c); return c; };
+  // One strip of bed numbers per ward (6B, 6A), slides left and right. Tap a bed to see only that patient; All shows everyone.
+  const pick = (id) => { if (id === S.roundsSel || !confirmLeave()) return; S.dirty.clear(); S.roundsSel = id; draw(); window.scrollTo({ top: strips.offsetTop - 70 }); };
+  function drawStrips() {
+    const here = data.admissions.filter((a) => a.discharge_date !== date).sort((x, y) => order.indexOf(x.bed_on_date) - order.indexOf(y.bed_on_date));
+    strips.replaceChildren(...['6B', '6A'].map((w) => {
+      const pts = here.filter((a) => wardOf(a.bed_on_date) === w);
+      if (!pts.length) return null;
+      const row = h('div', { class: 'bedstrip' }, h('span', { class: 'bswho' }, w),
+        h('div', { class: 'bsrow' }, pts.map((a) => h('button', { type: 'button', class: 'bschip' + (a.id === S.roundsSel ? ' on' : '') + (a.round ? ' done' : ''), title: a.name, onclick: () => pick(a.id) },
+          a.bed_on_date.replace(new RegExp('^' + w + '/', 'i'), '')))));
+      return row;
+    }).filter(Boolean), S.roundsSel ? h('button', { type: 'button', class: 'ghost small bsall', onclick: () => pick(null) }, 'Show all patients') : '');
+    const on = strips.querySelector('.bschip.on');
+    if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }
   function draw() {
     const q = S.filters.q.trim().toLowerCase();
+    if (S.roundsSel && !data.admissions.some((a) => a.id === S.roundsSel && a.discharge_date !== date)) S.roundsSel = null;
+    drawStrips();
     const pts = data.admissions.filter((a) => a.discharge_date !== date)
+      .filter((a) => !S.roundsSel || a.id === S.roundsSel)
       .filter((a) => !S.filters.ward || wardOf(a.bed_on_date) === S.filters.ward)
       .filter((a) => !q || [a.bed_on_date, a.name, a.ip_no, a.diagnosis].join(' ').toLowerCase().includes(q))
       .sort((x, y) => order.indexOf(x.bed_on_date) - order.indexOf(y.bed_on_date));
@@ -1002,7 +1023,7 @@ async function roundsView(main) {
   async function reloadOne(id) {
     data = await api('GET', '/api/register?date=' + date);
     const a = data.admissions.find((x) => x.id === id), old = cards.get(id);
-    if (a && old && old.isConnected) old.replaceWith(cardFor(a)); else draw();
+    if (a && old && old.isConnected) { old.replaceWith(cardFor(a)); drawStrips(); } else draw();
   }
   draw();
 }
@@ -1045,7 +1066,7 @@ function patientDetails(a, date) {
         h('button', { class: 'ghost small', onclick: () => addToOtModal(a) }, 'Add to OT list'))),
     canEdit() && h('div', { class: 'foot' },
       h('div', { class: 'btns' },
-        h('a', { class: 'button ghost small', href: '#rounds', onclick: () => document.getElementById('modal-root').replaceChildren() }, 'Go to Rounds'),
+        h('a', { class: 'button ghost small', href: '#rounds/' + encodeURIComponent(a.id), onclick: () => document.getElementById('modal-root').replaceChildren() }, 'Go to Rounds'),
         h('button', { class: 'ghost small', onclick: () => addToOtModal(a) }, 'Add to OT list'),
         h('button', { class: 'ghost small', onclick: () => transferModal(a) }, 'Move bed'),
         h('button', { class: 'ghost small', onclick: () => dischargeModal(a) }, 'Discharge'))));
@@ -1428,8 +1449,12 @@ function wardBeds(only) {
 }
 // Short notes (and the consultant's round note) as one strip under the patient, across every column.
 function notesRow(a, cols) {
-  if (!a.instructions && !a.unit_note) return null;
+  const procs = (a.otprocs || []).filter((x) => x.done || x.scrub.length), posts = (a.ot || []).filter((o) => o.text);
+  if (!a.instructions && !a.unit_note && !procs.length && !posts.length) return null;
   return h('tr', { class: 'notesrow' }, h('td', { colspan: cols },
+    procs.length || posts.length ? h('div', { class: 'otnotes' }, h('b', {}, 'OT: '),
+      procs.map((x) => h('span', {}, `${fmtDate(x.date)} ${otName(x.ot)}: ${x.done || ''}${x.scrub.length ? ` (${x.scrub.join('/')})` : ''}. `)),
+      posts.map((o) => h('span', {}, `${fmtDate(o.at.slice(0, 10))}: ${o.text}. `))) : null,
     a.instructions ? [h('b', {}, 'Short notes: '), a.instructions] : null,
     a.unit_note ? h('span', { class: 'unote' }, h('b', {}, `${a.unit || 'Consultant'}: `), a.unit_note) : null));
 }
@@ -1485,18 +1510,35 @@ function scrubPopup(e, done) {
       h('div', { class: 'mhead' }, h('h2', {}, `Scrub team · ${e.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       scrubPicker(e.scrub, async (team) => {
         try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); close(); toast(res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); done(); } catch (x) { toast(x.message, true); }
-      }))));
+      }),
+      caseCancelForm(e, () => { close(); done(); }))));
 }
+// Not operated today: the patient stays on the list (greyed) for the record; no surgery date, not in anyone's logbook.
+function caseCancelForm(e, done) {
+  const reason = h('input', { placeholder: 'Reason (optional), e.g. URTI, no blood, OT time over' });
+  return h('div', { class: 'casecancel' }, h('div', { class: 'slabel' }, 'Case cancelled?'),
+    h('div', { class: 'otadd' }, reason, h('button', { type: 'button', class: 'ghost small danger', onclick: async () => {
+      if (!confirm(`Mark ${e.name}'s case as cancelled (not operated)?`)) return;
+      try { await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/casecancel`, { reason: reason.value }); toast('Marked case cancelled'); done(); } catch (x) { toast(x.message, true); }
+    } }, 'Case cancelled')));
+}
+async function undoCaseCancel(e, done) {
+  if (!confirm(`Undo "case cancelled" for ${e.name}?`)) return;
+  try { await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/casecancel`, { undo: true }); toast('Case restored'); done(); } catch (x) { toast(x.message, true); }
+}
+const caseCancelText = (c) => `Case cancelled${c.reason ? `: ${c.reason}` : ''}${c.by ? ` · ${c.by}` : ''}`;
 // Today's list of one OT, always open: one box with a row per patient, each with its scrub team; the pencil opens the list to edit.
 function todayDrop(l) {
   const live = l.entries.filter((e) => !e.cancelled);
   const listHref = '#otlist/' + encodeURIComponent(l.id);
-  const row = (e, i) => h('div', { class: 'otrow' }, h('div', { class: 'otrowmain' },
+  const row = (e, i) => h('div', { class: 'otrow' + (e.case_cancelled ? ' casecancelled' : '') }, h('div', { class: 'otrowmain' },
     h('div', { class: 'grow' },
       h('div', {}, h('b', {}, `${i + 1}. ${e.name}`), h('span', { class: 'muted small' }, ` · ${bedLabel(e.bed)}${[e.age, e.sex].filter(Boolean).length ? ' · ' + [e.age, e.sex].filter(Boolean).join(' / ') : ''}`)),
-      h('div', { class: 'small' }, [e.diagnosis, e.done ? `Done: ${e.done}` : e.surgery].filter(Boolean).join(' · ') || h('span', { class: 'warntext' }, 'Surgery not filled yet'))),
+      h('div', { class: 'small' }, [e.diagnosis, e.done ? `Done: ${e.done}` : e.surgery].filter(Boolean).join(' · ') || h('span', { class: 'warntext' }, 'Surgery not filled yet')),
+      e.case_cancelled ? h('div', { class: 'small cctag' }, caseCancelText(e.case_cancelled)) : null),
     h('div', { class: 'otrowbtns' },
-      h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team'),
+      e.case_cancelled ? h('button', { type: 'button', class: 'ghost small', onclick: () => undoCaseCancel(e, render) }, 'Undo')
+        : h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team'),
       pencilLink(listHref + '/' + encodeURIComponent(e.id), `Edit ${e.name}`))));
   return h('div', { class: 'card otday' },
     h('div', { class: 'otdayhead' }, h('b', {}, otName(l.ot)), h('span', { class: 'muted small grow' }, ' · ' + [fullNames(l.surgeon), `${live.length} patient${live.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')),
@@ -1600,7 +1642,8 @@ async function otListView(main, id) {
   drawSheet();
   const doPrint = () => { const st = h('style', {}, '@page { size: A4 landscape; margin: 16mm 15mm; }'); document.head.append(st); window.print(); st.remove(); };
   const move = async (e, dir) => { try { await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/move`, { dir }); reload(); } catch (x) { toast(x.message, true); } };
-  const card = (e, i) => h('div', { class: 'card otentry', 'data-entry': e.id },
+  const card = (e, i) => h('div', { class: 'card otentry' + (e.case_cancelled ? ' casecancelled' : ''), 'data-entry': e.id },
+    e.case_cancelled && h('p', { class: 'cctag' }, caseCancelText(e.case_cancelled), ' ', h('button', { type: 'button', class: 'link small', onclick: () => undoCaseCancel(e, reload) }, 'Undo')),
     h('div', { class: 'othead2' }, h('span', { class: 'slno' }, i + 1), h('div', { class: 'grow' }, h('b', { class: 'big' }, e.name), h('div', { class: 'muted small' }, [[e.age, e.sex].filter(Boolean).join(' / '), e.uhid && `UHID ${e.uhid}`].filter(Boolean).join(' · '))),
       h('span', { class: 'bedno' + (e.bed ? '' : ' nobed') }, bedLabel(e.bed))),
     e.reposted_from && h('p', { class: 'small reposted' }, `${e.reposted_from.kept ? 'Also on' : 'Shifted from'} ${otName(e.reposted_from.ot)}, ${fmtDate(e.reposted_from.date)}${e.reposted_from.reason ? ` (${e.reposted_from.reason})` : ''}`),

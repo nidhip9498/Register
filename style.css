@@ -562,3 +562,16 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .otprocrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .roundsnote { margin: -4px 0 10px; }
 .initin { width: 4.5em; }
+.bedstrips { display: grid; gap: 6px; margin: 0 0 12px; }
+.bedstrip { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bswho { font-weight: 700; min-width: 2.2em; }
+.bsrow { display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x proximity; padding: 2px 2px 6px; flex: 1; min-width: 0; -webkit-overflow-scrolling: touch; }
+.bschip { flex: 0 0 auto; min-width: 2.8em; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line, #ccd); background: var(--card, #fff); color: inherit; font-weight: 600; scroll-snap-align: center; cursor: pointer; }
+.bschip.done { border-color: var(--accent, #1f6f78); box-shadow: inset 0 -3px 0 var(--accent, #1f6f78); }
+.bschip.on { background: var(--accent, #1f6f78); color: #fff; border-color: var(--accent, #1f6f78); }
+.bsall { justify-self: start; }
+.casecancelled { opacity: .6; }
+.casecancelled b, .casecancelled .big { text-decoration: line-through; }
+.cctag { color: var(--danger, #b42318); font-weight: 600; opacity: 1; }
+.casecancel { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line, #dde); }
+.notesrow .otnotes { margin-bottom: 2px; }
