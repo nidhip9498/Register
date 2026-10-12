@@ -608,30 +608,14 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .donefield { display: block; margin-bottom: 10px; } .donefield textarea { width: 100%; box-sizing: border-box; }
 
 /* Census */
-.summary.census { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.summary.census { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: .6rem; }
 .summary.census .stat small { font-size: .75rem; margin-top: .15rem; }
+.ctile { text-align: left; align-items: flex-start; cursor: pointer; font: inherit; color: inherit; }
+.ctile:hover { border-color: var(--accent); }
+.ctile.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.censuslist { margin-bottom: 1rem; }
+.censuslist h4 { margin: .2rem 0 .4rem; color: var(--accent); }
 .censushead { margin: 1.2rem 0 .5rem; color: var(--accent); }
-.chartgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
-.chartgrid.three { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-.chartbox { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: .6rem .8rem; min-width: 0; }
-.chartbox h4 { margin: 0 0 .4rem; font-size: .95rem; }
-svg.chart { width: 100%; height: auto; display: block; }
-svg.chart .grid { stroke: var(--line); stroke-width: 1; }
-svg.chart .cap { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
-svg.chart .ax { fill: var(--muted); font-size: 11px; }
-svg.chart .val { fill: var(--text, currentColor); font-size: 12px; font-weight: 600; }
-svg.chart .mark { fill: var(--accent); }
-svg.chart .hit { fill: transparent; }
-svg.chart .bar:hover .mark { opacity: .75; }
-svg.chart .bar:hover .hit, svg.chart .pt:hover .hit { fill: var(--accent-soft); opacity: .5; }
-svg.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
-svg.chart .dot { fill: var(--accent); stroke: var(--card); stroke-width: 2; opacity: 0; }
-svg.chart .pt:hover .dot { opacity: 1; }
-.hbars { display: flex; flex-direction: column; gap: .35rem; }
-.hbar { display: grid; grid-template-columns: minmax(70px, 30%) 1fr 2.5rem; gap: .5rem; align-items: center; font-size: .9rem; }
-.hlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.htrack { height: 12px; background: var(--accent-soft); border-radius: 4px; overflow: hidden; }
-.htrack i { display: block; height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
-.hbar b { text-align: right; font-variant-numeric: tabular-nums; }
+.censussub { margin: .6rem 0 .4rem; }
 .wardtabs { margin-bottom: .75rem; }
 .wardtabs button { min-width: 5rem; font-size: 1rem; }

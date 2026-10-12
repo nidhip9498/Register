@@ -287,7 +287,7 @@ function topBar(route) {
   const link = (r, label) => h('a', { href: '#' + r, class: route === r || (r === 'ot' && route === 'otlist') ? 'active' : '' }, label);
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '' }), h('div', {}, h('b', {}, 'Register'), h('small', {}, 'Department of Pediatric Surgery'))),
-    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('monthly', 'Census'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), S.user.role === 'admin' && link('admin', 'Admin')),
+    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), link('monthly', 'Census'), S.user.role === 'admin' && link('admin', 'Admin')),
     h('div', { class: 'me' },
       h('button', { id: 'sync-chip', class: 'sync-chip', onclick: async () => {
         if (updatesWaiting) { if (!confirmLeave()) return; updatesWaiting = false; S.dirty.clear(); S.meta = await api('GET', '/api/meta'); render(); }
@@ -2395,50 +2395,26 @@ async function adminLog(body) {
     h('tbody', {}, rows.map((r) => h('tr', {}, h('td', {}, r.at), h('td', {}, r.name || ''), h('td', {}, r.action), h('td', {}, r.detail)))))));
 }
 
-// ---------- Census: monthly totals for the department, then 6A / 6B / 6C ----------
-const svgEsc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-// Vertical bars, one series. Each bar has a hover title; only a few axis labels are drawn so they never collide.
-function barSvg(values, labels, tips, opts = {}) {
-  const W = opts.w || 420, H = opts.h || 170, L = 26, B = 22, T = opts.showValues ? 20 : 8, n = Math.max(1, values.length);
-  const max = Math.max(1, ...values), step = (W - L) / n, bw = Math.max(2, Math.min(36, step - 2));
-  const y = (v) => T + (H - T - B) * (1 - v / max);
-  const every = opts.every || Math.ceil(n / 8);
-  let s = `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${svgEsc(opts.label || '')}">`;
-  for (const g of [0, 0.5, 1]) { const v = Math.round(max * g), yy = y(v); s += `<line x1="${L}" x2="${W}" y1="${yy}" y2="${yy}" class="grid"/><text x="${L - 4}" y="${yy + 4}" class="ax" text-anchor="end">${v}</text>`; }
-  values.forEach((v, i) => {
-    const x = L + i * step + (step - bw) / 2, yy = y(v), hgt = H - B - yy;
-    s += `<g class="bar"><rect x="${L + i * step}" y="${T}" width="${step}" height="${H - B - T}" class="hit"/>`;
-    if (v) s += `<path d="M${x},${H - B} V${yy + Math.min(3, hgt)} q0,-3 3,-3 h${bw - 6} q3,0 3,3 V${H - B} Z" class="mark"/>`;
-    s += `<title>${svgEsc(tips[i])}</title></g>`;
-    if (i % every === 0 || i === n - 1) s += `<text x="${L + i * step + step / 2}" y="${H - 6}" class="ax" text-anchor="middle">${svgEsc(labels[i])}</text>`;
-    if (opts.showValues && v) s += `<text x="${x + bw / 2}" y="${yy - 4}" class="val" text-anchor="middle">${v}</text>`;
-  });
-  return s + '</svg>';
-}
-// Daily line (occupied beds), with a dashed line for the number of beds.
-function lineSvg(values, labels, cap, label) {
-  const W = 420, H = 180, L = 26, B = 22, T = 16, n = values.length;
-  const max = Math.max(1, cap || 0, ...values), step = n > 1 ? (W - L - 8) / (n - 1) : 0;
-  const x = (i) => L + 4 + i * step, y = (v) => T + (H - T - B) * (1 - v / max);
-  const every = Math.ceil(n / 8);
-  let s = `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${svgEsc(label)}">`;
-  for (const g of [0, 0.5, 1]) { const v = Math.round(max * g), yy = y(v); s += `<line x1="${L}" x2="${W}" y1="${yy}" y2="${yy}" class="grid"/><text x="${L - 4}" y="${yy + 4}" class="ax" text-anchor="end">${v}</text>`; }
-  if (cap) s += `<line x1="${L}" x2="${W}" y1="${y(cap)}" y2="${y(cap)}" class="cap"/><text x="${W - 2}" y="${y(cap) - 4}" class="ax" text-anchor="end">${cap} beds</text>`;
-  if (n) s += `<polyline points="${values.map((v, i) => `${x(i)},${y(v)}`).join(' ')}" class="line"/>`;
-  values.forEach((v, i) => {
-    s += `<g class="pt"><rect x="${x(i) - step / 2}" y="${T}" width="${Math.max(step, 8)}" height="${H - B - T}" class="hit"/><circle cx="${x(i)}" cy="${y(v)}" r="4" class="dot"/><title>${svgEsc(labels[i])}: ${v} occupied${cap ? ' of ' + cap : ''}</title></g>`;
-    if (i % every === 0 || i === n - 1) s += `<text x="${x(i)}" y="${H - 6}" class="ax" text-anchor="middle">${svgEsc(labels[i])}</text>`;
-  });
-  return s + '</svg>';
-}
-const chartBox = (title, svg, note) => { const d = h('div', { class: 'chartbox' }, h('h4', {}, title), note && h('p', { class: 'muted small' }, note)); const c = h('div'); c.innerHTML = svg; d.append(c); return d; };
-// Horizontal bars in HTML for named counts (OTs, consultants, units, outcomes), largest first.
-function hbars(title, obj, empty) {
-  const rows = Object.entries(obj).sort((a, b) => b[1] - a[1]), max = Math.max(1, ...rows.map((r) => r[1]));
-  return h('div', { class: 'chartbox' }, h('h4', {}, title),
-    rows.length ? h('div', { class: 'hbars' }, rows.map(([k, v]) => h('div', { class: 'hbar', title: `${k}: ${v}` },
-      h('span', { class: 'hlabel' }, k), h('span', { class: 'htrack' }, h('i', { style: `width:${(v / max) * 100}%` })), h('b', {}, v))))
-      : h('p', { class: 'muted' }, empty || 'Nothing recorded this month.'));
+// ---------- Census: monthly totals for the department, then 6A / 6B / 6C. Each tile opens its list of patients. ----------
+const OUTCOME_TILES = [['Discharged', 'Discharged'], ['Expired', 'Death'], ['LAMA', 'LAMA'], ['Referred', 'Referred'], ['Transferred to other unit', 'Transfer']];
+function censusTable(kind, rows) {
+  if (!rows.length) return h('p', { class: 'muted' }, 'No patients.');
+  const name = (r) => h('td', {}, r.id ? h('a', { href: '#patient/' + r.id, class: 'pname' }, r.name) : h('b', {}, r.name), h('div', { class: 'muted small' }, [r.uhid, [r.age, r.sex].filter(Boolean).join('/')].filter(Boolean).join(' · ')));
+  if (kind === 'ot') {
+    rows = [...rows].sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
+    return h('div', { class: 'tablewrap' }, h('table', { class: 'list' },
+      h('thead', {}, h('tr', {}, ['Date', 'OT', 'Patient', 'Bed', 'Consultant', 'Diagnosis', 'Procedure'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, rows.map((r) => h('tr', {}, h('td', {}, fmtDate(r.date)), h('td', {}, r.ot), name(r), h('td', {}, r.bed), h('td', {}, r.unit), h('td', {}, r.diagnosis),
+        h('td', {}, r.procedure, r.reason ? h('div', { class: 'small outcome-bad' }, 'Cancelled: ' + r.reason) : null))))));
+  }
+  const by = kind === 'out' ? 'discharge_date' : 'admit_date';
+  rows = [...rows].sort((x, y) => ((x[by] || '') < (y[by] || '') ? -1 : 1));
+  return h('div', { class: 'tablewrap' }, h('table', { class: 'list' },
+    h('thead', {}, h('tr', {}, ['Patient', 'Bed', 'Unit', 'Diagnosis', 'Procedure', 'Admitted', 'Discharged'].map((t) => h('th', {}, t)))),
+    h('tbody', {}, rows.map((r) => h('tr', {}, name(r), h('td', {}, r.bed), h('td', {}, r.unit), h('td', {}, r.diagnosis), h('td', {}, r.procedure),
+      h('td', {}, r.admit_date ? fmtDate(r.admit_date) : ''),
+      h('td', {}, r.discharge_date ? fmtDate(r.discharge_date) : h('span', { class: 'badge new' }, 'In ward'),
+        r.outcome && r.outcome !== 'Discharged' ? h('div', { class: 'small outcome-bad' }, r.outcome) : null))))));
 }
 
 async function monthlyView(main, arg) {
@@ -2447,55 +2423,59 @@ async function monthlyView(main, arg) {
   const monthName = (mm, short) => new Date(+mm.slice(0, 4), +mm.slice(5, 7) - 1, 1).toLocaleDateString('en-GB', short ? { month: 'short' } : { month: 'long', year: 'numeric' });
   const shiftM = (k) => { const x = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1 + k, 1); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
   const next = shiftM(1), thisM = S.meta.today.slice(0, 7);
-  const W = d.wards, ot = d.ot, sum = (f) => ['6A', '6B', '6C'].reduce((x, w) => x + W[w][f], 0);
-  const dayLbl = d.days.map((x) => String(+x.slice(8)));
-  const dayTip = (x) => fmtDate(x);
-  const stat = (n, label, sub, cls) => h('div', { class: 'stat ' + (cls || '') }, h('b', {}, n), h('span', {}, label), sub && h('small', { class: 'muted' }, sub));
+  const W = d.wards, ot = d.ot, WARDS = ['6A', '6B', '6C'];
+  const join = (ws, k) => ws.flatMap((w) => W[w].lists[k]);
 
-  const top = h('div', { class: 'summary census' },
-    stat(sum('admissions'), 'Admissions', `6A ${W['6A'].admissions} · 6B ${W['6B'].admissions} · 6C ${W['6C'].admissions}`),
-    stat(sum('discharges'), 'Discharges', `6A ${W['6A'].discharges} · 6B ${W['6B'].discharges} · 6C ${W['6C'].discharges}`),
-    stat(ot.cases, 'Operations done', `${ot.planned} cases listed`),
-    stat(ot.patients, 'Patients operated'),
-    stat(W['6A'].admissions + W['6B'].admissions, 'Ward admissions', '6A + 6B'),
-    stat(ot.daycare, 'Day care cases', 'MCH2 / PAR'),
-    stat(ot.daycareConverted, 'Day care → ward', 'admitted after surgery'),
-    stat(ot.cancelled, 'Cases cancelled', 'on the day', ot.cancelled ? 'warn' : ''));
+  // A row of tiles; clicking one shows its list underneath (click again to close).
+  const tileSet = (tiles) => {
+    let open = null;
+    const grid = h('div', { class: 'summary census' }), panel = h('div', { class: 'censuslist' });
+    const draw = () => {
+      grid.replaceChildren(...tiles.map((t) => t.rows
+        ? h('button', { class: 'stat ctile' + (open === t ? ' on' : '') + (t.cls ? ' ' + t.cls : ''), onclick: () => { open = open === t ? null : t; draw(); } },
+          h('b', {}, t.n), h('span', {}, t.label), t.sub && h('small', { class: 'muted' }, t.sub))
+        : h('div', { class: 'stat' + (t.cls ? ' ' + t.cls : '') }, h('b', {}, t.n), h('span', {}, t.label), t.sub && h('small', { class: 'muted' }, t.sub))));
+      panel.replaceChildren(...(open ? [h('h4', {}, `${open.label} · ${open.rows.length}`), censusTable(open.kind, open.rows)] : []));
+    };
+    draw();
+    return h('div', {}, grid, panel);
+  };
+  const outcomeTiles = (ws) => {
+    const out = join(ws, 'discharged'), of = (o) => out.filter((r) => r.outcome === o);
+    const deaths = of('Expired').length;
+    return [
+      ...OUTCOME_TILES.map(([o, label]) => ({ n: of(o).length, label, rows: of(o), kind: 'out', cls: o === 'Expired' && deaths ? 'warn' : '' })),
+      { n: out.length ? (Math.round((deaths / out.length) * 1000) / 10) + '%' : '—', label: 'Mortality', sub: `${deaths} of ${out.length} discharged`, rows: of('Expired'), kind: 'out' },
+    ];
+  };
 
-  const t = d.trend, tl = t.map((x) => monthName(x.month, true));
-  const trend = h('div', { class: 'chartgrid three' },
-    chartBox('Admissions, last 6 months', barSvg(t.map((x) => x.admissions), tl, t.map((x) => `${monthName(x.month)}: ${x.admissions} admissions`), { w: 300, h: 150, every: 1, showValues: true, label: 'Admissions by month' })),
-    chartBox('Discharges, last 6 months', barSvg(t.map((x) => x.discharges), tl, t.map((x) => `${monthName(x.month)}: ${x.discharges} discharges`), { w: 300, h: 150, every: 1, showValues: true, label: 'Discharges by month' })),
-    chartBox('Operations, last 6 months', barSvg(t.map((x) => x.operated), tl, t.map((x) => `${monthName(x.month)}: ${x.operated} operations`), { w: 300, h: 150, every: 1, showValues: true, label: 'Operations by month' })));
+  const dept = tileSet([
+    { n: join(WARDS, 'admitted').length, label: 'Admissions', sub: WARDS.map((w) => `${w} ${W[w].admissions}`).join(' · '), rows: join(WARDS, 'admitted'), kind: 'in' },
+    { n: join(WARDS, 'discharged').length, label: 'Discharges', sub: WARDS.map((w) => `${w} ${W[w].discharges}`).join(' · '), rows: join(WARDS, 'discharged'), kind: 'out' },
+    { n: ot.cases, label: 'Operations done', sub: `${ot.patients} patients · ${ot.planned} listed`, rows: ot.lists.operated, kind: 'ot' },
+    { n: W['6A'].admissions + W['6B'].admissions, label: 'Ward admissions', sub: '6A + 6B', rows: join(['6A', '6B'], 'admitted'), kind: 'in' },
+    { n: ot.daycare, label: 'Day care cases', sub: 'MCH2 / PAR', rows: ot.lists.daycare, kind: 'ot' },
+    { n: ot.daycareConverted, label: 'Day care → ward', sub: 'admitted after surgery', rows: ot.lists.converted, kind: 'ot' },
+    { n: ot.cancelled, label: 'Cases cancelled', sub: 'on the day', rows: ot.lists.cancelled, kind: 'ot', cls: ot.cancelled ? 'warn' : '' },
+  ]);
 
-  const otPart = h('div', { class: 'chartgrid' },
-    chartBox('Operations each day', barSvg(ot.perDay, dayLbl, d.days.map((x, i) => `${dayTip(x)}: ${ot.perDay[i]} operations`), { label: 'Operations each day' })),
-    hbars('Operations by OT', ot.byOt),
-    hbars('Operations by consultant', ot.byConsultant));
-
-  // Ward tabs
   let ward = S.censusWard || '6B';
   const wardBox = h('div');
   const tabs = h('div', { class: 'seg seg3 wardtabs' });
   const drawWard = () => {
-    tabs.replaceChildren(...['6A', '6B', '6C'].map((w) => h('button', { class: w === ward ? 'on' : '', onclick: () => { ward = S.censusWard = w; drawWard(); } }, w === '6C' ? '6C · ICU' : w)));
-    const x = W[ward];
-    const today = d.days.length ? x.occupancy[x.occupancy.length - 1] : 0;
+    tabs.replaceChildren(...WARDS.map((w) => h('button', { class: w === ward ? 'on' : '', onclick: () => { ward = S.censusWard = w; drawWard(); } }, w === '6C' ? '6C · ICU' : w)));
+    const x = W[ward], occToday = m === thisM && x.occupancy.length ? x.occupancy[x.occupancy.length - 1] : null;
     wardBox.replaceChildren(
-      h('div', { class: 'summary census' },
-        stat(x.admissions, 'Admissions'),
-        stat(x.discharges, 'Discharges'),
-        stat(x.operated, 'Operated', 'patients in this ward'),
-        stat(x.beds, 'Beds'),
-        stat(x.avgOccupied ?? '—', 'Average beds occupied', x.occupancyPct != null ? `${x.occupancyPct}% occupancy` : ''),
-        stat(x.avgStay ?? '—', 'Average stay (days)', 'of those discharged'),
-        m === thisM && stat(today, 'Occupied today', `of ${x.beds}`)),
-      h('div', { class: 'chartgrid' },
-        chartBox('Beds occupied each day', lineSvg(x.occupancy, dayLbl, x.beds, 'Beds occupied each day')),
-        chartBox('Admissions each day', barSvg(x.admitsByDay, dayLbl, d.days.map((z, i) => `${dayTip(z)}: ${x.admitsByDay[i]} admitted`), { h: 140, label: 'Admissions each day' })),
-        chartBox('Discharges each day', barSvg(x.dischByDay, dayLbl, d.days.map((z, i) => `${dayTip(z)}: ${x.dischByDay[i]} discharged`), { h: 140, label: 'Discharges each day' })),
-        hbars('Admissions by consultant unit', x.byUnit),
-        hbars('Discharge outcomes', x.outcomes)));
+      tileSet([
+        { n: x.admissions, label: 'Admissions', rows: x.lists.admitted, kind: 'in' },
+        { n: x.discharges, label: 'Discharges', rows: x.lists.discharged, kind: 'out' },
+        { n: x.operated, label: 'Operated', sub: 'patients in this ward', rows: x.lists.operated, kind: 'ot' },
+        { n: occToday == null ? x.beds : `${occToday} / ${x.beds}`, label: occToday == null ? 'Beds' : 'Beds occupied today' },
+        { n: x.avgOccupied ?? '—', label: 'Average beds occupied', sub: x.occupancyPct != null ? `${x.occupancyPct}% occupancy` : '' },
+        { n: x.avgStay ?? '—', label: 'Average stay (days)', sub: 'of those discharged' },
+      ]),
+      h('h4', { class: 'censussub' }, 'Outcomes'),
+      tileSet(outcomeTiles([ward])));
   };
   drawWard();
 
@@ -2505,10 +2485,9 @@ async function monthlyView(main, arg) {
         h('a', { class: 'button', href: '#monthly/' + shiftM(-1) }, '‹ ', monthName(shiftM(-1), true)),
         m !== thisM && h('a', { class: 'button', href: '#monthly/' + thisM }, 'This month'),
         next <= thisM && h('a', { class: 'button', href: '#monthly/' + next }, monthName(next, true), ' ›'))),
-    m === thisM && h('p', { class: 'muted' }, `Up to today, ${fmtDay(S.meta.today)}. Patients imported without an admission date are not counted as admissions.`),
-    top,
-    h('h3', { class: 'censushead' }, 'Trend'), trend,
-    h('h3', { class: 'censushead' }, 'Operations'), otPart,
+    h('p', { class: 'muted' }, (m === thisM ? `Up to today, ${fmtDay(S.meta.today)}. ` : '') + 'Click a box to see the patients. Patients imported without an admission date are not counted as admissions.'),
+    dept,
+    h('h3', { class: 'censushead' }, 'Outcomes'), tileSet(outcomeTiles(WARDS)),
     h('h3', { class: 'censushead' }, 'Wards'), tabs, wardBox);
 }
 
