@@ -430,6 +430,7 @@ async function registerView(main, mode) {
         canEdit() && h('button', { class: 'primary', onclick: () => admitModal(null, null, { icu: icuMode }) }, icuMode ? '+ Admit to ICU' : '+ Admit'),
         !icuMode && h('button', { class: 'ghost', onclick: () => shiftsModal() }, 'Bed shifts'),
         wards.map((w) => h('a', { class: 'button ghost', href: `#print/${date}/${w}` }, 'Print ' + w)))),
+    icuMode ? '' : rosterStrip(date),
     alerts,
     h('h2', { class: 'daytitle' }, icuMode ? 'ICU Register · ' : 'Ward Register · ', fmtDay(date)));
 
@@ -2227,6 +2228,70 @@ async function downloadBackup() {
   toast('Backup downloaded. It is not encrypted, so keep it safe.');
 }
 
+// ---------- Duty roster strip on the Ward Register ----------
+// Rows: WIC, ICU · SR on call, Consultant on call · OT 11/14, OT 12/15, SR Assist. Initials become full names.
+const ROSTER_ROWS = [[['wic', 'WIC'], ['icu', 'ICU']], [['call', 'SR on call'], ['cons_call', 'Consultant on call']], [['ot1', 'OT 11/14'], ['ot2', 'OT 12/15'], ['assist', 'SR Assist']]];
+function rosterName(x, names) {
+  x = (x || '').trim();
+  if (!x) return '';
+  return x.split('/').map((p) => p.trim()).filter(Boolean).map((p) => {
+    const up = p.toUpperCase();
+    const c = SURGEONS.find(([i]) => i === up);
+    if (c) return c[1];
+    const u = ((S.meta && S.meta.people) || []).find((q) => q.initials === up);
+    const n = (u && u.name) || names[up] || (/^[A-Z]{1,4}$/.test(p) ? (SR_INITIALS.find(([i]) => i === up) || [])[1] : p) || p;
+    return /^dr\.?\s/i.test(n) ? n : 'Dr ' + n;
+  }).join(' / ');
+}
+function rosterStrip(date) {
+  const box = h('div', { class: 'roster' });
+  const draw = (day, names) => {
+    const pen = canEdit() && (() => { const b = h('button', { type: 'button', class: 'pencil', title: 'Edit today\'s duties', 'aria-label': 'Edit duties', onclick: () => edit(day, names) }); b.innerHTML = PENCIL_SVG; return b; })();
+    if (!day) { box.replaceChildren(...(canEdit() ? [h('p', { class: 'muted small grow' }, 'No duty roster for this day. Import the month in Admin > Import, or tap the pencil to fill it in.'), pen] : [])); box.hidden = !canEdit(); return; }
+    box.hidden = false;
+    box.replaceChildren(h('div', { class: 'rosterrows grow' }, ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow' },
+      row.map(([k, label]) => h('span', { class: 'rcell' }, h('span', { class: 'rlabel' }, label), h('b', {}, rosterName(day[k], names) || '—')))))), pen || '');
+  };
+  const edit = (day, names) => {
+    const d = day || {};
+    const inputs = {};
+    box.replaceChildren(h('div', { class: 'grow' },
+      h('p', { class: 'small muted' }, 'Type initials (NP, PG/SN) or names. For leave or swaps.'),
+      h('div', { class: 'rosteredit' }, ROSTER_ROWS.flat().map(([k, label]) => h('label', {}, label, (inputs[k] = h('input', { value: d[k] || '', autocapitalize: 'characters' }))))),
+      h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: () => draw(day, names) }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary small', onclick: async () => {
+          const out = {}; for (const k in inputs) out[k] = inputs[k].value.trim();
+          try { await api('PUT', '/api/roster/' + date, out); toast('Duties saved'); load(); } catch (e) { toast(e.message, true); }
+        } }, 'Save'))));
+  };
+  const load = () => api('GET', '/api/roster/' + date).then((r) => draw(r.day, r.names)).catch(() => { box.hidden = true; });
+  box.hidden = true;
+  load();
+  return box;
+}
+// Import the month's duty roster (a file Claude makes from the roster PDFs).
+function rosterImportCard() {
+  const result = h('div', {});
+  let data = null;
+  const go = h('button', { class: 'primary', disabled: true, onclick: async () => {
+    go.disabled = true;
+    try { const r = await api('POST', '/api/roster/import', data); result.replaceChildren(h('p', {}, h('b', {}, `${r.days} days imported.`), ' They show on the Ward Register under the search bar.')); toast('Roster imported'); } catch (e) { toast(e.message, true); go.disabled = false; }
+  } }, 'Import roster');
+  const file = h('input', { type: 'file', accept: '.json,application/json', onchange: async () => {
+    result.replaceChildren(); data = null; go.disabled = true;
+    try {
+      const d = JSON.parse(await file.files[0].text());
+      if (!d || d.kind !== 'register-roster' || !Array.isArray(d.days)) throw new Error('This is not a duty roster file.');
+      data = d;
+      result.replaceChildren(h('p', {}, `${d.days.length} days found (${fmtDate(d.days[0].date)} to ${fmtDate(d.days[d.days.length - 1].date)}). Days already in the app are replaced.`));
+      go.disabled = false;
+    } catch (e) { result.replaceChildren(h('p', { class: 'error' }, e.message)); }
+  } });
+  return h('div', { class: 'card' }, h('h3', {}, 'Import duty roster'),
+    h('p', { class: 'muted' }, 'Choose the roster file for the month (roster-YYYY-MM.json). Edits made with the pencil on the Ward Register are replaced for those days.'),
+    file, go, result);
+}
+
 // Import file: patients converted from the department's Google Sheet.
 function adminImport(body) {
   const result = h('div', {});
@@ -2261,7 +2326,7 @@ function adminImport(body) {
   body.append(h('div', { class: 'card grid1 look' },
     h('h3', {}, 'Import patients'),
     h('p', { class: 'muted' }, 'Choose the import file (ward-register-import.json) made from your Google Sheet. Each patient goes into their bed. Choose whether to add to the patients already here or replace them.'),
-    file, mode, go, result));
+    file, mode, go, result), rosterImportCard());
 }
 
 function adminLook(body) {

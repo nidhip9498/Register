@@ -1079,6 +1079,39 @@ const Store = (() => {
     return { ok: true };
   });
 
+  // Duty roster: one record per day (WIC, ICU, SR on call, consultant on call, OT 11/14, OT 12/15, SR Assist), as initials or names.
+  const ROSTER_KEYS = ['wic', 'icu', 'call', 'cons_call', 'ot1', 'ot2', 'assist'];
+  const rosterNames = () => { const r = get('setting:roster_names'); return (r && r.value && typeof r.value === 'object') ? r.value : {}; };
+  route('GET', '/api/roster/:date', ANY, ({ params: p }) => {
+    if (!isDate(p.date)) throw new HttpError(400, 'Bad date');
+    const r = get('roster:' + p.date);
+    return { day: r ? { ...strip(r), edited_by: r.edited_by ? userName(r.edited_by) : '' } : null, names: rosterNames() };
+  });
+  route('PUT', '/api/roster/:date', EDITORS, ({ body, params: p }) => {
+    if (!isDate(p.date)) throw new HttpError(400, 'Bad date');
+    const old = get('roster:' + p.date);
+    const next = { ...(old ? strip(old) : {}), date: p.date, edited_by: currentUser.id, edited_at: stamp() };
+    for (const k of ROSTER_KEYS) if (body[k] !== undefined) next[k] = str(body[k], 80);
+    put('roster:' + p.date, 'roster', next);
+    audit('edit duty roster', p.date);
+    return { ok: true };
+  });
+  route('POST', '/api/roster/import', ADMIN, ({ body }) => {
+    const days = Array.isArray(body.days) ? body.days : [];
+    let n = 0;
+    for (const d of days) {
+      if (!isDate(d.date)) continue;
+      const rec = { date: d.date, imported_at: stamp() };
+      for (const k of ROSTER_KEYS) rec[k] = str(d[k], 80);
+      put('roster:' + d.date, 'roster', rec); n++;
+    }
+    const names = { ...rosterNames() };
+    for (const [k, v] of Object.entries(body.names || {})) { const i = str(k, 6).toUpperCase(), nm = str(v, 80); if (i && nm) names[i] = nm; }
+    put('setting:roster_names', 'setting', { value: names });
+    audit('import duty roster', `${n} days`);
+    return { days: n };
+  });
+
   route('GET', '/api/otlog', ANY, ({ query }) => {
     const who = str(query.who, 60).toLowerCase();
     if (!who) return [];
