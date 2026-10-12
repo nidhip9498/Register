@@ -923,7 +923,6 @@ function patientCard(a, date, refresh) {
       h('div', { class: 'rcorner' },
         h('div', { class: 'cfact' }, h('span', {}, 'Age / Sex'), h('b', {}, ageSex(a, date) || '—')),
         h('div', { class: 'cfact pod' }, h('span', {}, 'POD'), h('b', {}, pod ? pod.replace('POD ', '') : '—')))),
-    a.instructions && h('p', { class: 'instr' }, h('b', {}, 'Short notes: '), a.instructions),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
     otBox(a, () => refresh(id)),
     invBox(a, date, () => refresh(id)));
@@ -933,6 +932,7 @@ function patientCard(a, date, refresh) {
       checks.length && h('div', { class: 'fields checks' }, checks.map(box)),
       values.length && h('div', { class: 'fields' }, values.map(box)),
       !checks.length && !values.length && h('p', { class: 'muted small' }, 'No round fields chosen. Use Edit details / fields to pick some.'),
+      shortNotesBox(a),
       h('label', { class: 'field remarks' }, h('span', { class: 'flabel' }, 'Other findings / remarks'), remarks),
       a.prev_round && a.prev_round.remarks ? h('p', { class: 'prev' }, 'Yesterday: ' + a.prev_round.remarks) : null,
       h('div', { class: 'foot' }, status,
@@ -941,10 +941,31 @@ function patientCard(a, date, refresh) {
           h('button', { class: 'primary small', onclick: save }, 'Save'))));
     setStatus();
     updateCalc();
-  } else if (a.round) {
-    add(h('p', { class: 'small' }, summariseVals(a.round.vals, a.monitor, a)), a.round.remarks && h('p', { class: 'small' }, a.round.remarks));
+  } else {
+    add(a.instructions && h('p', { class: 'instr' }, h('b', {}, 'Short notes: '), a.instructions));
+    if (a.round) add(h('p', { class: 'small' }, summariseVals(a.round.vals, a.monitor, a)), a.round.remarks && h('p', { class: 'small' }, a.round.remarks));
   }
   return card;
+}
+// Short notes (the patient's standing notes, printed under the bed) with a pencil to edit them in place.
+function shortNotesBox(a) {
+  const box = h('div', { class: 'instr shortnotes' });
+  const show = () => {
+    const pen = h('button', { type: 'button', class: 'pencil', title: 'Edit short notes', 'aria-label': 'Edit short notes', onclick: edit });
+    pen.innerHTML = PENCIL_SVG;
+    box.replaceChildren(h('div', { class: 'grow' }, h('b', {}, 'Short notes: '), a.instructions || h('span', { class: 'muted' }, 'None yet')), pen);
+  };
+  const edit = () => {
+    const ta = h('textarea', { rows: 3, placeholder: 'Short notes for this patient' }, a.instructions || '');
+    box.replaceChildren(h('div', { class: 'grow' }, h('b', {}, 'Short notes'), ta,
+      h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: show }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary small', onclick: async () => {
+          try { await api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { instructions: ta.value }); toast('Short notes saved'); a.instructions = ta.value.trim(); show(); } catch (e) { toast(e.message, true); }
+        } }, 'Save'))));
+    ta.focus();
+  };
+  show();
+  return box;
 }
 
 // Rounds: every patient, ward by ward and then the ICU, in bed order, with the fields chosen for them.
@@ -997,7 +1018,8 @@ async function roundsView(main, focus) {
         h('div', { class: 'bsrow' }, pts.map((a) => h('button', { type: 'button', class: 'bschip' + (a.id === S.roundsSel ? ' on' : '') + (a.round ? ' done' : ''), title: a.name, onclick: () => pick(a.id) },
           a.bed_on_date.replace(new RegExp('^' + w + '/', 'i'), '')))));
       return row;
-    }).filter(Boolean), S.roundsSel ? h('button', { type: 'button', class: 'ghost small bsall', onclick: () => pick(null) }, 'Show all patients') : '');
+    }).filter(Boolean), h('div', { class: 'bsfoot' }, h('span', { class: 'muted bslegend' }, '✓ = rounds saved for this day'),
+      S.roundsSel ? h('button', { type: 'button', class: 'ghost small bsall', onclick: () => pick(null) }, 'Show all patients') : ''));
     const on = strips.querySelector('.bschip.on');
     if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
