@@ -918,6 +918,33 @@ const Store = (() => {
     audit('delete OT list', `OT ${l.ot} ${l.date}`);
     return { ok: true };
   });
+  // Shift a whole list to another OT (and/or day). If that OT already has a list that day, the patients join it.
+  route('POST', '/api/otlists/:id/shift', ANY, ({ body, params: p }) => {
+    const l = getOtList(p.id);
+    const ot = str(body.ot, 4), date = isDate(body.date) ? body.date : l.date;
+    if (!OTS.includes(ot)) throw new HttpError(400, 'Pick an OT');
+    if (ot === l.ot && date === l.date) throw new HttpError(400, 'Pick another OT or day');
+    const when = date.split('-').reverse().join('/');
+    const target = all('otlist').find((x) => x.ot === ot && x.date === date);
+    if (!target) {
+      put(l.id, 'otlist', { ...strip(l), ot, date, kind: roomKind(ot) });
+      touchOtList(l.id, `shifted the list from OT ${l.ot}${date !== l.date ? `, ${l.date.split('-').reverse().join('/')}` : ''} to OT ${ot}, ${when}`);
+      audit('shift OT list', `OT ${l.ot} ${l.date} → OT ${ot} ${date}`);
+      return { list_id: l.id, merged: false };
+    }
+    const there = otEntries(target.id).filter((x) => !x.cancelled);
+    const same = (a, b) => (a.uhid && b.uhid && a.uhid.toLowerCase() === b.uhid.toLowerCase()) || (a.admission_id && a.admission_id === b.admission_id);
+    let order = there.length ? Math.max(...otEntries(target.id).map((x) => x.order || 0)) : 0, moved = 0, skipped = [];
+    for (const e of otEntries(l.id)) {
+      if (!e.cancelled && there.some((x) => same(x, e))) { skipped.push(e.name); put(e.id, 'otentry', null); continue; }
+      put(e.id, 'otentry', { ...strip(e), list_id: target.id, order: ++order });
+      if (!e.cancelled) moved++;
+    }
+    put(l.id, 'otlist', null);
+    touchOtList(target.id, `added ${moved} patient${moved === 1 ? '' : 's'} from OT ${l.ot}`);
+    audit('shift OT list', `OT ${l.ot} ${l.date} → OT ${ot} ${date} (joined)`);
+    return { list_id: target.id, merged: true, skipped };
+  });
   route('GET', '/api/otsearch', ANY, ({ query }) => {
     const q = String(query.q || '').trim().toLowerCase();
     if (q.length < 2) return [];
@@ -960,7 +987,7 @@ const Store = (() => {
   route('POST', '/api/otentries/:id/repost', ANY, ({ body, params: p }) => {
     const e = getEntry(p.id);
     if (e.cancelled) throw new HttpError(400, `${e.name} has already been reposted`);
-    const ot = str(body.ot, 4), date = body.date, reason = str(body.reason, 200);
+    const ot = str(body.ot, 4), date = body.date, reason = str(body.reason, 200), keep = !!body.keep;
     if (!OTS.includes(ot)) throw new HttpError(400, 'Pick an OT');
     if (!isDate(date)) throw new HttpError(400, 'Pick a date');
     const from = getOtList(e.list_id);
@@ -970,11 +997,14 @@ const Store = (() => {
     if ((e.uhid && live.some((x) => (x.uhid || '').toLowerCase() === e.uhid.toLowerCase())) || (e.admission_id && live.some((x) => x.admission_id === e.admission_id))) throw new HttpError(400, `${e.name} is already on the OT ${ot} list for that day`);
     const id = 'otentry:' + uuid();
     put(id, 'otentry', { ...strip(e, 'order', 'created_by', 'created_at', 'updated_by', 'updated_at', 'reposted_from'), list_id: l.id,
-      order: live.length ? Math.max(...otEntries(l.id).map((x) => x.order || 0)) + 1 : 1, reposted_from: { ot: from.ot, date: from.date, reason }, created_by: currentUser.id, created_at: stamp() });
-    put(e.id, 'otentry', { ...strip(e), cancelled: true, cancel_reason: reason, reposted_to: { ot, date, list_id: l.id }, updated_by: currentUser.id, updated_at: stamp() });
-    touchOtList(from.id, `reposted ${e.name} to OT ${ot}, ${date.split('-').reverse().join('/')}`);
-    touchOtList(l.id, `added ${e.name} (reposted)`);
-    audit('repost OT', `${e.name} → OT ${ot} ${date}`);
+      order: live.length ? Math.max(...otEntries(l.id).map((x) => x.order || 0)) + 1 : 1, reposted_from: { ot: from.ot, date: from.date, reason, kept: keep }, created_by: currentUser.id, created_at: stamp(),
+      scrub: [], done: '' });
+    // "Keep in both": the patient stays on this list too. Otherwise they are shifted (kept here greyed as moved, not printed).
+    if (!keep) put(e.id, 'otentry', { ...strip(e), cancelled: true, cancel_reason: reason, reposted_to: { ot, date, list_id: l.id }, updated_by: currentUser.id, updated_at: stamp() });
+    const when = date.split('-').reverse().join('/');
+    touchOtList(from.id, keep ? `also put ${e.name} on OT ${ot}, ${when}` : `shifted ${e.name} to OT ${ot}, ${when}`);
+    touchOtList(l.id, `added ${e.name} (from OT ${from.ot})`);
+    audit('repost OT', `${e.name} → OT ${ot} ${date}${keep ? ' (kept on both)' : ''}`);
     return { list_id: l.id };
   });
 
@@ -1005,7 +1035,14 @@ const Store = (() => {
     const scrub = (Array.isArray(body.scrub) ? body.scrub : []).map((x) => str(x, 60)).filter((x, i, l) => x && l.indexOf(x) === i).slice(0, 10);
     put(e.id, 'otentry', { ...strip(e), scrub, updated_by: currentUser.id, updated_at: stamp() });
     touchOtList(e.list_id, `set the scrub team for ${e.name}`);
-    return { ok: true };
+    // A scrub team means the operation happened: that list's day becomes a surgery date for an admitted patient (POD counts from it).
+    const l = get(e.list_id);
+    let surgery = null;
+    if (scrub.length && !e.cancelled && l && l.date <= today()) {
+      const a = (e.admission_id && get(e.admission_id)) || (e.uhid && all('admission').find((x) => !x.discharge_date && (x.ip_no || '').toLowerCase() === e.uhid.toLowerCase()));
+      if (a) surgery = surgeryFromOtList(get(a.id), l.date);
+    }
+    return { ok: true, surgery };
   });
 
   route('GET', '/api/otlog', ANY, ({ query }) => {

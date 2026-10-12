@@ -531,3 +531,9 @@ table.print tr.hasnotes td { border-bottom: 0; }
 table.print tr.notesrow td { background: var(--warn-soft, #fff7ed); font-size: .85em; padding-top: .2rem; padding-bottom: .3rem; }
 table.print tr.notesrow .unote { margin-left: 1rem; }
 @media print { table.print tr.notesrow td { background: #f6f6f6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+
+.otmove { margin-top: .6rem; border: 1px dashed var(--accent); border-radius: 10px; padding: .6rem .7rem; display: grid; gap: .5rem; }
+.otmoverow { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.otmoverow label { display: flex; align-items: center; gap: .4rem; }
+.otmove .seg button:disabled { opacity: .35; }
+.card > .otmove { margin-top: 0; border: 0; padding: 0; }

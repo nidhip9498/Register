@@ -1552,7 +1552,7 @@ async function otListView(main, id) {
   const card = (e, i) => h('div', { class: 'card otentry' },
     h('div', { class: 'othead2' }, h('span', { class: 'slno' }, i + 1), h('div', { class: 'grow' }, h('b', { class: 'big' }, e.name), h('div', { class: 'muted small' }, [[e.age, e.sex].filter(Boolean).join(' / '), e.uhid && `UHID ${e.uhid}`].filter(Boolean).join(' · '))),
       h('span', { class: 'bedno' + (e.bed ? '' : ' nobed') }, bedLabel(e.bed))),
-    e.reposted_from && h('p', { class: 'small reposted' }, `Reposted from ${otName(e.reposted_from.ot)}, ${fmtDate(e.reposted_from.date)}${e.reposted_from.reason ? ` (${e.reposted_from.reason})` : ''}`),
+    e.reposted_from && h('p', { class: 'small reposted' }, `${e.reposted_from.kept ? 'Also on' : 'Shifted from'} ${otName(e.reposted_from.ot)}, ${fmtDate(e.reposted_from.date)}${e.reposted_from.reason ? ` (${e.reposted_from.reason})` : ''}`),
     h('dl', { class: 'otfacts' },
       e.diagnosis && [h('dt', {}, 'Diagnosis'), h('dd', {}, e.diagnosis)],
       [h('dt', {}, 'Surgery'), h('dd', {}, e.surgery || h('span', { class: 'warntext' }, 'Not filled yet'))],
@@ -1567,20 +1567,30 @@ async function otListView(main, id) {
       h('button', { class: 'ghost small', onclick: () => otEntryModal(l, e, reload) }, 'Edit'),
       h('button', { class: 'ghost small', disabled: i === 0, onclick: () => move(e, 'up'), 'aria-label': 'Move up' }, '↑'),
       h('button', { class: 'ghost small', disabled: i === live.length - 1, onclick: () => move(e, 'down'), 'aria-label': 'Move down' }, '↓'),
-      h('button', { class: 'ghost small', onclick: () => repostModal(l, e) }, 'Repost'),
+      h('button', { class: 'ghost small', onclick: (ev) => { const c = ev.target.closest('.otentry'), old = c.querySelector('.otmove'); if (old) old.remove(); else c.append(repostForm(l, e)); } }, 'Repost'),
       !e.admission_id && (!e.bed || e.bed.toUpperCase() === DAY_CARE) && h('button', { class: 'ghost small', onclick: () => admitFromOt(e, reload) }, 'Admit to ward'),
       h('button', { class: 'ghost small danger', onclick: async () => {
         if (!confirm(`Remove ${e.name} from this list?`)) return;
         try { await api('DELETE', '/api/otentries/' + encodeURIComponent(e.id)); toast('Removed'); reload(); } catch (x) { toast(x.message, true); }
       } }, 'Remove')));
+  // Shift the whole list to another OT (same day by default); it joins that OT's list if there is one.
+  const shiftBox = h('div', { class: 'noprint card' }, otMoveForm(l, { title: `Shift this whole list (${live.length} patient${live.length === 1 ? '' : 's'}) to:`, actions: [
+    { label: (to) => `Shift list to ${to}`, cls: 'primary small', run: async (ot, date) => {
+      const r = await api('POST', `/api/otlists/${encodeURIComponent(id)}/shift`, { ot, date });
+      toast(r.merged ? `Patients added to the ${otName(ot)} list${r.skipped.length ? ` (${r.skipped.join(', ')} already there)` : ''}` : `List shifted to ${otName(ot)}`);
+      if (r.list_id === id) render(); else location.hash = 'otlist/' + encodeURIComponent(r.list_id);
+    } }] }));
+  shiftBox.hidden = true;
   main.append(
     h('div', { class: 'toolbar noprint' }, h('a', { class: 'button ghost', href: '#ot/' + l.ot }, '‹ ' + otName(l.ot)),
       h('h2', {}, `${otName(l.ot)} · `, fmtDay(l.date)),
       h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: doPrint }, 'Print'),
+        h('button', { class: 'ghost', onclick: () => { shiftBox.hidden = !shiftBox.hidden; } }, 'Shift list'),
         h('button', { class: 'ghost danger', onclick: async () => {
           if (!confirm(`Delete the whole ${otName(l.ot)} list for ${fmtDate(l.date)}${live.length ? ` with its ${live.length} patients` : ''}?`)) return;
           try { await api('DELETE', '/api/otlists/' + encodeURIComponent(id)); toast('List deleted'); location.hash = 'ot/' + l.ot; } catch (x) { toast(x.message, true); }
         } }, 'Delete list'))),
+    shiftBox,
     h('div', { class: 'noprint' },
       h('div', { class: 'card othdr' }, h('label', {}, 'Surgeon', surgeon), h('label', {}, 'Second surgeon (if two run the OT)', surgeon2),
         h('label', {}, 'Extra note (optional)', note, h('small', { class: 'muted' }, 'KEEP OT WARM is always printed.'))),
@@ -1588,9 +1598,9 @@ async function otListView(main, id) {
         h('button', { class: 'primary', onclick: () => otEntryModal(l, null, reload) }, '+ Add patient'),
         h('button', { class: 'ghost', onclick: () => fromWardModal(l, reload) }, '+ From ward / ICU')),
       live.length ? h('div', { class: 'otentries' }, live.map(card)) : h('p', { class: 'muted' }, 'No patients on this list yet.'),
-      ...(cancelled.length ? [h('h3', {}, 'Cancelled on this day'), h('div', { class: 'otentries' }, cancelled.map((e) => h('div', { class: 'card otentry cancelled' },
+      ...(cancelled.length ? [h('h3', {}, 'Shifted to another OT / day'), h('div', { class: 'otentries' }, cancelled.map((e) => h('div', { class: 'card otentry cancelled' },
         h('b', {}, e.name), h('span', { class: 'muted small' }, e.uhid ? ` · UHID ${e.uhid}` : ''),
-        h('p', { class: 'small' }, 'Reposted to ', h('a', { href: '#otlist/' + encodeURIComponent(e.reposted_to.list_id) }, `${otName(e.reposted_to.ot)}, ${fmtDay(e.reposted_to.date)}`), e.cancel_reason ? ` · ${e.cancel_reason}` : ''))))] : []),
+        h('p', { class: 'small' }, 'Shifted to ', h('a', { href: '#otlist/' + encodeURIComponent(e.reposted_to.list_id) }, `${otName(e.reposted_to.ot)}, ${fmtDay(e.reposted_to.date)}`), e.cancel_reason ? ` · ${e.cancel_reason}` : ''))))] : []),
       h('div', { class: 'otmeta' },
         h('p', {}, `Created by ${l.created_by || '—'}${l.created_at ? ` on ${stampText(l.created_at)}` : ''}`),
         (l.edits || []).length ? h('p', {}, 'Recent edits:') : null,
@@ -1607,7 +1617,7 @@ function otExtras(l, e, reload) {
     if (box.dataset.open === what) { box.dataset.open = ''; box.replaceChildren(); return; }
     box.dataset.open = what;
     if (what === 'scrub') box.replaceChildren(scrubPicker(e.scrub, async (team) => {
-      try { await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast('Scrub team saved'); reload(); } catch (x) { toast(x.message, true); }
+      try { const r = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast(r.surgery ? postedText(r).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); reload(); } catch (x) { toast(x.message, true); }
     }));
     else {
       // Two parts: the surgery / procedure actually done (shown in Rounds and the OT Log), and findings & instructions for the ward.
@@ -1631,21 +1641,32 @@ function otExtras(l, e, reload) {
 }
 
 // OT cancelled for the day: put the patient on another day's (or another OT's) list.
-function repostModal(l, e) {
-  let pick = l.ot;
+// Pick an OT (tiles) and a day, in place on the page (no pop-up). Used to shift one patient or a whole list.
+function otMoveForm(l, opts) {
+  let pick = null;
+  const date = h('input', { type: 'date', value: l.date, min: S.meta.today, onchange: () => draw() });
+  const reason = opts.reason ? h('input', { placeholder: 'Reason (optional), e.g. OT time over' }) : null;
   const seg = h('div', { class: 'seg otseg' });
-  const drawSeg = () => seg.replaceChildren(...OT_ROOMS.map(([o]) => h('button', { type: 'button', class: o === pick ? 'on' : '', onclick: () => { pick = o; drawSeg(); } }, o)));
-  drawSeg();
-  modal(`Repost ${e.name}`, h('div', { class: 'grid1' },
-    h('p', { class: 'muted small' }, `${e.name} stays on this list marked as cancelled, and goes on the new list with the same details.`),
-    h('div', { class: 'field' }, h('span', { class: 'flabel' }, 'OT'), seg),
-    h('label', {}, 'New date', h('input', { type: 'date', name: 'date', value: addDays(l.date, 1), required: true })),
-    h('label', {}, 'Reason (optional)', h('input', { name: 'reason', placeholder: 'e.g. OT time over, blood not arranged' }))),
-  async (form) => {
-    const r = await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/repost`, { ot: pick, date: form.date.value, reason: form.reason.value });
-    toast(`${e.name} reposted to ${otName(pick)}, ${fmtDate(form.date.value)}`);
+  const btns = h('div', { class: 'btns' });
+  const draw = () => {
+    seg.replaceChildren(...OT_ROOMS.map(([o]) => h('button', { type: 'button', class: o === pick ? 'on' : '', disabled: o === l.ot && date.value === l.date, onclick: () => { pick = o; draw(); } }, o)));
+    const to = pick ? `${otName(pick)}${date.value !== l.date ? `, ${fmtDate(date.value)}` : ''}` : '';
+    btns.replaceChildren(...opts.actions.map((a) => h('button', { type: 'button', class: a.cls || 'ghost small', disabled: !pick || (pick === l.ot && date.value === l.date),
+      onclick: async () => { try { await a.run(pick, date.value, reason ? reason.value : ''); } catch (x) { toast(x.message, true); } } }, pick ? a.label(to) : a.label('…'))));
+  };
+  draw();
+  return h('div', { class: 'otmove' }, h('div', { class: 'small b' }, opts.title),
+    h('div', { class: 'otmoverow' }, seg, h('label', { class: 'small' }, 'Day', date)), reason, btns);
+}
+function repostForm(l, e) {
+  const go = async (ot, date, reason, keep) => {
+    const r = await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/repost`, { ot, date, reason, keep });
+    toast(keep ? `${e.name} is now on ${otName(ot)} too` : `${e.name} shifted to ${otName(ot)}, ${fmtDate(date)}`);
     location.hash = 'otlist/' + encodeURIComponent(r.list_id);
-  }, 'Repost');
+  };
+  return otMoveForm(l, { title: `Repost ${e.name} to:`, reason: true, actions: [
+    { label: (to) => `Shift to ${to}`, cls: 'primary small', run: (o, d, r) => go(o, d, r, false) },
+    { label: (to) => `Keep here and add to ${to}`, run: (o, d, r) => go(o, d, r, true) }] });
 }
 
 // A day-care patient who needs to stay: the admit form opens filled in from the OT list, and the list then shows the new bed.
