@@ -201,8 +201,8 @@ function checkNewDay() {
   const route = (location.hash.slice(1) || 'register').split('/')[0];
   let redraw = false;
   if (d !== S.meta.today) { if (S.date === S.meta.today) S.date = d; S.meta.today = d; redraw = true; }
-  const rd = roundsDay();
-  if (lastRoundsDay && rd !== lastRoundsDay && route === 'rounds') redraw = true;
+  const rd = roundsDay() + '|' + rosterDay(d);
+  if (rd !== lastRoundsDay && (route === 'rounds' || route === 'register')) redraw = true;
   lastRoundsDay = rd;
   if (redraw && !S.dirty.size && !document.querySelector('#modal-root > *')) render();
 }
@@ -251,6 +251,7 @@ function applyTheme() {
 let lastHash = null;
 function render() {
   applyTheme();
+  lastRoundsDay = roundsDay() + '|' + rosterDay(localStamp(new Date()).slice(0, 10));
   const app = document.getElementById('app');
   const keep = location.hash === lastHash ? window.scrollY : 0, height = document.documentElement.scrollHeight;
   lastHash = location.hash;
@@ -2258,13 +2259,16 @@ function rosterName(x, names) {
     return /^dr\.?\s/i.test(n) ? n : 'Dr ' + n;
   }).join(' / ');
 }
-function rosterStrip(date) {
+// Duties run 8 am to 8 am: before 8 am today, the strip still shows yesterday's team.
+const rosterDay = (date) => (date === localStamp(new Date()).slice(0, 10) && new Date().getHours() < 8 ? addDays(date, -1) : date);
+function rosterStrip(regDate) {
+  const date = rosterDay(regDate);
   const box = h('div', { class: 'roster' });
   const draw = (day, names) => {
     const pen = canEdit() && (() => { const b = h('button', { type: 'button', class: 'pencil', title: 'Edit today\'s duties', 'aria-label': 'Edit duties', onclick: () => edit(day, names) }); b.innerHTML = PENCIL_SVG; return b; })();
     if (!day) { box.replaceChildren(...(canEdit() ? [h('p', { class: 'muted small grow' }, 'No duty roster for this day. Import the month in Admin > Import, or tap the pencil to fill it in.'), pen] : [])); box.hidden = !canEdit(); return; }
     box.hidden = false;
-    box.replaceChildren(h('div', { class: 'rosterrows grow' }, ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow', style: `grid-template-columns: repeat(${row.length}, minmax(0, 1fr))` },
+    box.replaceChildren(h('div', { class: 'rosterrows grow' }, date !== regDate ? h('p', { class: 'small muted rosternote' }, `On duty until 8 am (${fmtDay(date)} roster)`) : '', ...ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow', style: `grid-template-columns: repeat(${row.length}, minmax(0, 1fr))` },
       row.map(([k, label]) => h('div', { class: 'rcell' }, h('span', { class: 'rlabel' }, label), h('b', {}, rosterName(day[k], names) || '—')))))), pen || '');
   };
   const edit = (day, names) => {
