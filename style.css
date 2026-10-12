@@ -619,3 +619,18 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .censussub { margin: .6rem 0 .4rem; }
 .wardtabs { margin-bottom: .75rem; }
 .wardtabs button { min-width: 5rem; font-size: 1rem; }
+
+/* Duty roster: day arrows and the month table */
+.roster { flex-direction: column; align-items: stretch; }
+.rosterhead { display: flex; align-items: center; gap: 6px; }
+.rosterhead h2 { margin: 0; font-size: 1.05rem; }
+.rday { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.rarrow { font-size: 1.2rem; line-height: 1; padding: .2rem .6rem; min-width: 2.2rem; }
+.rmonth { max-width: 980px; width: min(980px, 96vw); max-height: 90vh; overflow: auto; }
+.rmtable th, .rmtable td { white-space: nowrap; font-size: .85rem; padding: .3rem .5rem; }
+.rmtable tbody tr { cursor: pointer; }
+.rmtable tbody tr:hover { background: var(--accent-soft); }
+.rmtable tr.wkend th { color: var(--accent); }
+.rmtable tr.today { background: var(--accent-soft); font-weight: 700; }
+.rlegend { line-height: 1.6; margin-top: .6rem; }
+.rosterhead .grow { flex: 1; }

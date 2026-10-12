@@ -1099,6 +1099,11 @@ const Store = (() => {
     const r = get('roster:' + p.date);
     return { day: r ? { ...strip(r), edited_by: r.edited_by ? userName(r.edited_by) : '' } : null, names: rosterNames() };
   });
+  route('GET', '/api/rostermonth/:month', ANY, ({ params: p }) => {
+    if (!/^\d{4}-\d{2}$/.test(p.month)) throw new HttpError(400, 'Bad month');
+    const days = all('roster').filter((r) => (r.date || '').slice(0, 7) === p.month).map((r) => strip(r, 'edited_by', 'edited_at')).sort((a, b) => (a.date < b.date ? -1 : 1));
+    return { days, names: rosterNames() };
+  });
   route('PUT', '/api/roster/:date', EDITORS, ({ body, params: p }) => {
     if (!isDate(p.date)) throw new HttpError(400, 'Bad date');
     const old = get('roster:' + p.date);

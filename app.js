@@ -2290,32 +2290,80 @@ function rosterName(x, names) {
 }
 // Duties run 8 am to 8 am: before 8 am today, the strip still shows yesterday's team.
 const rosterDay = (date) => (date === localStamp(new Date()).slice(0, 10) && new Date().getHours() < 8 ? addDays(date, -1) : date);
+const GRID_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>';
+const iconBtn = (svg, title, onclick, cls = 'pencil') => { const b = h('button', { type: 'button', class: cls, title, 'aria-label': title, onclick }); b.innerHTML = svg; return b; };
 function rosterStrip(regDate) {
   const date = rosterDay(regDate);
+  let view = date; // the day being looked at; the arrows move it
   const box = h('div', { class: 'roster' });
+  const dayLabel = (d) => d === date ? (date !== regDate ? 'On duty until 8 am' : 'On duty today') : d === addDays(date, 1) ? 'Tomorrow' : d === addDays(date, -1) ? 'Yesterday' : 'On duty';
+  const go = (k) => { view = addDays(view, k); load(); };
+  const head = (names) => h('div', { class: 'rosterhead' },
+    h('button', { type: 'button', class: 'ghost small rarrow', title: 'Previous day', onclick: () => go(-1) }, '‹'),
+    h('div', { class: 'rday' }, h('b', {}, dayLabel(view)), h('span', { class: 'muted small' }, fmtDay(view))),
+    h('button', { type: 'button', class: 'ghost small rarrow', title: 'Next day', onclick: () => go(1) }, '›'),
+    view !== date && h('button', { type: 'button', class: 'ghost small', onclick: () => { view = date; load(); } }, 'Today'),
+    h('span', { class: 'grow' }),
+    iconBtn(GRID_SVG, 'Whole month', () => rosterMonth(view.slice(0, 7), date, (d) => { view = d; load(); })),
+    canEdit() && iconBtn(PENCIL_SVG, 'Edit duties for this day', () => edit(cur, names)));
+  let cur = null;
   const draw = (day, names) => {
-    const pen = canEdit() && (() => { const b = h('button', { type: 'button', class: 'pencil', title: 'Edit today\'s duties', 'aria-label': 'Edit duties', onclick: () => edit(day, names) }); b.innerHTML = PENCIL_SVG; return b; })();
-    if (!day) { box.replaceChildren(...(canEdit() ? [h('p', { class: 'muted small grow' }, 'No duty roster for this day. Import the month in Admin > Import, or tap the pencil to fill it in.'), pen] : [])); box.hidden = !canEdit(); return; }
+    cur = day;
+    if (!day && view === date && !canEdit()) { box.hidden = true; return; }
     box.hidden = false;
-    box.replaceChildren(h('div', { class: 'rosterrows grow' }, date !== regDate ? h('p', { class: 'small muted rosternote' }, `On duty until 8 am (${fmtDay(date)} roster)`) : '', ...ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow', style: `grid-template-columns: repeat(${row.length}, minmax(0, 1fr))` },
-      row.map(([k, label]) => h('div', { class: 'rcell' }, h('span', { class: 'rlabel' }, label), h('b', {}, rosterName(day[k], names) || '—')))))), pen || '');
+    box.replaceChildren(head(names), day
+      ? h('div', { class: 'rosterrows' }, ...ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow', style: `grid-template-columns: repeat(${row.length}, minmax(0, 1fr))` },
+        row.map(([k, label]) => h('div', { class: 'rcell' }, h('span', { class: 'rlabel' }, label), h('b', {}, rosterName(day[k], names) || '—'))))))
+      : h('p', { class: 'muted small' }, canEdit() ? 'No duty roster for this day. Import the month in Admin > Import, or tap the pencil to fill it in.' : 'No duty roster for this day.'));
   };
   const edit = (day, names) => {
     const d = day || {};
     const inputs = {};
     box.replaceChildren(h('div', { class: 'grow' },
-      h('p', { class: 'small muted' }, 'Type initials (NP, PG/SN) or names. For leave or swaps.'),
+      h('p', { class: 'small muted' }, h('b', {}, fmtDay(view)), ' · Type initials (NP, PG/SN) or names. For leave or swaps.'),
       h('div', { class: 'rosteredit' }, ROSTER_ROWS.flat().map(([k, label]) => h('label', {}, label, (inputs[k] = h('input', { value: d[k] || '', autocapitalize: 'characters' }))))),
       h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: () => draw(day, names) }, 'Cancel'),
         h('button', { type: 'button', class: 'primary small', onclick: async () => {
           const out = {}; for (const k in inputs) out[k] = inputs[k].value.trim();
-          try { await api('PUT', '/api/roster/' + date, out); toast('Duties saved'); load(); } catch (e) { toast(e.message, true); }
+          try { await api('PUT', '/api/roster/' + view, out); toast('Duties saved'); load(); } catch (e) { toast(e.message, true); }
         } }, 'Save'))));
   };
-  const load = () => api('GET', '/api/roster/' + date).then((r) => draw(r.day, r.names)).catch(() => { box.hidden = true; });
+  const load = () => api('GET', '/api/roster/' + view).then((r) => draw(r.day, r.names)).catch(() => { box.hidden = true; });
   box.hidden = true;
   load();
   return box;
+}
+// The whole month's roster as a table (initials; full names listed underneath). Tapping a day shows it on the strip.
+async function rosterMonth(month, today, pick) {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  const card = h('div', { class: 'modal card rmonth' });
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() }, card));
+  const shiftM = (m, k) => { const x = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1 + k, 1); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
+  const draw = async (m) => {
+    let r; try { r = await api('GET', '/api/rostermonth/' + m); } catch (e) { toast(e.message, true); return; }
+    const byDate = Object.fromEntries(r.days.map((d) => [d.date, d]));
+    const cols = ROSTER_ROWS.flat();
+    const used = new Set();
+    const days = []; for (let d = m + '-01'; d.slice(0, 7) === m; d = addDays(d, 1)) days.push(d);
+    const cell = (v) => { v = (v || '').trim(); v.split('/').map((x) => x.trim().toUpperCase()).filter(Boolean).forEach((x) => used.add(x)); return h('td', { title: rosterName(v, r.names) }, v || '—'); };
+    const rows = days.map((d) => { const x = byDate[d]; const wd = new Date(d + 'T00:00').toLocaleDateString('en-GB', { weekday: 'short' });
+      return h('tr', { class: (d === today ? 'today ' : '') + (wd === 'Sun' || wd === 'Sat' ? 'wkend' : ''), onclick: () => { close(); pick(d); } },
+        h('th', {}, `${+d.slice(8)} ${wd}`), x ? cols.map(([k]) => cell(x[k])) : h('td', { colspan: cols.length, class: 'muted' }, 'No roster')); });
+    const legend = [...used].sort().map((i) => [i, rosterName(i, r.names)]).filter(([i, n]) => n && n.replace(/^Dr\s*/, '').toUpperCase() !== i);
+    const monthName = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    card.replaceChildren(
+      h('div', { class: 'mhead' },
+        h('div', { class: 'rosterhead' }, h('button', { type: 'button', class: 'ghost small rarrow', onclick: () => draw(shiftM(m, -1)) }, '‹'), h('h2', {}, 'Duty roster · ', monthName), h('button', { type: 'button', class: 'ghost small rarrow', onclick: () => draw(shiftM(m, 1)) }, '›')),
+        h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close')),
+      h('p', { class: 'muted small' }, 'Tap a day to show it on the Ward Register.'),
+      h('div', { class: 'tablewrap' }, h('table', { class: 'list rmtable' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Day'), cols.map(([, label]) => h('th', {}, label)))),
+        h('tbody', {}, rows))),
+      legend.length ? h('p', { class: 'small rlegend' }, legend.map(([i, n], k) => [k ? ' · ' : '', h('b', {}, i), ' ', n.replace(/^Dr\s*/, '')])) : '');
+    const t = card.querySelector('tr.today'); if (t) t.scrollIntoView({ block: 'center' });
+  };
+  draw(month);
 }
 // Import the month's duty roster (a file Claude makes from the roster PDFs).
 function rosterImportCard() {
