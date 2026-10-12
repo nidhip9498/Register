@@ -915,13 +915,14 @@ function patientCard(a, date, refresh) {
     h('div', { class: 'rhead' },
       h('div', { class: 'rmain' },
         h('div', { class: 'rtitle' }, h('span', { class: 'bedno' }, a.bed_on_date), h('a', { href: '#patient/' + id, class: 'rname' }, a.name)),
-        h('div', { class: 'muted small' }, [a.ip_no && `UHID ${a.ip_no}`, a.unit, dayNo(a, date) && `Day ${dayNo(a, date)} of admission`,
+        h('div', { class: 'muted small' }, [a.ip_no && `UHID ${a.ip_no}`, dayNo(a, date) && `Day ${dayNo(a, date)} of admission`,
           icu && a.birth_weight && `BW ${a.birth_weight} g`, icu && a.gestation && `GA ${a.gestation} wk`, icu && a.current_weight && `Wt ${a.current_weight} g`,
           !icu && a.weight && `Wt ${a.weight} kg`].filter(Boolean).join(' · ')),
         a.diagnosis && h('div', { class: 'rdx' }, h('span', {}, 'Diagnosis'), a.diagnosis),
         a.procedure_done && h('div', { class: 'rsx' }, h('span', {}, 'Surgery'), a.procedure_done, surgeries.length ? h('small', {}, ' on ' + surgeries.map(fmtDate).join(', ')) : null)),
       h('div', { class: 'rcorner' },
         h('div', { class: 'cfact' }, h('span', {}, 'Age / Sex'), h('b', {}, ageSex(a, date) || '—')),
+        h('div', { class: 'cfact' }, h('span', {}, 'Consultant'), h('b', {}, a.unit || '—')),
         h('div', { class: 'cfact pod' }, h('span', {}, 'POD'), h('b', {}, pod ? pod.replace('POD ', '') : '—')))),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
     otBox(a, () => refresh(id)),
@@ -956,7 +957,7 @@ function shortNotesBox(a) {
     box.replaceChildren(h('div', { class: 'grow' }, h('b', {}, 'Short notes: '), a.instructions || h('span', { class: 'muted' }, 'None yet')), pen);
   };
   const edit = () => {
-    const ta = h('textarea', { rows: 3, placeholder: 'Short notes for this patient' }, a.instructions || '');
+    const ta = h('textarea', { rows: Math.min(10, Math.max(3, Math.ceil((a.instructions || '').length / 110) + 1)), placeholder: 'Short notes for this patient' }, a.instructions || '');
     box.replaceChildren(h('div', { class: 'grow' }, h('b', {}, 'Short notes'), ta,
       h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: show }, 'Cancel'),
         h('button', { type: 'button', class: 'primary small', onclick: async () => {
@@ -969,6 +970,13 @@ function shortNotesBox(a) {
 }
 
 // Rounds: every patient, ward by ward and then the ICU, in bed order, with the fields chosen for them.
+// A bed counts as done when that day's round has something filled in and was saved between 4 am and 11:30 am that morning.
+function morningDone(r, date) {
+  if (!r || !r.filled_at || r.filled_at.slice(0, 10) !== date) return false;
+  if (!Object.values(r.vals || {}).some((v) => String(v).trim()) && !(r.remarks || '').trim()) return false;
+  const t = r.filled_at.slice(11, 16);
+  return t >= '04:00' && t < '11:30';
+}
 // The Rounds form clears at 11:30 am: from then on it opens on tomorrow's date (blank), for the next morning's SR.
 // Today's entries stay on the register, Status and the prints until midnight. Every day's rounds stay in the patient's history.
 const ROUNDS_CLEAR_MIN = 11 * 60 + 30;
@@ -1015,10 +1023,10 @@ async function roundsView(main, focus) {
       const pts = here.filter((a) => wardOf(a.bed_on_date) === w);
       if (!pts.length) return null;
       const row = h('div', { class: 'bedstrip' }, h('span', { class: 'bswho' }, w),
-        h('div', { class: 'bsrow' }, pts.map((a) => h('button', { type: 'button', class: 'bschip' + (a.id === S.roundsSel ? ' on' : '') + (a.round ? ' done' : ''), title: a.name, onclick: () => pick(a.id) },
+        h('div', { class: 'bsrow' }, pts.map((a) => h('button', { type: 'button', class: 'bschip' + (a.id === S.roundsSel ? ' on' : '') + (morningDone(a.round, date) ? ' done' : ''), title: a.name, onclick: () => pick(a.id) },
           a.bed_on_date.replace(new RegExp('^' + w + '/', 'i'), '')))));
       return row;
-    }).filter(Boolean), h('div', { class: 'bsfoot' }, h('span', { class: 'muted bslegend' }, '✓ = rounds saved for this day'),
+    }).filter(Boolean), h('div', { class: 'bsfoot' }, h('span', { class: 'muted bslegend' }, 'Green border = morning round saved (4 am to 11:30 am)'),
       S.roundsSel ? h('button', { type: 'button', class: 'ghost small bsall', onclick: () => pick(null) }, 'Show all patients') : ''));
     const on = strips.querySelector('.bschip.on');
     if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });

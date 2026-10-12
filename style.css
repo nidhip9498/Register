@@ -318,7 +318,7 @@ label.inline { display: inline-flex; align-items: center; gap: .4rem; margin: 0;
 .rdx span { background: var(--accent-soft); color: var(--accent); }
 .rsx span { background: var(--plan-soft); color: var(--plan); }
 .rsx small { font-weight: 400; color: var(--muted); font-size: .85rem; }
-.rcorner { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; min-width: 230px; }
+.rcorner { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .4rem; min-width: 330px; }
 .cfact { background: var(--accent-soft); border-radius: 10px; padding: .45rem .6rem; display: flex; flex-direction: column; }
 .cfact span { font-size: .75rem; color: var(--muted); }
 .cfact b { font-size: 1.3rem; line-height: 1.2; }
@@ -567,8 +567,8 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .bswho { font-weight: 700; min-width: 2.2em; }
 .bsrow { display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x proximity; padding: 2px 2px 6px; flex: 1; min-width: 0; -webkit-overflow-scrolling: touch; }
 .bschip { flex: 0 0 auto; min-width: 2.8em; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line, #ccd); background: var(--card, #fff); color: inherit; font-weight: 600; scroll-snap-align: center; cursor: pointer; }
-.bschip.done { background: var(--accent-soft, #e2f0f1); border-color: var(--accent, #1f6f78); color: var(--accent, #1f6f78); }
-.bschip.done::after { content: ' ✓'; font-size: .8em; }
+.bschip.done { border: 2px solid #1e9e4a; }
+.bschip.on.done { box-shadow: 0 0 0 2px #1e9e4a; }
 .bslegend { font-size: .8rem; }
 .bschip.on { background: var(--accent, #1f6f78); color: #fff; border-color: var(--accent, #1f6f78); }
 .bsall { justify-self: start; }
@@ -585,3 +585,6 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .shortnotes { display: flex; align-items: flex-start; gap: 8px; }
 .shortnotes textarea { width: 100%; margin: 6px 0; }
 .bsfoot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+.shortnotes .grow { flex: 1; min-width: 0; }
+.shortnotes textarea { display: block; width: 100%; box-sizing: border-box; min-height: 5.5em; }
