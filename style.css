@@ -551,3 +551,10 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .otrowextra:not(:empty) { padding: 0 .7rem .7rem; }
 .otentry.flash { outline: 2px solid var(--accent); }
 @media (max-width: 640px) { .otrowmain { flex-wrap: wrap; } .otrowbtns { width: 100%; justify-content: flex-end; } }
+
+.otdays { display: grid; gap: .8rem; }
+.otday { padding: .7rem .8rem; }
+.otdayhead { display: flex; align-items: center; gap: .3rem; margin-bottom: .5rem; }
+.otdayhead .grow { flex: 1; }
+.pencil { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; }
+.pencil svg { display: block; }

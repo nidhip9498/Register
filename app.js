@@ -746,7 +746,7 @@ function otList(entries, onChanged) {
     const li = h('li', {});
     const show = () => li.replaceChildren(...[
       h('div', { class: 'othdrrow' }, h('small', { class: 'muted' }, `${fmtDate(o.at.slice(0, 10))} ${o.at.slice(11, 16)} · ${o.by || ''}${o.edited ? ` · edited by ${o.edited}` : ''}`),
-        onChanged && canEdit() && h('button', { type: 'button', class: 'pencil', title: 'Edit', 'aria-label': 'Edit', onclick: edit }, '✎')),
+        onChanged && canEdit() && (() => { const b = h('button', { type: 'button', class: 'pencil', title: 'Edit', 'aria-label': 'Edit', onclick: edit }); b.innerHTML = PENCIL_SVG; return b; })()),
       o.text && h('div', {}, o.text),
       (o.scrub || []).length ? h('div', { class: 'team small' }, h('b', {}, 'Scrubbed: '), o.scrub.join('/'), o.surgery ? h('div', { class: 'muted' }, o.surgery) : null) : null].filter(Boolean));
     // The pencil opens the text in place; Save keeps the change, Delete (own posts) removes it.
@@ -1449,34 +1449,38 @@ async function otHomeView(main) {
       h('b', {}, otName(ot))))),
     otSearchBox(),
     h('h3', {}, 'Today · ', fmtDay(today)),
-    full.length ? h('div', { class: 'otmonths' }, full.map(todayDrop)) : h('p', { class: 'muted' }, 'No lists for today yet.'));
+    full.length ? h('div', { class: 'otdays' }, full.map(todayDrop)) : h('p', { class: 'muted' }, 'No lists for today yet.'));
 }
 
-// Today's list of one OT as a dropdown; inside, one box with a row per patient, each with its scrub team and a pencil to the full card.
+// A pencil like the usual edit icon on websites.
+const PENCIL_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const pencilLink = (href, title) => { const a = h('a', { class: 'pencil', href, title, 'aria-label': title }); a.innerHTML = PENCIL_SVG; return a; };
+// Scrub team in a pop-up (tap the initials in order, Save team).
+function scrubPopup(e, done) {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
+    h('div', { class: 'modal card panel' },
+      h('div', { class: 'mhead' }, h('h2', {}, `Scrub team · ${e.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+      scrubPicker(e.scrub, async (team) => {
+        try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); close(); toast(res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); done(); } catch (x) { toast(x.message, true); }
+      }))));
+}
+// Today's list of one OT, always open: one box with a row per patient, each with its scrub team; the pencil opens the list to edit.
 function todayDrop(l) {
   const live = l.entries.filter((e) => !e.cancelled);
-  const href = (e) => '#otlist/' + encodeURIComponent(l.id) + '/' + encodeURIComponent(e.id);
-  const row = (e, i) => {
-    const r = h('div', { class: 'otrow' });
-    const extra = h('div', { class: 'otrowextra' });
-    const scrubBtn = h('button', { type: 'button', class: 'ottile small', onclick: () => {
-      if (extra.childNodes.length) return extra.replaceChildren();
-      extra.replaceChildren(scrubPicker(e.scrub, async (team) => {
-        try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast(res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); render(); } catch (x) { toast(x.message, true); }
-      }));
-    } }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team');
-    r.append(h('div', { class: 'otrowmain' },
-      h('div', { class: 'grow' },
-        h('div', {}, h('b', {}, `${i + 1}. ${e.name}`), h('span', { class: 'muted small' }, ` · ${bedLabel(e.bed)}${[e.age, e.sex].filter(Boolean).length ? ' · ' + [e.age, e.sex].filter(Boolean).join(' / ') : ''}`)),
-        h('div', { class: 'small' }, [e.diagnosis, e.done ? `Done: ${e.done}` : e.surgery].filter(Boolean).join(' · ') || h('span', { class: 'warntext' }, 'Surgery not filled yet'))),
-      h('div', { class: 'otrowbtns' }, scrubBtn, h('a', { class: 'pencil', href: href(e), title: 'Edit, repost and more', 'aria-label': 'Edit' }, '✎'))), extra);
-    return r;
-  };
-  return h('details', { class: 'otmonth' },
-    h('summary', {}, h('b', {}, otName(l.ot)), h('span', { class: 'muted small' }, ' · ' + [fullNames(l.surgeon), `${live.length} patient${live.length === 1 ? '' : 's'}`].filter(Boolean).join(' · '))),
-    h('div', { class: 'otsub' },
-      live.length ? h('div', { class: 'otrows' }, live.map(row)) : h('p', { class: 'muted small' }, 'No patients yet.'),
-      h('a', { class: 'button ghost small', href: '#otlist/' + encodeURIComponent(l.id) }, 'Open full list')));
+  const listHref = '#otlist/' + encodeURIComponent(l.id);
+  const row = (e, i) => h('div', { class: 'otrow' }, h('div', { class: 'otrowmain' },
+    h('div', { class: 'grow' },
+      h('div', {}, h('b', {}, `${i + 1}. ${e.name}`), h('span', { class: 'muted small' }, ` · ${bedLabel(e.bed)}${[e.age, e.sex].filter(Boolean).length ? ' · ' + [e.age, e.sex].filter(Boolean).join(' / ') : ''}`)),
+      h('div', { class: 'small' }, [e.diagnosis, e.done ? `Done: ${e.done}` : e.surgery].filter(Boolean).join(' · ') || h('span', { class: 'warntext' }, 'Surgery not filled yet'))),
+    h('div', { class: 'otrowbtns' },
+      h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team'),
+      pencilLink(listHref + '/' + encodeURIComponent(e.id), `Edit ${e.name}`))));
+  return h('div', { class: 'card otday' },
+    h('div', { class: 'otdayhead' }, h('b', {}, otName(l.ot)), h('span', { class: 'muted small grow' }, ' · ' + [fullNames(l.surgeon), `${live.length} patient${live.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')),
+      pencilLink(listHref, `Edit the ${otName(l.ot)} list`)),
+    live.length ? h('div', { class: 'otrows' }, live.map(row)) : h('p', { class: 'muted small' }, 'No patients yet.'));
 }
 
 async function otDatesView(main, ot) {
