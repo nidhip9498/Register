@@ -1708,7 +1708,7 @@ async function otListView(main, id) {
   // Opened from a pencil on today's lists: bring that patient's card into view.
   const focusId = decodeURIComponent(location.hash.split('/')[2] || '');
   if (focusId) setTimeout(() => { const c = document.querySelector(`[data-entry="${CSS.escape(focusId)}"]`); if (c) { c.classList.add('flash'); c.scrollIntoView({ block: 'center' }); } }, 50);
-  // Cancelled entries stay on the day's list (greyed, not printed) with where they were reposted to.
+  // Shifted and cancelled cases stay on the day's list (greyed) but are left off the print.
   const live = l.entries.filter((e) => !e.cancelled), cancelled = l.entries.filter((e) => e.cancelled);
   const surgeonValue = () => [surgeon.value, surgeon2.value].filter((n, i, a) => n && a.indexOf(n) === i).join('/');
   const saveHead = async () => { try { await api('PUT', '/api/otlists/' + encodeURIComponent(id), { surgeon: surgeonValue(), note: note.value }); reload(); toast('Saved'); } catch (e) { toast(e.message, true); } };
@@ -1723,7 +1723,7 @@ async function otListView(main, id) {
     h('h1', {}, 'Department of Pediatric Surgery, MCH Block'), h('p', { class: 'c t2' }, `${l.kind || 'Routine'} OT List - `, h('b', {}, otName(l.ot))), h('p', { class: 'c' }, `(${shortDate(l.date)})`),
     l.surgeon && h('p', { class: 'c b' }, fullNames(l.surgeon).toUpperCase()), h('p', { class: 'c b' }, 'KEEP OT WARM'), extraNote && h('p', { class: 'c b' }, extraNote.toUpperCase()),
     h('table', {}, h('thead', {}, h('tr', {}, ['SL NO', 'WARD', 'NAME', 'AGE/SEX', 'UHID', 'DIAGNOSIS', 'SURGERY', 'CONSULTANT', 'BLOOD ARRANGE', 'SPECIAL REQ'].map((t) => h('th', {}, t)))),
-      h('tbody', {}, live.map((e, i) => h('tr', {}, h('td', {}, i + 1), h('td', {}, wardCol(e.bed)), h('td', {}, (e.name || '').toUpperCase()), h('td', {}, [e.age, e.sex].filter(Boolean).join('/')),
+      h('tbody', {}, live.filter((e) => !e.case_cancelled).map((e, i) => h('tr', {}, h('td', {}, i + 1), h('td', {}, wardCol(e.bed)), h('td', {}, (e.name || '').toUpperCase()), h('td', {}, [e.age, e.sex].filter(Boolean).join('/')),
         h('td', {}, e.uhid), h('td', {}, e.diagnosis), h('td', {}, e.surgery), h('td', {}, fullNames(e.consultant)), h('td', {}, e.blood), h('td', {}, e.special))))),
     h('div', { class: 'otfoot' }, h('b', {}, `DATE: ${fmtDate(S.meta.today)}`), h('b', {}, 'SIGNATURE')));
   drawSheet();
