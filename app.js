@@ -1643,13 +1643,13 @@ async function otDatesView(main, ot) {
     try { await api('PUT', '/api/otrooms/' + ot, { kind: k }); drawKind(k); toast(`${otName(ot)} marked ${k}. Today's and later lists follow.`); } catch (e) { toast(e.message, true); }
   } }, k)));
   drawKind(kinds[ot] || 'Routine');
-  const week = addDays(today, 6), up = lists.filter((l) => l.date >= today && l.date <= week).reverse();
+  const up = lists.filter((l) => l.date >= today).sort((x, y) => (x.date < y.date ? -1 : 1));
   main.append(
     h('div', { class: 'toolbar' }, h('a', { class: 'button ghost', href: '#ot' }, '‹ OT Lists'), h('h2', {}, otName(ot)),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal(ot) }, '+ Create list'))),
     h('div', { class: 'field otkindrow' }, h('span', { class: 'flabel' }, 'This OT is'), seg),
-    h('h3', {}, 'Today and next 7 days'),
-    up.length ? h('div', { class: 'otlrows' }, up.map(listRow)) : h('p', { class: 'muted' }, 'No lists in the next 7 days.'),
+    h('h3', {}, 'Today and coming up'),
+    up.length ? h('div', { class: 'otlrows' }, up.map(listRow)) : h('p', { class: 'muted' }, 'No lists coming up.'),
     ...(lists.length ? [h('h3', {}, 'By month'), monthGroups(lists)] : []));
 }
 
