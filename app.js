@@ -1547,6 +1547,10 @@ const shortDate = (d) => { const [y, m, day] = d.split('-'); return `${day}/${m}
 const listCard = (l, withOt = true) => h('a', { class: 'otcard', href: '#otlist/' + encodeURIComponent(l.id) },
   h('b', {}, withOt ? `${otName(l.ot)} · ` : '', fmtDay(l.date)),
   h('span', { class: 'muted small' }, [fullNames(l.surgeon), `${l.count} patient${l.count === 1 ? '' : 's'}`].filter(Boolean).join(' · ')));
+// One list per line (an OT's own page); today's list gets a green box.
+const listRow = (l) => h('a', { class: 'otlrow' + (l.date === S.meta.today ? ' today' : ''), href: '#otlist/' + encodeURIComponent(l.id) },
+  h('b', {}, fmtDay(l.date)), h('span', { class: 'grow' }, fullNames(l.surgeon) || h('span', { class: 'muted' }, 'No surgeon set')),
+  h('span', { class: 'muted small' }, `${l.count} patient${l.count === 1 ? '' : 's'}`));
 
 async function otHomeView(main) {
   const today = S.meta.today;
@@ -1639,13 +1643,13 @@ async function otDatesView(main, ot) {
     try { await api('PUT', '/api/otrooms/' + ot, { kind: k }); drawKind(k); toast(`${otName(ot)} marked ${k}. Today's and later lists follow.`); } catch (e) { toast(e.message, true); }
   } }, k)));
   drawKind(kinds[ot] || 'Routine');
-  const up = lists.filter((l) => l.date >= today).reverse(), past = lists.filter((l) => l.date < today);
+  const week = addDays(today, 6), up = lists.filter((l) => l.date >= today && l.date <= week).reverse();
   main.append(
     h('div', { class: 'toolbar' }, h('a', { class: 'button ghost', href: '#ot' }, '‹ OT Lists'), h('h2', {}, otName(ot)),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal(ot) }, '+ Create list'))),
     h('div', { class: 'field otkindrow' }, h('span', { class: 'flabel' }, 'This OT is'), seg),
-    h('h3', {}, 'Today and coming up'),
-    up.length ? h('div', { class: 'otcards' }, up.map((l) => listCard(l, false))) : h('p', { class: 'muted' }, 'No lists yet.'),
+    h('h3', {}, 'Today and next 7 days'),
+    up.length ? h('div', { class: 'otlrows' }, up.map(listRow)) : h('p', { class: 'muted' }, 'No lists in the next 7 days.'),
     ...(lists.length ? [h('h3', {}, 'By month'), monthGroups(lists)] : []));
 }
 
@@ -1673,14 +1677,13 @@ function otSearchBox() {
 function monthGroups(lists) {
   const groups = new Map();
   for (const l of lists) { const k = l.date.slice(0, 7); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); }
-  const thisMonth = S.meta.today.slice(0, 7);
   return h('div', { class: 'otmonths' }, [...groups.keys()].sort().reverse().map((k) => {
     const ls = groups.get(k).sort((x, y) => (x.date < y.date ? -1 : 1));
     const [y, m] = k.split('-');
     const title = new Date(+y, +m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-    return h('details', { class: 'otmonth', open: k === thisMonth || null },
+    return h('details', { class: 'otmonth' },
       h('summary', {}, h('b', {}, title), h('span', { class: 'muted small' }, ` · ${ls.length} list${ls.length === 1 ? '' : 's'}`)),
-      h('div', { class: 'otcards' }, ls.map((l) => listCard(l, false))));
+      h('div', { class: 'otlrows' }, ls.map(listRow)));
   }));
 }
 

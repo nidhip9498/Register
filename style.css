@@ -634,3 +634,11 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .rmtable tr.today { background: var(--accent-soft); font-weight: 700; }
 .rlegend { line-height: 1.6; margin-top: .6rem; }
 .rosterhead .grow { flex: 1; }
+/* An OT's lists, one per line */
+.otlrows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 1rem; }
+.otmonth .otlrows { padding: 0 .9rem .8rem; }
+.otlrow { display: flex; align-items: center; gap: .9rem; padding: .55rem .9rem; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); text-decoration: none; }
+.otlrow:hover { border-color: var(--accent); text-decoration: none; }
+.otlrow b { min-width: 9.5rem; }
+.otlrow .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.otlrow.today { border: 2px solid #1e9e4a; }
