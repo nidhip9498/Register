@@ -880,6 +880,29 @@ const Store = (() => {
       touchOtList(l.id, `linked ${e.name} to bed ${a.bed}`);
     }
   }
+  // A ward bed typed on today's or a coming list for a child not yet admitted admits them to that bed today, so they show on the register and in Rounds.
+  function autoAdmitEntry(id) {
+    const e = get(id), l = e && get(e.list_id);
+    if (!e || !l || e.cancelled || e.case_cancelled || e.admission_id || !e.bed || isDayCare(e.bed) || l.date < today()) return {};
+    if (!EDITORS.includes(currentUser.role)) return {};
+    const bed = allBeds().find((b) => b.toLowerCase() === e.bed.trim().toLowerCase());
+    if (!bed) return {};
+    const u = (e.uhid || '').toLowerCase();
+    const already = u && all('admission').find((a) => !a.discharge_date && (a.ip_no || '').toLowerCase() === u);
+    if (already) { linkOtEntries(already.id); return {}; }
+    const occ = occupants(bed);
+    if (occ.length) return { warning: `${e.name} was not admitted: bed ${bed} already has ${occ.map((o) => o.name).join(', ')}.` };
+    const units = getUnits().map((x) => x.name);
+    const unit = (e.consultant || l.surgeon || '').split('/').map((x) => x.trim()).find((x) => units.includes(x)) || '';
+    const f = admissionFields({ name: e.name, ip_no: e.uhid, age: e.age, sex: e.sex, diagnosis: e.diagnosis, unit, admit_date: today(), bed });
+    const aid = 'adm:' + uuid();
+    put(aid, 'admission', { ...f, bed, discharge_date: null, outcome: '', from_otlist: e.id, created_by: currentUser.id, updated_at: stamp() });
+    put(e.id, 'otentry', { ...strip(e), bed, admission_id: aid });
+    audit('admit', `${f.name} to ${bed} (from OT list)`);
+    touchOtList(l.id, `admitted ${e.name} to ${bed}`);
+    linkOtEntries(aid);
+    return { admitted: bed };
+  }
   // On today's and coming lists an admitted child shows the bed they are in now (after any bed move); earlier lists keep what was printed.
   function liveBed(e, l) {
     if (e.cancelled || !e.admission_id || l.date < today()) return e.bed;
@@ -995,7 +1018,7 @@ const Store = (() => {
     put(id, 'otentry', { ...f, list_id: l.id, order: list.length ? Math.max(...list.map((e) => e.order || 0)) + 1 : 1, created_by: currentUser.id, created_at: stamp() });
     touchOtList(l.id, `added ${f.name}`);
     audit('add to OT list', `${f.name} → OT ${l.ot} ${l.date}`);
-    return { id };
+    return { id, ...autoAdmitEntry(id) };
   });
   const getEntry = (id) => { const e = get(id); if (!e || !id.startsWith('otentry:')) throw new HttpError(404, 'Entry not found'); return e; };
   route('PUT', '/api/otentries/:id', ANY, ({ body, params: p }) => {
@@ -1006,7 +1029,7 @@ const Store = (() => {
     const conv = isDayCare(e.bed) && f.admission_id && !isDayCare(f.bed) ? { from_daycare: true } : {};
     put(e.id, 'otentry', { ...strip(e), ...f, ...conv, updated_by: currentUser.id, updated_at: stamp() });
     touchOtList(e.list_id, `edited ${f.name}`);
-    return { ok: true };
+    return { ok: true, ...autoAdmitEntry(e.id) };
   });
   // OT cancelled for the day: the entry stays on that list marked cancelled, and a copy goes on the new day's list.
   route('POST', '/api/otentries/:id/repost', ANY, ({ body, params: p }) => {

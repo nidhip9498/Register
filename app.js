@@ -1934,7 +1934,7 @@ function otEntryModal(l, e, onSaved) {
     input('Age', 'age', { placeholder: 'e.g. 2m, 12y' }),
     h('label', {}, 'Sex', h('select', { name: 'sex' }, ['', 'M', 'F', 'Other'].map((x) => h('option', { value: x, selected: x === (v.sex || '') }, x || '—')))),
     h('label', { class: 'span2' }, 'Bed', h('input', { name: 'bed', value: v.bed || '', list: 'otbeds', autocomplete: 'off', placeholder: 'e.g. 6B/15' }),
-      h('small', { class: 'muted' }, 'Leave blank if being admitted later. MCH2/PAR = day care.'), beds),
+      h('small', { class: 'muted' }, 'A ward bed admits the child to that bed today (shows on the register and in Rounds). Leave blank if being admitted later. MCH2/PAR = day care.'), beds),
     h('label', { class: 'span2' }, 'Diagnosis', h('textarea', { name: 'diagnosis', rows: 2 }, v.diagnosis || '')),
     h('label', { class: 'span2' }, 'Surgery', h('textarea', { name: 'surgery', rows: 2 }, v.surgery || '')),
     h('label', {}, 'Consultant', consultant),
@@ -1945,9 +1945,9 @@ function otEntryModal(l, e, onSaved) {
   async (f) => {
     const body = Object.fromEntries(['uhid', 'name', 'age', 'sex', 'bed', 'diagnosis', 'surgery', 'consultant', 'blood', 'special', 'admission_id'].map((k) => [k, f[k].value]));
     body.consultant = [f.consultant.value, f.consultant2.value].filter((n, i, a) => n && a.indexOf(n) === i).join('/');
-    if (e) await api('PUT', '/api/otentries/' + encodeURIComponent(e.id), body);
-    else await api('POST', `/api/otlists/${encodeURIComponent(l.id)}/entries`, body);
-    toast(e ? 'Saved' : `${body.name} added`);
+    const r = e ? await api('PUT', '/api/otentries/' + encodeURIComponent(e.id), body) : await api('POST', `/api/otlists/${encodeURIComponent(l.id)}/entries`, body);
+    if (r.warning) toast(r.warning, true);
+    else toast((e ? 'Saved' : `${body.name} added`) + (r.admitted ? `, and admitted to ${r.admitted} today` : ''));
     onSaved();
   }, e ? 'Save' : 'Add to list');
   return form;
