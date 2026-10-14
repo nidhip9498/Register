@@ -643,39 +643,14 @@ function otSeenKey() { return 'ward-ot-seen:' + (S.user && S.user.id); }
 function otSeen() { try { return localStorage.getItem(otSeenKey()) || ''; } catch { return ''; } }
 const localStamp = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
 function drawOtAlerts(box, admissions, open, date) {
-  const since = otSeen() || localStamp(new Date(Date.now() - 24 * 3600e3)); // first time on this device: the last day
-  const fresh = admissions.filter((a) => !a.discharge_date)
-    .flatMap((a) => (a.ot || []).filter((o) => !o.mine && o.at > since).map((o) => ({ a, o })))
-    .sort((x, y) => (x.o.at < y.o.at ? 1 : -1));
-  // Left half: investigations booked for today. Right half: new OT findings & instructions.
   const day = date || S.meta.today;
   const inv = invOn(admissions.filter((a) => !a.discharge_date || a.discharge_date > day), day);
-  if (!fresh.length && !inv.length) return box.replaceChildren();
-  // Opening the OT side shows every new entry and marks them all as read.
-  const openList = () => {
-    try { localStorage.setItem(otSeenKey(), fresh[0].o.at); } catch {}
-    drawOtAlerts(box, admissions.map((a) => ({ ...a, ot: [] })), open, date);
-    const root = document.getElementById('modal-root');
-    const close = () => root.replaceChildren();
-    root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
-      h('div', { class: 'modal card panel' },
-        h('div', { class: 'mhead' }, h('h2', {}, `🔔 OT findings & instructions · ${fresh.length}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
-        h('ul', { class: 'otnotes' }, fresh.map(({ a, o }) => h('li', {},
-          h('a', { href: 'javascript:void 0', onclick: () => { close(); open(a); } }, h('b', {}, a.bed_on_date), ` ${a.name}`),
-          h('span', { class: 'muted small' }, ` · ${o.by || ''} · ${fmtDate(o.at.slice(0, 10))} ${o.at.slice(11, 16)}`),
-          h('div', { class: 'otalert-text' }, o.text)))))));
-  };
-  box.replaceChildren(h('div', { class: 'alertbar' },
-    inv.length ? h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Investigations today', inv, day) },
+  if (!inv.length) return box.replaceChildren();
+  box.replaceChildren(h('div', { class: 'alertbar one' },
+    h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Investigations today', inv, day) },
       h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
       h('b', {}, `${inv.length} investigation${inv.length === 1 ? '' : 's'} today`),
-      h('span', { class: 'muted small' }, 'Tap to view'))
-      : h('div', { class: 'otbar quiet' }, h('span', { class: 'muted small' }, 'No investigations today')),
-    fresh.length ? h('button', { type: 'button', class: 'otbar', onclick: openList },
-      h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
-      h('b', {}, `${fresh.length} new OT finding${fresh.length === 1 ? '' : 's'} & instructions`),
-      h('span', { class: 'muted small' }, 'Tap to view'))
-      : h('div', { class: 'otbar quiet' }, h('span', { class: 'muted small' }, 'No new OT findings'))));
+      h('span', { class: 'muted small' }, 'Tap to view'))));
 }
 
 // List of empty beds, one column per ward (6B, 6A).
@@ -855,25 +830,42 @@ function foldBox(key, cls, title, hint, kids) {
     h('summary', {}, h('span', { class: 'othead' }, title), hint ? h('span', { class: 'foldhint small' }, hint) : null), ...kids);
   return d;
 }
-function otBox(a, onChanged) {
-  const ta = h('textarea', { rows: 2, placeholder: 'Type OT findings or instructions for the ward…' });
-  // Ticked: posting marks today as a surgery day (POD 0). Untick for plain ward instructions.
-  const op = h('input', { type: 'checkbox', checked: true });
-  const post = async () => {
-    if (!ta.value.trim()) return;
-    try {
-      const r = await api('POST', '/api/ot/' + a.id, { text: ta.value, operated: op.checked });
-      toast(postedText(r));
-      onChanged();
-    } catch (e) { toast(e.message, true); }
+// A text box with a pencil in the corner; the pencil opens it for editing in place (short notes, OT Overs, procedure done).
+function penBox(cls, label, value, opts) {
+  const box = h('div', { class: cls });
+  const show = () => {
+    const pen = canEdit() && iconBtn(PENCIL_SVG, 'Edit ' + label.toLowerCase(), edit);
+    box.replaceChildren(h('div', { class: 'grow' }, h('b', {}, label + ': '), value || h('span', { class: 'muted' }, opts.empty || 'None yet'), opts.extra ? opts.extra() : null), pen || '');
   };
-  const n = a.ot.length + (a.otprocs || []).length;
-  return foldBox('ot:' + a.id, '', 'OT findings & instructions', n ? `${a.ot.length} posted${(a.otprocs || []).length ? ` · ${a.otprocs.length} OT` : ''}` : '', [
-    (a.otprocs || []).map((x) => h('div', { class: 'othdrrow otprocrow' }, h('p', { class: 'otproc small' }, h('b', {}, `${otName(x.ot)} · ${fmtDate(x.date)}: `), x.done || 'Procedure not noted yet', x.scrub.length ? h('span', { class: 'muted' }, ` · ${x.scrub.join('/')}`) : null),
-      canEdit() && x.list_id && pencilLink(`#otlist/${x.list_id}/${x.entry_id}`, 'Edit on the OT list'))),
-    a.ot.length ? otList(a.ot, onChanged) : null,
-    h('div', { class: 'otadd' }, ta, h('button', { type: 'button', class: 'ghost small', onclick: post }, 'Post')),
-    h('label', { class: 'opcheck small' }, op, ' Operated today (counts as surgery date, POD 0)')]);
+  const edit = () => {
+    const ta = h('textarea', { rows: Math.min(10, Math.max(3, Math.ceil((value || '').length / 110) + 1)), placeholder: opts.placeholder || '' }, value || '');
+    box.replaceChildren(h('div', { class: 'grow' }, h('b', {}, label), opts.hint ? h('small', { class: 'muted block' }, opts.hint) : null, ta,
+      h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: show }, 'Cancel'),
+        h('button', { type: 'button', class: 'primary small', onclick: async () => {
+          try { await opts.save(ta.value.trim()); value = ta.value.trim(); toast(label + ' saved'); show(); } catch (e) { toast(e.message, true); }
+        } }, 'Save'))));
+    ta.focus();
+  };
+  show();
+  return box;
+}
+// Procedure done (from the scrub team on the OT list, editable here) with the surgery dates and each OT day's team.
+function procedureBox(a, surgeries) {
+  return penBox('procbox', 'Procedure done', a.procedure_done, {
+    empty: 'Not operated yet',
+    extra: () => [surgeries.length ? h('small', {}, ' on ' + surgeries.map(fmtDate).join(', ')) : null,
+      (a.otprocs || []).map((x) => h('div', { class: 'small muted otprocrow' }, `${otName(x.ot)} · ${fmtDate(x.date)}${x.done ? `: ${x.done}` : ''} · ${x.scrub.join('/')} `,
+        canEdit() && x.list_id ? pencilLink(`#otlist/${x.list_id}/${x.entry_id}`, 'Edit on the OT list') : null))],
+    save: (v) => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { procedure_done: v }).then(() => { a.procedure_done = v; }),
+  });
+}
+// OT Overs: what is to be done after the operation and when.
+const OVERS_HINT = 'Write the OT overs, e.g. Rectal pack to be removed on POD 2; Stent to be removed on POD 10; Drain out when output < 20 ml.';
+function oversBox(a) {
+  return penBox('instr overs', 'OT Overs', a.ot_overs, {
+    placeholder: 'e.g. Rectal pack to be removed on POD 2\nStent to be removed on POD 10', hint: OVERS_HINT,
+    save: (v) => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { ot_overs: v }).then(() => { a.ot_overs = v; }),
+  });
 }
 
 // Investigations booked for a date (Barium swallow, CT under GA, PET CT…). The register shows tomorrow's; the alert bar shows today's.
@@ -954,13 +946,13 @@ function patientCard(a, date, refresh) {
           icu && a.birth_weight && `BW ${a.birth_weight} g`, icu && a.gestation && `GA ${a.gestation} wk`, icu && a.current_weight && `Wt ${a.current_weight} g`,
           !icu && a.weight && `Wt ${a.weight} kg`].filter(Boolean).join(' · ')),
         a.diagnosis && h('div', { class: 'rdx' }, h('span', {}, 'Diagnosis'), a.diagnosis),
-        a.procedure_done && h('div', { class: 'rsx' }, h('span', {}, 'Surgery'), a.procedure_done, surgeries.length ? h('small', {}, ' on ' + surgeries.map(fmtDate).join(', ')) : null)),
+        procedureBox(a, surgeries)),
       h('div', { class: 'rcorner' },
         h('div', { class: 'cfact' }, h('span', {}, 'Age / Sex'), h('b', {}, ageSex(a, date) || '—')),
         h('div', { class: 'cfact' }, h('span', {}, 'Consultant'), h('b', {}, a.unit || '—')),
         h('div', { class: 'cfact pod' }, h('span', {}, 'POD'), h('b', {}, pod ? pod.replace('POD ', '') : '—')))),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
-    otBox(a, () => refresh(id)),
+    oversBox(a),
     invBox(a, date, () => refresh(id)));
 
   if (!discharged && a.discharge_date !== date) {
@@ -1116,12 +1108,12 @@ function patientDetails(a, date) {
       big('Current weight', a.current_weight && `${a.current_weight} g`)),
     a.diagnosis && h('div', { class: 'diagnosis' }, h('span', {}, 'Diagnosis'), h('b', {}, a.diagnosis)),
     (a.procedure_done || surgeries.length) && h('div', { class: 'surgery' },
-      h('span', {}, 'Surgery'),
+      h('span', {}, 'Procedure done'),
       h('b', {}, a.procedure_done || '—'),
       surgeries.length ? h('small', {}, 'on ' + surgeries.map(fmtDate).join(', ')) : null),
     a.instructions && h('p', { class: 'instr' }, h('b', {}, 'Short notes: '), a.instructions),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
-    a.ot && a.ot.length > 0 && h('div', { class: 'ot' }, h('div', { class: 'othead' }, 'OT findings & instructions'), otList(a.ot)),
+    a.ot_overs && h('p', { class: 'instr overs' }, h('b', {}, 'OT Overs: '), a.ot_overs),
     (findings || (a.round && a.round.remarks)) && h('div', { class: 'today' },
       h('span', { class: 'muted small' }, `Today's round · ${a.round.filled_by || ''} ${a.round.filled_at.slice(11, 16)}`),
       findings && h('p', {}, findings), a.round.remarks && h('p', {}, h('b', {}, 'Remarks: '), a.round.remarks)),
@@ -1246,10 +1238,7 @@ function admitModal(bed, a, opts = {}) {
       input('Weight (kg)', 'weight', { inputmode: 'decimal' }),
     ],
     input('Diagnosis', 'diagnosis', {}, 'span2'),
-    input('Surgery / procedure', 'procedure_done'),
-    input('Surgery date (for POD)', 'surgery_date', { type: 'date' }),
-    input('2nd surgery date', 'surgery_date2', { type: 'date' }),
-    input('3rd surgery date', 'surgery_date3', { type: 'date' }),
+    input('Procedure done', 'procedure_done'),
     chooser,
     h('label', { class: 'span2' }, 'Short notes', h('textarea', { name: 'instructions', rows: 3 }, a.instructions || '')));
 
@@ -1259,8 +1248,7 @@ function admitModal(bed, a, opts = {}) {
       bed: v('bed') || a.bed,
       name: v('name'), ip_no: v('ip_no'), unit: v('unit'), age: v('age'), sex: v('sex'), weight: v('weight'),
       dob: v('dob'), birth_weight: v('birth_weight'), gestation: v('gestation'), current_weight: v('current_weight'),
-      diagnosis: v('diagnosis'), procedure_done: v('procedure_done'), surgery_date: v('surgery_date'),
-      surgery_date2: v('surgery_date2'), surgery_date3: v('surgery_date3'),
+      diagnosis: v('diagnosis'), procedure_done: v('procedure_done'),
       admit_date: v('admit_date'), instructions: v('instructions'),
     };
     if (editing) {
@@ -1531,12 +1519,12 @@ function wardBeds(only) {
 }
 // Short notes (and the consultant's round note) as one strip under the patient, across every column.
 function notesRow(a, cols) {
-  const procs = (a.otprocs || []).filter((x) => x.done || x.scrub.length), posts = (a.ot || []).filter((o) => o.text);
-  if (!a.instructions && !a.unit_note && !procs.length && !posts.length) return null;
+  const procs = (a.otprocs || []).filter((x) => x.scrub.length);
+  if (!a.instructions && !a.unit_note && !procs.length && !a.ot_overs) return null;
   return h('tr', { class: 'notesrow' }, h('td', { colspan: cols },
-    procs.length || posts.length ? h('div', { class: 'otnotes' }, h('b', {}, 'OT: '),
-      procs.map((x) => h('span', {}, `${fmtDate(x.date)} ${otName(x.ot)}: ${x.done || ''}${x.scrub.length ? ` (${x.scrub.join('/')})` : ''}. `)),
-      posts.map((o) => h('span', {}, `${fmtDate(o.at.slice(0, 10))}: ${o.text}. `))) : null,
+    procs.length ? h('div', { class: 'otnotes' }, h('b', {}, 'OT: '),
+      procs.map((x) => h('span', {}, `${fmtDate(x.date)} ${otName(x.ot)}: ${x.done || ''}${x.scrub.length ? ` (${x.scrub.join('/')})` : ''}. `))) : null,
+    a.ot_overs ? h('div', { class: 'otnotes' }, h('b', {}, 'OT Overs: '), a.ot_overs) : null,
     a.instructions ? [h('b', {}, 'Short notes: '), a.instructions] : null,
     a.unit_note ? h('span', { class: 'unote' }, h('b', {}, `${a.unit || 'Consultant'}: `), a.unit_note) : null));
 }
@@ -1597,7 +1585,7 @@ async function otHomeView(main) {
 const PENCIL_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 const pencilLink = (href, title) => { const a = h('a', { class: 'pencil', href, title, 'aria-label': title }); a.innerHTML = PENCIL_SVG; return a; };
 // Scrub team in a pop-up (tap the initials in order, Save team).
-function scrubPopup(e, done) {
+function scrubPopup(e, done, listDate) {
   const root = document.getElementById('modal-root');
   const doneIn = h('textarea', { rows: 2, placeholder: 'Procedure actually done' }, e.done || e.surgery || '');
   const close = () => root.replaceChildren();
@@ -1607,6 +1595,8 @@ function scrubPopup(e, done) {
       // First: the procedure actually done (starts as the planned surgery). It goes to the Logbook, Rounds and the Ward Register.
       h('label', { class: 'field donefield' }, h('span', { class: 'flabel' }, 'Procedure done'), doneIn),
       scrubPicker(e.scrub, async (team) => {
+        // A team saved after the OT day (e.g. two days later) is confirmed first: it sets that day as the surgery date.
+        if (team.length && listDate && listDate < S.meta.today && !confirm(`This OT list was on ${fmtDay(listDate)}. Save the scrub team for that day? ${fmtDate(listDate)} becomes the surgery date (POD 0).`)) return;
         try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team, done: doneIn.value.trim() }); close(); toast(res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); done(); } catch (x) { toast(x.message, true); }
       }),
       caseCancelForm(e, () => { close(); done(); }))));
@@ -1638,7 +1628,8 @@ function otRow(e, i, listId, date) {
     h('div', { class: 'otrowbtns' },
       e.cancelled ? null
         : e.case_cancelled ? h('button', { type: 'button', class: 'ghost small', onclick: () => undoCaseCancel(e, render) }, 'Undo')
-        : date <= S.meta.today ? h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team') : null,
+        : date <= S.meta.today ? h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render, date) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team') : null,
+      !e.cancelled && !e.case_cancelled ? oversBtn(e) : null,
       pencilLink(listHref + '/' + encodeURIComponent(e.id), `Edit ${e.name}`))));
 }
 function todayDrop(l) {
@@ -1762,7 +1753,6 @@ async function otListView(main, id) {
       e.special && [h('dt', {}, 'Special req'), h('dd', { class: 'instr' }, e.special)],
       e.done && [h('dt', {}, 'Done'), h('dd', {}, h('b', {}, e.done))],
       (e.scrub || []).length ? [h('dt', {}, 'Scrub team'), h('dd', {}, h('b', {}, e.scrub.join('/')))] : null),
-    e.findings.length ? h('div', { class: 'ot' }, h('div', { class: 'othead' }, 'OT findings & instructions'), otList(e.findings, reload)) : null,
     otExtras(l, e, reload),
     h('div', { class: 'btns' },
       h('button', { class: 'ghost small', onclick: () => otEntryModal(l, e, reload) }, 'Edit'),
@@ -1809,36 +1799,15 @@ async function otListView(main, id) {
     sheet);
 }
 
-// OT findings go on the current day's list only (and on yesterday's until 6 AM, for OTs that run late).
-const findingsDay = (date) => date === S.meta.today || (new Date().getHours() < 6 && date === addDays(S.meta.today, -1));
-// Scrub team and OT findings for one patient on the list; each opens in place under the card.
+// OT Overs live with the patient in Rounds: the button opens that patient's Rounds card.
+const oversBtn = (e) => !canEdit() ? null : e.admission_id
+  ? h('a', { class: 'button ghost small ottile', href: '#rounds/' + encodeURIComponent(e.admission_id), title: 'Write OT overs in Rounds' }, 'OT Overs')
+  : h('button', { type: 'button', class: 'ghost small ottile', disabled: true, title: 'Not admitted to a ward bed, so there is no Rounds card' }, 'OT Overs');
+// Scrub team (with the procedure done) and OT Overs for one patient on the list.
 function otExtras(l, e, reload) {
-  const box = h('div', { class: 'otextra' });
-  const open = (what) => {
-    if (box.dataset.open === what) { box.dataset.open = ''; box.replaceChildren(); return; }
-    box.dataset.open = what;
-    if (what === 'scrub') box.replaceChildren(scrubPicker(e.scrub, async (team) => {
-      try { const r = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team }); toast(r.surgery ? postedText(r).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); reload(); } catch (x) { toast(x.message, true); }
-    }));
-    else {
-      // Two parts: the surgery / procedure actually done (shown in Rounds and the OT Log), and findings & instructions for the ward.
-      const done = h('input', { value: e.done || e.surgery || '', placeholder: 'e.g. Laparoscopic pyeloplasty' });
-      const ta = h('textarea', { rows: 3, placeholder: 'Type OT findings or instructions for the ward…' });
-      box.replaceChildren(h('div', { class: 'otfind' },
-        h('label', {}, 'Surgery / procedure done', done, h('small', { class: 'muted' }, 'Starts as the planned surgery. Change it if something else was done.')),
-        h('label', {}, 'OT findings & instructions', ta),
-        h('div', { class: 'btns' }, h('button', { type: 'button', class: 'primary small', onclick: async () => {
-          if (!ta.value.trim() && !done.value.trim()) return;
-          try { const r = await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/findings`, { text: ta.value, done: done.value }); toast(ta.value.trim() ? postedText(r) : 'Saved'); reload(); } catch (x) { toast(x.message, true); }
-        } }, 'Save'))));
-      ta.focus();
-    }
-  };
-  return h('div', {},
-    h('div', { class: 'ottiles' },
-      h('button', { class: 'ottile', onclick: () => open('scrub') }, (e.scrub || []).length ? 'Edit scrub team' : '+ Add scrub team'),
-      canEdit() && findingsDay(l.date) && h('button', { class: 'ottile', onclick: () => open('findings') }, '+ Add OT findings & instructions')),
-    box);
+  return h('div', { class: 'ottiles' },
+    l.date <= S.meta.today && !e.case_cancelled && h('button', { class: 'ottile', onclick: () => scrubPopup(e, reload, l.date) }, (e.scrub || []).length ? `Scrub team: ${e.scrub.join('/')}` : '+ Add scrub team'),
+    oversBtn(e));
 }
 
 // OT cancelled for the day: put the patient on another day's (or another OT's) list.

@@ -251,6 +251,7 @@ const Store = (() => {
       fields_set: !!body.fields_set,
       extra_fields: Array.isArray(body.extra_fields) ? extraFields(body.extra_fields) : [],
       instructions: str(body.instructions, 2000), // shown as "Short notes"
+      ot_overs: str(body.ot_overs, 3000), // "OT Overs": things to do after the operation (rectal pack out on POD 2, stent out on POD 10…)
       dob: isDate(body.dob) ? body.dob : null, birth_weight: str(body.birth_weight, 20), gestation: str(body.gestation, 20),
       current_weight: str(body.current_weight, 20), weight: str(body.weight, 20),
     };
@@ -438,6 +439,7 @@ const Store = (() => {
     const sds = [...new Set([keep.surgery_date, keep.surgery_date2, keep.surgery_date3, other.surgery_date, other.surgery_date2, other.surgery_date3].filter(Boolean))].sort().slice(0, 3);
     [next.surgery_date, next.surgery_date2, next.surgery_date3] = [sds[0] || null, sds[1] || null, sds[2] || null];
     next.instructions = [keep.instructions, other.instructions].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
+    next.ot_overs = [keep.ot_overs, other.ot_overs].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
     put(keep.id, 'admission', { ...next, updated_at: stamp() });
     put(other.id, 'admission', null);
     audit('merge duplicate', `${other.name} (${other.bed}) into ${keep.name} (${keep.bed})`);
@@ -629,7 +631,7 @@ const Store = (() => {
   function otProcs() {
     const out = {};
     for (const e of all('otentry')) {
-      if (e.cancelled || e.case_cancelled || !e.admission_id || (!e.done && !(e.scrub || []).length)) continue;
+      if (e.cancelled || e.case_cancelled || !e.admission_id || !(e.scrub || []).length) continue;
       const l = get(e.list_id);
       if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id });
     }
@@ -676,7 +678,7 @@ const Store = (() => {
     put('ot:' + uuid(), 'ot', { admission_id: a.id, text, by: currentUser.id, at: stamp(), day, scrub, surgery });
     audit('OT note', a.name);
     // Posting OT findings counts as operated that day, unless the poster unticked it (plain instructions).
-    return { ok: true, surgery: body.operated === false ? null : surgeryFromOtList(a, day, true) };
+    return { ok: true, surgery: null };
   });
   // Investigations booked for a date (barium swallow, CT under GA, PET CT…): shown in Rounds, on the register for the next day, and in the alert bar on the day.
   function invByAdmission() {
@@ -1132,7 +1134,7 @@ const Store = (() => {
     }
     // Admitted patients' findings also show in Rounds and the ward's OT alerts; day-care findings stay with the OT list.
     if (text) { put('ot:' + uuid(), 'ot', { admission_id: a ? a.id : null, entry_id: e.id, text, by: currentUser.id, at: stamp(), day: l.date }); audit('OT note', e.name); }
-    return { ok: true, surgery: a && !e.cancelled ? surgeryFromOtList(get(a.id), l.date) : null };
+    return { ok: true, surgery: null };
   });
   route('PUT', '/api/otentries/:id/scrub', ANY, ({ body, params: p }) => {
     const e = getEntry(p.id);
@@ -1144,9 +1146,16 @@ const Store = (() => {
     const l = get(e.list_id);
     let surgery = null;
     if (e.case_cancelled && scrub.length) throw new HttpError(400, 'This case was marked cancelled. Undo that first.');
-    if ((scrub.length || done) && !e.cancelled && l && l.date <= today()) {
+    // Only a scrub team counts as operated: the procedure done then goes to the register, Rounds and the Logbook.
+    if (!e.cancelled && l && l.date <= today()) {
       const a = (e.admission_id && get(e.admission_id)) || (e.uhid && all('admission').find((x) => !x.discharge_date && (x.ip_no || '').toLowerCase() === e.uhid.toLowerCase()));
-      if (a) { noteProcedure(a, done, e.done || ''); surgery = surgeryFromOtList(get(a.id), l.date); }
+      if (a && scrub.length) { noteProcedure(a, done, e.done || ''); surgery = surgeryFromOtList(get(a.id), l.date); }
+      // Team cleared: that day is no longer a surgery date.
+      else if (a && !scrub.length && (e.scrub || []).length) {
+        const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'], cur = get(a.id);
+        const left = keys.map((k) => cur[k]).filter((d) => d && d !== l.date).sort();
+        put(a.id, 'admission', { ...strip(cur), ...Object.fromEntries(keys.map((k, i) => [k, left[i] || null])), updated_at: stamp() });
+      }
     }
     return { ok: true, surgery };
   });
@@ -1237,7 +1246,7 @@ const Store = (() => {
         const w = W[wardOfBed(bedOnDate(a, d, moves))]; if (w) w.occupancy[i]++;
       });
     }
-    // Operations: OT list entries this month that were not shifted or cancelled and have a scrub team or a procedure done.
+    // Operations: OT list entries this month that were not shifted or cancelled and have a scrub team.
     const lists = new Map(all('otlist').filter((l) => inM(l.date)).map((l) => [l.id, l]));
     const ot = { cases: 0, planned: 0, cancelled: 0, patients: 0, daycare: 0, daycareConverted: 0, byOt: {}, byConsultant: {}, perDay: days.map(() => 0), lists: { operated: [], cancelled: [], daycare: [], converted: [] } };
     const seen = new Set();
@@ -1246,7 +1255,7 @@ const Store = (() => {
       if (!l || e.cancelled) continue;
       ot.planned++;
       if (e.case_cancelled) { ot.cancelled++; if (full) ot.lists.cancelled.push(case_(e, l)); continue; }
-      if (!(e.scrub || []).length && !e.done) continue;
+      if (!(e.scrub || []).length) continue;
       ot.cases++; const c = full && case_(e, l); if (c) ot.lists.operated.push(c);
       seen.add((e.uhid || e.name || e.id).toLowerCase());
       ot.byOt['OT ' + l.ot] = (ot.byOt['OT ' + l.ot] || 0) + 1;

@@ -647,3 +647,13 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .duprow p { margin: 0 0 8px; }
 .dupbtns { display: flex; flex-wrap: wrap; gap: 8px; }
 .dupbtns button { text-align: left; max-width: 100%; white-space: normal; }
+/* Procedure done and OT Overs boxes (pencil in the corner) */
+.procbox, .instr.overs { display: flex; align-items: flex-start; gap: 8px; }
+.procbox { margin-top: .35rem; font-size: 1.05rem; }
+.procbox > .grow > b:first-child { color: var(--plan); }
+.procbox small { color: var(--muted); font-weight: 400; }
+.procbox .grow, .instr.overs .grow { flex: 1; min-width: 0; }
+.procbox textarea, .instr.overs textarea { display: block; width: 100%; box-sizing: border-box; margin: 6px 0; min-height: 5em; }
+.instr.overs { background: var(--accent-soft); }
+.block { display: block; }
+.alertbar.one { grid-template-columns: 1fr; }
