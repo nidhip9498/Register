@@ -658,8 +658,9 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .block { display: block; }
 .alertbar.one { grid-template-columns: 1fr; }
 /* Blocked OTs */
-.otroom.blocked { border-color: var(--line); background: var(--bg); opacity: .75; }
+.otroom.blocked { border-color: var(--line); background: var(--line); cursor: default; box-shadow: none; }
 .otroom.blocked b { color: var(--muted); }
+.otseg button:disabled { background: var(--line); color: var(--muted); opacity: 1; cursor: default; }
 .blockmark { display: inline-flex; align-items: center; gap: 4px; color: #c0392b; font-size: .8rem; font-weight: 700; }
 .blockednote { display: flex; align-items: center; gap: 6px; color: #c0392b; font-weight: 600; }
 .blockbox { margin-bottom: 1rem; }

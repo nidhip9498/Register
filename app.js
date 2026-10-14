@@ -1573,8 +1573,13 @@ async function otHomeView(main) {
   main.append(
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Lists'),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal() }, '+ Create list'))),
-    h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot]) => { const t = h('a', { class: 'otroom' + (otBlocked(ot) ? ' blocked' : kinds[ot] === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot, title: otBlocked(ot) ? `${otName(ot)} is blocked` : otName(ot) },
-      h('b', {}, otName(ot)), otBlocked(ot) ? h('span', { class: 'blockmark' }) : null); if (otBlocked(ot)) t.querySelector('.blockmark').innerHTML = BLOCK_SVG + ' Blocked'; return t; })),
+    // A blocked OT is a plain grey tile that does not open; the admin taps it to unblock.
+    h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot]) => otBlocked(ot)
+      ? h('div', { class: 'otroom blocked', onclick: async () => {
+        if (S.user.role !== 'admin' || !confirm(`Unblock ${otName(ot)}?`)) return;
+        try { await api('PUT', '/api/otrooms/' + ot, { blocked: false }); S.meta = await api('GET', '/api/meta'); toast(`${otName(ot)} unblocked`); render(); } catch (e) { toast(e.message, true); }
+      } }, h('b', {}, otName(ot)))
+      : h('a', { class: 'otroom' + (kinds[ot] === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot }, h('b', {}, otName(ot))))),
     otSearchBox(),
     h('div', { class: 'otdaynav' },
       h('button', { type: 'button', class: 'ghost small', disabled: !prev, title: prev ? `Previous OT day: ${fmtDay(prev)}` : 'No earlier lists', 'aria-label': 'Previous OT day', onclick: () => goDay(prev) }, '‹'),
