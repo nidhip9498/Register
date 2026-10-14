@@ -382,9 +382,13 @@ const Store = (() => {
     };
   });
 
+  // A UHID can be in the ward only once.
+  const activeByUhid = (uhid, exceptId) => { const u = str(uhid, 40).toLowerCase(); return u ? all('admission').find((a) => !a.discharge_date && a.id !== exceptId && (a.ip_no || '').trim().toLowerCase() === u) : null; };
   route('POST', '/api/admissions', EDITORS, ({ body }) => {
     const bed = str(body.bed, 30);
     if (!allBeds().includes(bed)) throw new HttpError(400, 'Unknown bed');
+    const dup = activeByUhid(body.ip_no);
+    if (dup) throw new HttpError(400, `UHID ${dup.ip_no} is already admitted: ${dup.name} in ${dup.bed}`);
     const occ = occupants(bed);
     if (occ.length && !body.force) throw new HttpError(409, `Bed ${bed} already has ${occ.map((o) => o.name).join(', ')}`);
     const f = admissionFields(body);
@@ -395,6 +399,50 @@ const Store = (() => {
     return { id };
   });
 
+  // The same child entered twice: keep one admission and bring the other's rounds, notes, OT findings and details into it.
+  route('GET', '/api/duplicates', EDITORS, () => {
+    const groups = new Map();
+    for (const a of all('admission')) { const u = (a.ip_no || '').trim().toLowerCase(); if (!a.discharge_date && u) { if (!groups.has(u)) groups.set(u, []); groups.get(u).push(a); } }
+    const rounds = all('round');
+    return [...groups.values()].filter((g) => g.length > 1).map((g) => g.map((a) => {
+      const rs = rounds.filter((r) => r.admission_id === a.id);
+      return { id: a.id, name: a.name, bed: a.bed, uhid: a.ip_no, admit_date: a.admit_date, rounds: rs.length, last_round: rs.map((r) => r.date).sort().pop() || '' };
+    }));
+  });
+  route('POST', '/api/admissions/:id/merge', EDITORS, ({ body, params: p }) => {
+    const keep = getAdmission(p.id), other = getAdmission(str(body.other, 80));
+    if (keep.id === other.id) throw new HttpError(400, 'Pick two different entries');
+    const same = (keep.ip_no || '').trim().toLowerCase() && (keep.ip_no || '').trim().toLowerCase() === (other.ip_no || '').trim().toLowerCase();
+    if (!same && keep.bed !== other.bed) throw new HttpError(400, 'These are not the same child (UHID and bed differ)');
+    for (const r of all('round').filter((x) => x.admission_id === other.id)) {
+      const nid = `round:${keep.id}:${r.date}`, mine = get(nid);
+      if (!mine) put(nid, 'round', { ...strip(r), admission_id: keep.id });
+      else {
+        const vals = { ...r.vals, ...mine.vals };
+        const remarks = [mine.remarks, r.remarks].filter((x, i, l) => x && l.indexOf(x) === i).join(' | ');
+        put(nid, 'round', { ...strip(mine), vals, remarks });
+      }
+      put(r.id, 'round', null);
+    }
+    for (const n of all('note').filter((x) => x.admission_id === other.id)) {
+      const nid = `note:${keep.id}:${n.date}`, mine = get(nid);
+      put(nid, 'note', mine ? { ...strip(mine), note: [mine.note, n.note].filter((x, i, l) => x && l.indexOf(x) === i).join(' | ') } : { ...strip(n), admission_id: keep.id });
+      put(n.id, 'note', null);
+    }
+    for (const t of ['ot', 'inv', 'move']) for (const r of all(t).filter((x) => x.admission_id === other.id)) put(r.id, t, { ...strip(r), admission_id: keep.id });
+    for (const e of all('otentry').filter((x) => x.admission_id === other.id)) put(e.id, 'otentry', { ...strip(e), admission_id: keep.id });
+    // Details: fill what the kept entry is missing; short notes from both are kept.
+    const next = { ...strip(keep) };
+    for (const k of ['ip_no', 'age', 'sex', 'diagnosis', 'procedure_done', 'unit', 'dob', 'birth_weight', 'gestation', 'current_weight', 'weight']) if (!next[k] && other[k]) next[k] = other[k];
+    if (other.admit_date && (!next.admit_date || other.admit_date < next.admit_date)) next.admit_date = other.admit_date;
+    const sds = [...new Set([keep.surgery_date, keep.surgery_date2, keep.surgery_date3, other.surgery_date, other.surgery_date2, other.surgery_date3].filter(Boolean))].sort().slice(0, 3);
+    [next.surgery_date, next.surgery_date2, next.surgery_date3] = [sds[0] || null, sds[1] || null, sds[2] || null];
+    next.instructions = [keep.instructions, other.instructions].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
+    put(keep.id, 'admission', { ...next, updated_at: stamp() });
+    put(other.id, 'admission', null);
+    audit('merge duplicate', `${other.name} (${other.bed}) into ${keep.name} (${keep.bed})`);
+    return { ok: true };
+  });
   route('PUT', '/api/admissions/:id', EDITORS, ({ body, params: p }) => {
     const a = getAdmission(p.id);
     const f = admissionFields({ ...a, ...body });

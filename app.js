@@ -418,6 +418,22 @@ function wardTitle(w) {
 }
 
 // mode 'ward' = Ward Register (6B and 6A), mode 'icu' = ICU Register (6C).
+// The same UHID admitted twice: pick the entry to keep; the other's rounds, notes and OT findings move into it.
+function dupBanner() {
+  const box = h('div', { class: 'dupbar', hidden: true });
+  api('GET', '/api/duplicates').then((groups) => {
+    if (!groups.length) return;
+    box.hidden = false;
+    box.replaceChildren(...groups.map((g) => h('div', { class: 'duprow' },
+      h('p', {}, h('b', {}, `UHID ${g[0].uhid} is entered ${g.length} times`), ` (${[...new Set(g.map((a) => a.bed))].join(', ')}). Tap the one to keep. The other's rounds, notes and OT findings are moved into it.`),
+      h('div', { class: 'dupbtns' }, g.map((a) => h('button', { type: 'button', class: 'ghost', onclick: async () => {
+        const others = g.filter((x) => x.id !== a.id);
+        if (!confirm(`Keep "${a.name}" in ${a.bed} and remove ${others.map((x) => `"${x.name}"`).join(', ')}? Their rounds and notes move into the kept entry.`)) return;
+        try { for (const o of others) await api('POST', `/api/admissions/${encodeURIComponent(a.id)}/merge`, { other: o.id }); toast('Duplicate removed'); render(); } catch (x) { toast(x.message, true); }
+      } }, h('b', {}, a.name), h('span', { class: 'small muted' }, ` · ${a.bed} · ${a.rounds ? `${a.rounds} round${a.rounds === 1 ? '' : 's'}, last ${fmtDate(a.last_round)}` : 'no rounds'}`)))))));
+  }).catch(() => {});
+  return box;
+}
 async function registerView(main, mode) {
   const icuMode = mode === 'icu';
   const date = S.date;
@@ -448,6 +464,7 @@ async function registerView(main, mode) {
         !icuMode && h('button', { class: 'ghost', onclick: () => shiftsModal() }, 'Bed shifts'),
         wards.map((w) => h('a', { class: 'button ghost', href: `#print/${date}/${w}` }, 'Print ' + w)))),
     icuMode ? '' : rosterStrip(date),
+    canEdit() && dupBanner(),
     alerts,
     h('h2', { class: 'daytitle' }, icuMode ? 'ICU Register · ' : 'Ward Register · ', fmtDay(date)));
 
@@ -1014,7 +1031,7 @@ async function roundsView(main, focus) {
     h('option', { value: '' }, 'All wards'), wards.map((w) => h('option', { value: w }, wardTitle(w))));
   wardSel.value = S.filters.ward || '';
   const search = h('input', { type: 'search', placeholder: 'Find bed, name, UHID…', value: S.filters.q, oninput: (e) => { S.filters.q = e.target.value; draw(); } });
-  main.append(
+  main.append(dupBanner(),
     h('div', { class: 'toolbar' },
       h('div', { class: 'datenav' },
         h('button', { class: 'ghost', onclick: () => go(addDays(date, -1)), 'aria-label': 'Previous day' }, '‹'),

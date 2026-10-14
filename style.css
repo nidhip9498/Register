@@ -642,3 +642,8 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .otlrow b { min-width: 9.5rem; }
 .otlrow .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .otlrow.today { border: 2px solid #1e9e4a; }
+/* Same UHID admitted twice */
+.dupbar { background: var(--warn-soft); border: 1px solid var(--warn); border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; }
+.duprow p { margin: 0 0 8px; }
+.dupbtns { display: flex; flex-wrap: wrap; gap: 8px; }
+.dupbtns button { text-align: left; max-width: 100%; white-space: normal; }
