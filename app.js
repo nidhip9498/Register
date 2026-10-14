@@ -1532,6 +1532,9 @@ function notesRow(a, cols) {
 // ---------- OT lists: OT 11 to 16, one list per OT per day ----------
 
 const OT_ROOMS = [['11', 'Routine'], ['12', 'Routine'], ['13', ''], ['14', ''], ['15', ''], ['16', 'Emergency']];
+// OTs the admin has blocked (not running yet): their old lists stay, but no new list can be made there.
+const otBlocked = (ot) => ((S.meta && S.meta.otBlocked) || []).includes(ot);
+const BLOCK_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>';
 const DAY_CARE = 'MCH2/PAR';
 const otName = (ot) => `OT ${ot}`;
 const bedLabel = (bed) => (!bed ? 'Bed not yet allotted' : bed.toUpperCase() === DAY_CARE ? 'Day care (MCH2/PAR)' : bed);
@@ -1570,8 +1573,8 @@ async function otHomeView(main) {
   main.append(
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Lists'),
       h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal() }, '+ Create list'))),
-    h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot]) => h('a', { class: 'otroom' + (kinds[ot] === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot },
-      h('b', {}, otName(ot))))),
+    h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot]) => { const t = h('a', { class: 'otroom' + (otBlocked(ot) ? ' blocked' : kinds[ot] === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot, title: otBlocked(ot) ? `${otName(ot)} is blocked` : otName(ot) },
+      h('b', {}, otName(ot)), otBlocked(ot) ? h('span', { class: 'blockmark' }) : null); if (otBlocked(ot)) t.querySelector('.blockmark').innerHTML = BLOCK_SVG + ' Blocked'; return t; })),
     otSearchBox(),
     h('div', { class: 'otdaynav' },
       h('button', { type: 'button', class: 'ghost small', disabled: !prev, title: prev ? `Previous OT day: ${fmtDay(prev)}` : 'No earlier lists', 'aria-label': 'Previous OT day', onclick: () => goDay(prev) }, '‹'),
@@ -1646,16 +1649,41 @@ async function otDatesView(main, ot) {
   const today = S.meta.today;
   const [lists, kinds] = await Promise.all([api('GET', '/api/otlists?ot=' + encodeURIComponent(ot)), api('GET', '/api/otrooms')]);
   const seg = h('div', { class: 'seg otkind' });
-  const drawKind = (kind) => seg.replaceChildren(...['Routine', 'Emergency'].map((k) => h('button', { type: 'button', class: (k === kind ? 'on' : '') + (k === 'Emergency' ? ' em' : ''), onclick: async () => {
-    if (k === kind) return;
+  const admin = S.user.role === 'admin';
+  const drawKind = (kind) => seg.replaceChildren(...['Routine', 'Emergency'].map((k) => h('button', { type: 'button', class: (k === kind ? 'on' : '') + (k === 'Emergency' ? ' em' : ''), disabled: !admin && k !== kind, title: admin ? '' : 'Only the admin can change this', onclick: async () => {
+    if (k === kind || !admin) return;
     try { await api('PUT', '/api/otrooms/' + ot, { kind: k }); drawKind(k); toast(`${otName(ot)} marked ${k}. Today's and later lists follow.`); } catch (e) { toast(e.message, true); }
   } }, k)));
   drawKind(kinds[ot] || 'Routine');
   const up = lists.filter((l) => l.date >= today).sort((x, y) => (x.date < y.date ? -1 : 1));
+  const blocked = otBlocked(ot);
+  // Admin: block / unblock this OT. Lists already made for today or later can first be shifted to another OT.
+  const blockBox = h('div', { class: 'card blockbox' });
+  const setBlocked = async (v) => {
+    try { await api('PUT', '/api/otrooms/' + ot, { blocked: v }); S.meta = await api('GET', '/api/meta'); toast(`${otName(ot)} ${v ? 'blocked' : 'unblocked'}`); render(); } catch (e) { toast(e.message, true); }
+  };
+  const askBlock = () => {
+    if (!up.length) { if (confirm(`Block ${otName(ot)}? No new lists can be made for it until you unblock it. Earlier lists stay.`)) setBlocked(true); return; }
+    const targets = OT_ROOMS.map(([o]) => o).filter((o) => o !== ot && !otBlocked(o));
+    blockBox.hidden = false;
+    blockBox.replaceChildren(
+      h('p', {}, h('b', {}, `${otName(ot)} has ${up.length} list${up.length === 1 ? '' : 's'} from today on: `), up.map((l) => fmtDay(l.date)).join(', '), '. Shift them to another OT before blocking? Each goes to the same day; if that OT already has a list that day, the patients join it.'),
+      h('div', { class: 'btns wrap' }, targets.map((o) => h('button', { type: 'button', class: 'primary small', onclick: async () => {
+        try { for (const l of up) await api('POST', `/api/otlists/${encodeURIComponent(l.id)}/shift`, { ot: o, date: l.date }); } catch (e) { toast(e.message, true); return; }
+        await setBlocked(true);
+      } }, `Shift to ${otName(o)} and block`)),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => setBlocked(true) }, 'Block, keep the lists here'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => { blockBox.hidden = true; } }, 'Cancel')));
+  };
+  blockBox.hidden = true;
   main.append(
     h('div', { class: 'toolbar' }, h('a', { class: 'button ghost', href: '#ot' }, '‹ OT Lists'), h('h2', {}, otName(ot)),
-      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal(ot) }, '+ Create list'))),
-    h('div', { class: 'field otkindrow' }, h('span', { class: 'flabel' }, 'This OT is'), seg),
+      h('div', { class: 'actions' },
+        admin && h('button', { class: 'ghost' + (blocked ? '' : ' danger'), onclick: () => (blocked ? setBlocked(false) : askBlock()) }, blocked ? 'Unblock OT' : 'Block OT'),
+        !blocked && h('button', { class: 'primary', onclick: () => createOtListModal(ot) }, '+ Create list'))),
+    blocked ? (() => { const p = h('p', { class: 'blockednote' }); p.innerHTML = BLOCK_SVG; p.append(` ${otName(ot)} is blocked. Earlier lists are kept below; no new lists until the admin unblocks it.`); return p; })() : '',
+    blockBox,
+    h('div', { class: 'field otkindrow' }, h('span', { class: 'flabel' }, 'This OT is', admin ? '' : ' (set by the admin)'), seg),
     h('h3', {}, 'Today and coming up'),
     up.length ? h('div', { class: 'otlrows' }, up.map(listRow)) : h('p', { class: 'muted' }, 'No lists coming up.'),
     ...(lists.length ? [h('h3', {}, 'By month'), monthGroups(lists)] : []));
@@ -1699,7 +1727,8 @@ function monthGroups(lists) {
 function createOtListModal(ot = '11', onCreated) {
   let pick = ot;
   const seg = h('div', { class: 'seg otseg' });
-  const drawSeg = () => seg.replaceChildren(...OT_ROOMS.map(([o]) => h('button', { type: 'button', class: o === pick ? 'on' : '', onclick: () => { pick = o; drawSeg(); } }, o)));
+  if (otBlocked(pick)) pick = (OT_ROOMS.find(([o]) => !otBlocked(o)) || [pick])[0];
+  const drawSeg = () => seg.replaceChildren(...OT_ROOMS.map(([o]) => h('button', { type: 'button', class: o === pick ? 'on' : '', disabled: otBlocked(o), title: otBlocked(o) ? `${otName(o)} is blocked` : '', onclick: () => { pick = o; drawSeg(); } }, o)));
   drawSeg();
   modal('Create OT list', h('div', { class: 'grid1' },
     h('div', { class: 'field' }, h('span', { class: 'flabel' }, 'OT'), seg),
@@ -1819,7 +1848,7 @@ function otMoveForm(l, opts) {
   const seg = h('div', { class: 'seg otseg' });
   const btns = h('div', { class: 'btns' });
   const draw = () => {
-    seg.replaceChildren(...OT_ROOMS.map(([o]) => h('button', { type: 'button', class: o === pick ? 'on' : '', disabled: o === l.ot && date.value === l.date, onclick: () => { pick = o; draw(); } }, o)));
+    seg.replaceChildren(...OT_ROOMS.map(([o]) => h('button', { type: 'button', class: o === pick ? 'on' : '', disabled: otBlocked(o) || (o === l.ot && date.value === l.date), title: otBlocked(o) ? `${otName(o)} is blocked` : '', onclick: () => { pick = o; draw(); } }, o)));
     const to = pick ? `${otName(pick)}${date.value !== l.date ? `, ${fmtDate(date.value)}` : ''}` : '';
     btns.replaceChildren(...opts.actions.map((a) => h('button', { type: 'button', class: a.cls || 'ghost small', disabled: !pick || (pick === l.ot && date.value === l.date),
       onclick: async () => { try { await a.run(pick, date.value, reason ? reason.value : ''); } catch (x) { toast(x.message, true); } } }, pick ? a.label(to) : a.label('…'))));

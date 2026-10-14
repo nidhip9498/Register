@@ -356,7 +356,7 @@ const Store = (() => {
 
   route('GET', '/api/meta', ANY, () => ({
     sections: getBedSections(), params: params(), bedsText: getSetting('beds'),
-    units: getUnits(), unitsText: getSetting('units'), emergencyBeds: getEmergencyBeds(), icuBeds: getIcuBeds(), theme: getSetting('theme') || 'auto', today: today(),
+    units: getUnits(), unitsText: getSetting('units'), emergencyBeds: getEmergencyBeds(), otBlocked: OTS.filter((o) => roomBlocked(o)), icuBeds: getIcuBeds(), theme: getSetting('theme') || 'auto', today: today(),
     // Everyone with initials, for the scrub-team tiles.
     people: all('user').filter((u) => u.active && u.initials).map((u) => ({ initials: u.initials, name: u.name, role: u.role })),
   }));
@@ -971,16 +971,25 @@ const Store = (() => {
   const KINDS = ['Routine', 'Emergency'];
   const roomKind = (ot) => { const r = get('otroom:' + ot); return (r && r.kind) || 'Routine'; };
   route('GET', '/api/otrooms', ANY, () => Object.fromEntries(OTS.map((ot) => [ot, roomKind(ot)])));
-  route('PUT', '/api/otrooms/:ot', ANY, ({ body, params: p }) => {
+  // Only the admin marks an OT Routine / Emergency or blocks it (OTs not running yet). A blocked OT keeps its old lists but takes no new ones.
+  const roomBlocked = (ot) => { const r = get('otroom:' + ot); return !!(r && r.blocked); };
+  route('PUT', '/api/otrooms/:ot', ADMIN, ({ body, params: p }) => {
     if (!OTS.includes(p.ot)) throw new HttpError(404, 'No such OT');
+    const cur = get('otroom:' + p.ot) || {};
+    if (body.blocked != null) {
+      put('otroom:' + p.ot, 'otroom', { kind: cur.kind || 'Routine', blocked: !!body.blocked });
+      audit(body.blocked ? 'block OT' : 'unblock OT', `OT ${p.ot}`);
+      return { ok: true, blocked: !!body.blocked };
+    }
     const kind = KINDS.includes(body.kind) ? body.kind : 'Routine';
-    put('otroom:' + p.ot, 'otroom', { kind });
+    put('otroom:' + p.ot, 'otroom', { kind, blocked: !!cur.blocked });
     // Today's and later lists of this OT follow the change; earlier lists stay as they were printed.
     for (const l of all('otlist')) if (l.ot === p.ot && l.date >= today() && (l.kind || 'Routine') !== kind) put(l.id, 'otlist', { ...strip(l), kind });
     audit('mark OT', `OT ${p.ot} ${kind}`);
     return { ok: true, kind };
   });
   function newOtList(ot, date, body = {}) {
+    if (roomBlocked(ot)) throw new HttpError(400, `OT ${ot} is blocked. Pick another OT.`);
     // The surgeon starts from the last list of the same OT. KEEP OT WARM is printed on every list, so the note starts empty.
     const last = all('otlist').filter((l) => l.ot === ot).sort((x, y) => (x.date < y.date ? 1 : -1))[0];
     const id = 'otlist:' + uuid();
@@ -1020,6 +1029,7 @@ const Store = (() => {
     const ot = str(body.ot, 4), date = isDate(body.date) ? body.date : l.date;
     if (!OTS.includes(ot)) throw new HttpError(400, 'Pick an OT');
     if (ot === l.ot && date === l.date) throw new HttpError(400, 'Pick another OT or day');
+    if (roomBlocked(ot)) throw new HttpError(400, `OT ${ot} is blocked. Pick another OT.`);
     const when = date.split('-').reverse().join('/');
     const target = all('otlist').find((x) => x.ot === ot && x.date === date);
     if (!target) {
