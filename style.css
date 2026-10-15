@@ -665,3 +665,10 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .blockednote { display: flex; align-items: center; gap: 6px; color: #c0392b; font-weight: 600; }
 .blockbox { margin-bottom: 1rem; }
 .btns.wrap { flex-wrap: wrap; }
+/* Rounds card in a pop-up (OT Overs from an OT list) */
+.roundspop { max-width: 760px; width: min(760px, 96vw); max-height: 92vh; overflow: auto; }
+.roundspop .rcard, .roundspop article { margin: 0; }
+.ottile.hasovers { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.sxdates { margin: 6px 0; }
+.sxdaterow { display: flex; flex-wrap: wrap; gap: 6px; }
+.sxdaterow input { width: auto; flex: 1; min-width: 140px; }

@@ -889,6 +889,7 @@ const Store = (() => {
       uhid: str(b.uhid, 30), name: str(b.name, 80), age: str(b.age, 20), sex: str(b.sex, 10), bed: str(b.bed, 30),
       diagnosis: str(b.diagnosis, 600), surgery: str(b.surgery, 600), consultant: str(b.consultant, 80),
       blood: str(b.blood, 40), special: str(b.special, 800), admission_id: str(b.admission_id, 60),
+      ot_overs: str(b.ot_overs, 3000), // OT Overs for a patient not in our wards (private ward, day care); ward patients keep theirs on the admission
     };
   }
   // The latest details known for a UHID: an earlier OT entry or an admission, with the age brought up to `date`.
@@ -1146,6 +1147,27 @@ const Store = (() => {
     if (text) { put('ot:' + uuid(), 'ot', { admission_id: a ? a.id : null, entry_id: e.id, text, by: currentUser.id, at: stamp(), day: l.date }); audit('OT note', e.name); }
     return { ok: true, surgery: null };
   });
+  // The same child posted on more than one list: once one entry has its scrub team, the others on that day or earlier
+  // with nothing recorded (no team, not marked cancelled, not shifted) are removed. Later lists (a staged operation) are left alone.
+  const samePatient = (x, e) => (e.admission_id && x.admission_id === e.admission_id) || (e.uhid && (x.uhid || '').trim().toLowerCase() === e.uhid.trim().toLowerCase());
+  function dropDuplicateEntries(e) {
+    const l = get(e.list_id);
+    if (!l || !(e.scrub || []).length) return 0;
+    let n = 0;
+    for (const x of all('otentry')) {
+      if (x.id === e.id || x.cancelled || x.case_cancelled || (x.scrub || []).length || !samePatient(x, e)) continue;
+      const xl = get(x.list_id);
+      if (!xl || xl.date > l.date) continue;
+      put(x.id, 'otentry', null); n++;
+      touchOtList(xl.id, `removed ${x.name} (operated on OT ${l.ot}, ${l.date.split('-').reverse().join('/')})`);
+    }
+    return n;
+  }
+  route('POST', '/api/otentries/dedupe', EDITORS, () => {
+    let n = 0;
+    for (const e of all('otentry')) if (!e.cancelled && !e.case_cancelled && (e.scrub || []).length && get(e.id)) n += dropDuplicateEntries(get(e.id));
+    return { removed: n };
+  });
   route('PUT', '/api/otentries/:id/scrub', ANY, ({ body, params: p }) => {
     const e = getEntry(p.id);
     const scrub = (Array.isArray(body.scrub) ? body.scrub : []).map((x) => str(x, 60)).filter((x, i, l) => x && l.indexOf(x) === i).slice(0, 10);
@@ -1167,7 +1189,8 @@ const Store = (() => {
         put(a.id, 'admission', { ...strip(cur), ...Object.fromEntries(keys.map((k, i) => [k, left[i] || null])), updated_at: stamp() });
       }
     }
-    return { ok: true, surgery };
+    const removed = scrub.length ? dropDuplicateEntries(get(e.id)) : 0;
+    return { ok: true, surgery, removed };
   });
 
   // Case cancelled on the day (not operated): the patient stays on the list, greyed, for the record. undo:true brings it back.

@@ -839,10 +839,11 @@ function penBox(cls, label, value, opts) {
   };
   const edit = () => {
     const ta = h('textarea', { rows: Math.min(10, Math.max(3, Math.ceil((value || '').length / 110) + 1)), placeholder: opts.placeholder || '' }, value || '');
-    box.replaceChildren(h('div', { class: 'grow' }, h('b', {}, label), opts.hint ? h('small', { class: 'muted block' }, opts.hint) : null, ta,
+    const more = opts.editExtra ? opts.editExtra() : null;
+    box.replaceChildren(h('div', { class: 'grow' }, h('b', {}, label), opts.hint ? h('small', { class: 'muted block' }, opts.hint) : null, ta, more ? more.nodes : null,
       h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: show }, 'Cancel'),
         h('button', { type: 'button', class: 'primary small', onclick: async () => {
-          try { await opts.save(ta.value.trim()); value = ta.value.trim(); toast(label + ' saved'); show(); } catch (e) { toast(e.message, true); }
+          try { await opts.save(ta.value.trim(), more && more.values()); value = ta.value.trim(); toast(label + ' saved'); show(); } catch (e) { toast(e.message, true); }
         } }, 'Save'))));
     ta.focus();
   };
@@ -850,13 +851,19 @@ function penBox(cls, label, value, opts) {
   return box;
 }
 // Procedure done (from the scrub team on the OT list, editable here) with the surgery dates and each OT day's team.
-function procedureBox(a, surgeries) {
+function procedureBox(a, surgeries, onDates) {
   return penBox('procbox', 'Procedure done', a.procedure_done, {
     empty: 'Not operated yet',
     extra: () => [surgeries.length ? h('small', {}, ' on ' + surgeries.map(fmtDate).join(', ')) : null,
       (a.otprocs || []).map((x) => h('div', { class: 'small muted otprocrow' }, `${otName(x.ot)} · ${fmtDate(x.date)}${x.done ? `: ${x.done}` : ''} · ${x.scrub.join('/')} `,
         canEdit() && x.list_id ? pencilLink(`#otlist/${x.list_id}/${x.entry_id}`, 'Edit on the OT list') : null))],
-    save: (v) => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { procedure_done: v }).then(() => { a.procedure_done = v; }),
+    // ICU babies admitted before the app often had surgery already: their surgery dates can be typed in here.
+    editExtra: isIcu(a.bed_on_date || a.bed) ? () => {
+      const ins = ['surgery_date', 'surgery_date2', 'surgery_date3'].map((k) => h('input', { type: 'date', value: a[k] || '', max: S.meta.today }));
+      return { nodes: h('div', { class: 'sxdates' }, h('small', { class: 'muted block' }, 'Date of surgery (POD counts from it). Add a 2nd or 3rd if operated again.'), h('div', { class: 'sxdaterow' }, ins)),
+        values: () => { const d = [...new Set(ins.map((i) => i.value).filter(Boolean))].sort(); return { surgery_date: d[0] || null, surgery_date2: d[1] || null, surgery_date3: d[2] || null }; } };
+    } : null,
+    save: (v, dates) => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { procedure_done: v, ...(dates || {}) }).then(() => { a.procedure_done = v; Object.assign(a, dates || {}); if (dates && onDates) onDates(); }),
   });
 }
 // OT Overs: what is to be done after the operation and when.
@@ -946,7 +953,7 @@ function patientCard(a, date, refresh) {
           icu && a.birth_weight && `BW ${a.birth_weight} g`, icu && a.gestation && `GA ${a.gestation} wk`, icu && a.current_weight && `Wt ${a.current_weight} g`,
           !icu && a.weight && `Wt ${a.weight} kg`].filter(Boolean).join(' · ')),
         a.diagnosis && h('div', { class: 'rdx' }, h('span', {}, 'Diagnosis'), a.diagnosis),
-        procedureBox(a, surgeries)),
+        procedureBox(a, surgeries, () => refresh(id))),
       h('div', { class: 'rcorner' },
         h('div', { class: 'cfact' }, h('span', {}, 'Age / Sex'), h('b', {}, ageSex(a, date) || '—')),
         h('div', { class: 'cfact' }, h('span', {}, 'Consultant'), h('b', {}, a.unit || '—')),
@@ -1046,10 +1053,13 @@ async function roundsView(main, focus) {
   const pick = (id) => { if (id === S.roundsSel || !confirmLeave()) return; S.dirty.clear(); S.roundsSel = id; draw(); window.scrollTo({ top: strips.offsetTop - 70 }); };
   function drawStrips() {
     const here = data.admissions.filter((a) => a.discharge_date !== date).sort((x, y) => order.indexOf(x.bed_on_date) - order.indexOf(y.bed_on_date));
-    strips.replaceChildren(...['6B', '6A'].map((w) => {
-      const pts = here.filter((a) => wardOf(a.bed_on_date) === w);
+    const icuNo = (a) => +String(a.bed_on_date).split('/')[1];
+    const groups = [['6B', (a) => wardOf(a.bed_on_date) === '6B', '6B'], ['6A', (a) => wardOf(a.bed_on_date) === '6A', '6A'],
+      ['ICU A', (a) => isIcu(a.bed_on_date) && icuNo(a) <= 10, '6C'], ['ICU B', (a) => isIcu(a.bed_on_date) && icuNo(a) > 10, '6C']];
+    strips.replaceChildren(...groups.map(([label, test, w]) => {
+      const pts = here.filter(test);
       if (!pts.length) return null;
-      const row = h('div', { class: 'bedstrip' }, h('span', { class: 'bswho' }, w),
+      const row = h('div', { class: 'bedstrip' }, h('span', { class: 'bswho' }, label),
         h('div', { class: 'bsrow' }, pts.map((a) => h('button', { type: 'button', class: 'bschip' + (a.id === S.roundsSel ? ' on' : '') + (morningDone(a.round, date) ? ' done' : ''), title: a.name, onclick: () => pick(a.id) },
           a.bed_on_date.replace(new RegExp('^' + w + '/', 'i'), '')))));
       return row;
@@ -1562,6 +1572,8 @@ const listRow = (l) => h('a', { class: 'otlrow' + (l.date === S.meta.today ? ' t
 
 async function otHomeView(main) {
   const today = S.meta.today;
+  // Once per session: clear postings of a child who was operated on another list (see dropDuplicateEntries).
+  if (canEdit() && !S.dedupeDone) { S.dedupeDone = true; try { await api('POST', '/api/otentries/dedupe'); } catch {} }
   const [lists, kinds] = await Promise.all([api('GET', '/api/otlists'), api('GET', '/api/otrooms')]);
   // The arrows step to the previous / next day that has OT lists; the day shown is kept while you move around the app.
   const day = S.otDay || today;
@@ -1605,7 +1617,7 @@ function scrubPopup(e, done, listDate) {
       scrubPicker(e.scrub, async (team) => {
         // A team saved after the OT day (e.g. two days later) is confirmed first: it sets that day as the surgery date.
         if (team.length && listDate && listDate < S.meta.today && !confirm(`This OT list was on ${fmtDay(listDate)}. Save the scrub team for that day? ${fmtDate(listDate)} becomes the surgery date (POD 0).`)) return;
-        try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team, done: doneIn.value.trim() }); close(); toast(res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved'); done(); } catch (x) { toast(x.message, true); }
+        try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team, done: doneIn.value.trim() }); close(); toast((res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved') + (res.removed ? ` · ${res.removed} duplicate posting removed` : '')); done(); } catch (x) { toast(x.message, true); }
       }),
       caseCancelForm(e, () => { close(); done(); }))));
 }
@@ -1786,7 +1798,8 @@ async function otListView(main, id) {
       e.blood && [h('dt', {}, 'Blood'), h('dd', {}, e.blood)],
       e.special && [h('dt', {}, 'Special req'), h('dd', { class: 'instr' }, e.special)],
       e.done && [h('dt', {}, 'Done'), h('dd', {}, h('b', {}, e.done))],
-      (e.scrub || []).length ? [h('dt', {}, 'Scrub team'), h('dd', {}, h('b', {}, e.scrub.join('/')))] : null),
+      (e.scrub || []).length ? [h('dt', {}, 'Scrub team'), h('dd', {}, h('b', {}, e.scrub.join('/')))] : null,
+      !e.admission_id && e.ot_overs ? [h('dt', {}, 'OT Overs'), h('dd', { class: 'instr' }, e.ot_overs)] : null),
     otExtras(l, e, reload),
     h('div', { class: 'btns' },
       h('button', { class: 'ghost small', onclick: () => otEntryModal(l, e, reload) }, 'Edit'),
@@ -1834,14 +1847,37 @@ async function otListView(main, id) {
 }
 
 // OT Overs live with the patient in Rounds: the button opens that patient's Rounds card.
-const oversBtn = (e) => !canEdit() ? null : e.admission_id
-  ? h('a', { class: 'button ghost small ottile', href: '#rounds/' + encodeURIComponent(e.admission_id), title: 'Write OT overs in Rounds' }, 'OT Overs')
-  : h('button', { type: 'button', class: 'ghost small ottile', disabled: true, title: 'Not admitted to a ward bed, so there is no Rounds card' }, 'OT Overs');
+const oversBtn = (e, done) => !canEdit() ? null
+  : h('button', { type: 'button', class: 'ghost small ottile' + (e.ot_overs ? ' hasovers' : ''), title: 'OT Overs', onclick: () => (e.admission_id ? roundsPopup(e.admission_id) : entryOversPopup(e, done || render)) }, 'OT Overs');
+// Ward patient: their Rounds card opens in a pop-up right here.
+async function roundsPopup(admId) {
+  const root = document.getElementById('modal-root');
+  const date = roundsDay();
+  const body = h('div', {}, h('p', { class: 'loading' }, 'Loading…'));
+  const close = () => { if (confirmLeave()) { S.dirty.clear(); root.replaceChildren(); } };
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
+    h('div', { class: 'modal card panel roundspop' }, h('div', { class: 'mhead' }, h('h2', {}, 'Rounds · ', fmtDay(date)), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), body)));
+  const load = async () => {
+    const data = await api('GET', '/api/register?date=' + date);
+    const a = data.admissions.find((x) => x.id === admId);
+    body.replaceChildren(a ? patientCard(a, date, load) : h('p', { class: 'muted' }, 'This patient is not in the ward on this date.'));
+    const ov = body.querySelector('.instr.overs'); if (ov) ov.scrollIntoView({ block: 'center' });
+  };
+  try { await load(); } catch (x) { body.replaceChildren(h('p', { class: 'error' }, x.message)); }
+}
+// Private ward, day care or any child not in our wards: OT Overs are kept on the OT list entry.
+function entryOversPopup(e, done) {
+  const ta = h('textarea', { name: 'overs', rows: 5, placeholder: 'e.g. Rectal pack to be removed on POD 2\nStent to be removed on POD 10' }, e.ot_overs || '');
+  modal(`OT Overs · ${e.name}`, h('div', {}, h('p', { class: 'muted small' }, OVERS_HINT), ta), async () => {
+    await api('PUT', '/api/otentries/' + encodeURIComponent(e.id), { ot_overs: ta.value.trim() });
+    toast('OT Overs saved'); done();
+  }, 'Save');
+}
 // Scrub team (with the procedure done) and OT Overs for one patient on the list.
 function otExtras(l, e, reload) {
   return h('div', { class: 'ottiles' },
     l.date <= S.meta.today && !e.case_cancelled && h('button', { class: 'ottile', onclick: () => scrubPopup(e, reload, l.date) }, (e.scrub || []).length ? `Scrub team: ${e.scrub.join('/')}` : '+ Add scrub team'),
-    oversBtn(e));
+    oversBtn(e, reload));
 }
 
 // OT cancelled for the day: put the patient on another day's (or another OT's) list.
