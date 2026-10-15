@@ -202,7 +202,7 @@ function checkNewDay() {
   let redraw = false;
   if (d !== S.meta.today) { if (S.date === S.meta.today) S.date = d; S.meta.today = d; redraw = true; }
   const rd = roundsDay() + '|' + rosterDay(d);
-  if (rd !== lastRoundsDay && (route === 'rounds' || route === 'register')) redraw = true;
+  if (rd !== lastRoundsDay && (route === 'rounds' || route === 'icurounds' || route === 'register')) redraw = true;
   lastRoundsDay = rd;
   if (redraw && !S.dirty.size && !document.querySelector('#modal-root > *')) render();
 }
@@ -276,7 +276,8 @@ function view(route, arg, main) {
   if (route === 'ot') return arg ? otDatesView(main, arg) : otHomeView(main);
   if (route === 'otlist') return otListView(main, decodeURIComponent(arg || ''));
   if (route === 'otlog') return otLogView(main, decodeURIComponent(arg || ''));
-  if (route === 'rounds' && canEdit()) return roundsView(main, decodeURIComponent(arg || ''));
+  if (route === 'rounds' && canEdit()) return roundsView(main, decodeURIComponent(arg || ''), false);
+  if (route === 'icurounds' && canEdit()) return roundsView(main, decodeURIComponent(arg || ''), true);
   if (route === 'notes') return notesView(main, decodeURIComponent(arg || ''));
   if (route === 'admin' && S.user.role === 'admin') return adminView(main, arg || 'users');
   if (route === 'icu') return registerView(main, 'icu');
@@ -287,7 +288,7 @@ function topBar(route) {
   const link = (r, label) => h('a', { href: '#' + r, class: route === r || (r === 'ot' && route === 'otlist') ? 'active' : '' }, label);
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '' }), h('div', {}, h('b', {}, 'Register'), h('small', {}, 'Department of Pediatric Surgery'))),
-    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), link('monthly', 'Census'), S.user.role === 'admin' && link('admin', 'Admin')),
+    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), canEdit() && link('icurounds', 'ICU Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), link('monthly', 'Census'), S.user.role === 'admin' && link('admin', 'Admin')),
     h('div', { class: 'me' },
       h('button', { id: 'sync-chip', class: 'sync-chip', onclick: async () => {
         if (updatesWaiting) { if (!confirmLeave()) return; updatesWaiting = false; S.dirty.clear(); S.meta = await api('GET', '/api/meta'); render(); }
@@ -1018,14 +1019,17 @@ function roundsDay() {
   const n = new Date(), d = localStamp(n).slice(0, 10);
   return n.getHours() * 60 + n.getMinutes() >= ROUNDS_CLEAR_MIN ? addDays(d, 1) : d;
 }
-async function roundsView(main, focus) {
+// Ward rounds (#rounds: 6B, 6A and other wards) and ICU rounds (#icurounds: 6C) are separate tabs.
+async function roundsView(main, focus, icuTab) {
+  const tab = icuTab ? 'icurounds' : 'rounds';
+  const mine = (a) => !!isIcu(a.bed_on_date) === !!icuTab;
   // Opened from a bed on the register (#rounds/<patient>): show that patient's card.
-  if (focus) { S.roundsSel = focus; history.replaceState(null, '', '#rounds'); lastHash = location.hash; }
+  if (focus) { S.roundsSel = focus; history.replaceState(null, '', '#' + tab); lastHash = location.hash; }
   const def = roundsDay();
   // A day picked with the arrows holds until the next 11:30 switch.
   const date = S.roundsPick && S.roundsPick.for === def ? S.roundsPick.d : def;
   const go = (d) => { if (confirmLeave()) { S.roundsPick = { d, for: roundsDay() }; render(); } };
-  const wards = [...new Set(S.meta.sections.flatMap((s) => s.beds).map(wardOf))];
+  const wards = [...new Set(S.meta.sections.flatMap((s) => s.beds).filter((b) => !!isIcu(b) === !!icuTab).map(wardOf))];
   const wardSel = h('select', { onchange: (e) => { S.filters.ward = e.target.value; draw(); } },
     h('option', { value: '' }, 'All wards'), wards.map((w) => h('option', { value: w }, wardTitle(w))));
   wardSel.value = S.filters.ward || '';
@@ -1037,14 +1041,17 @@ async function roundsView(main, focus) {
         h('input', { type: 'date', value: date, onchange: (e) => e.target.value && go(e.target.value) }),
         h('button', { class: 'ghost', onclick: () => go(addDays(date, 1)), 'aria-label': 'Next day' }, '›'),
         date !== def && h('button', { class: 'ghost small', onclick: () => go(def) }, 'Current rounds')),
-      h('div', { class: 'filters' }, wardSel, search)),
-    h('h2', { class: 'daytitle' }, 'Rounds · ', fmtDay(date)),
+      h('div', { class: 'filters' }, icuTab ? '' : wardSel, search)),
+    h('h2', { class: 'daytitle' }, icuTab ? 'ICU Rounds · ' : 'Rounds · ', fmtDay(date)),
     date === def && def !== localStamp(new Date()).slice(0, 10) ? h('p', { class: 'muted small roundsnote' },
       `Cleared at 11:30 am for the next rounds. What you save now goes under ${fmtDay(date)}. Today's rounds stay on Status and the print until midnight, and in each patient's history.`) : '');
   const strips = h('div', { class: 'bedstrips' });
   const list = h('div', { class: 'register' }, h('p', { class: 'loading' }, 'Loading…'));
   main.append(strips, list);
-  let data = await api('GET', '/api/register?date=' + date);
+  const load = async () => { const d = await api('GET', '/api/register?date=' + date); return { ...d, admissions: d.admissions.filter(mine) }; };
+  let data = await load();
+  // A patient opened on the wrong tab (moved to or from the ICU) goes to the right one.
+  if (focus && !data.admissions.some((a) => a.id === focus)) { const all = await api('GET', '/api/register?date=' + date); if (all.admissions.some((a) => a.id === focus)) { location.hash = '#' + (icuTab ? 'rounds' : 'icurounds') + '/' + encodeURIComponent(focus); return; } }
   S.dirty.clear();
   const order = S.meta.sections.flatMap((s) => s.beds);
   const cards = new Map();
@@ -1054,8 +1061,8 @@ async function roundsView(main, focus) {
   function drawStrips() {
     const here = data.admissions.filter((a) => a.discharge_date !== date).sort((x, y) => order.indexOf(x.bed_on_date) - order.indexOf(y.bed_on_date));
     const icuNo = (a) => +String(a.bed_on_date).split('/')[1];
-    const groups = [['6B', (a) => wardOf(a.bed_on_date) === '6B', '6B'], ['6A', (a) => wardOf(a.bed_on_date) === '6A', '6A'],
-      ['ICU A', (a) => isIcu(a.bed_on_date) && icuNo(a) <= 10, '6C'], ['ICU B', (a) => isIcu(a.bed_on_date) && icuNo(a) > 10, '6C']];
+    const groups = icuTab ? [['ICU A', (a) => icuNo(a) <= 10, '6C'], ['ICU B', (a) => icuNo(a) > 10, '6C']]
+      : [['6B', (a) => wardOf(a.bed_on_date) === '6B', '6B'], ['6A', (a) => wardOf(a.bed_on_date) === '6A', '6A']];
     strips.replaceChildren(...groups.map(([label, test, w]) => {
       const pts = here.filter(test);
       if (!pts.length) return null;
@@ -1074,7 +1081,7 @@ async function roundsView(main, focus) {
     drawStrips();
     const pts = data.admissions.filter((a) => a.discharge_date !== date)
       .filter((a) => !S.roundsSel || a.id === S.roundsSel)
-      .filter((a) => !S.filters.ward || wardOf(a.bed_on_date) === S.filters.ward)
+      .filter((a) => icuTab || !S.filters.ward || wardOf(a.bed_on_date) === S.filters.ward)
       .filter((a) => !q || [a.bed_on_date, a.name, a.ip_no, a.diagnosis].join(' ').toLowerCase().includes(q))
       .sort((x, y) => order.indexOf(x.bed_on_date) - order.indexOf(y.bed_on_date));
     list.replaceChildren();
@@ -1084,11 +1091,11 @@ async function roundsView(main, focus) {
     }
     const other = pts.filter((a) => !wards.includes(wardOf(a.bed_on_date)));
     if (other.length) list.append(h('section', {}, h('h3', {}, 'Other beds'), other.map(cardFor)));
-    if (!list.childNodes.length) list.append(h('p', { class: 'muted empty-note' }, 'No patients in the ward on this date.'));
+    if (!list.childNodes.length) list.append(h('p', { class: 'muted empty-note' }, icuTab ? 'No babies in the ICU on this date.' : 'No patients in the ward on this date.'));
   }
   // Redraw only the card that changed, so entries typed in other cards are kept.
   async function reloadOne(id) {
-    data = await api('GET', '/api/register?date=' + date);
+    data = await load();
     const a = data.admissions.find((x) => x.id === id), old = cards.get(id);
     if (a && old && old.isConnected) { old.replaceWith(cardFor(a)); drawStrips(); } else draw();
   }
@@ -1133,7 +1140,7 @@ function patientDetails(a, date) {
         h('button', { class: 'ghost small', onclick: () => addToOtModal(a) }, 'Add to OT list'))),
     canEdit() && h('div', { class: 'foot' },
       h('div', { class: 'btns' },
-        h('a', { class: 'button ghost small', href: '#rounds/' + encodeURIComponent(a.id), onclick: () => document.getElementById('modal-root').replaceChildren() }, 'Go to Rounds'),
+        h('a', { class: 'button ghost small', href: (isIcu(a.bed_on_date || a.bed) ? '#icurounds/' : '#rounds/') + encodeURIComponent(a.id), onclick: () => document.getElementById('modal-root').replaceChildren() }, 'Go to Rounds'),
         h('button', { class: 'ghost small', onclick: () => addToOtModal(a) }, 'Add to OT list'),
         h('button', { class: 'ghost small', onclick: () => transferModal(a) }, 'Move bed'),
         h('button', { class: 'ghost small', onclick: () => dischargeModal(a) }, 'Discharge'))));
