@@ -1568,6 +1568,75 @@ const surgeonSelect = (val, blank, extra = [], attrs = {}) => {
   return h('select', attrs, h('option', { value: '' }, blank), names.map((n) => h('option', { value: n, selected: n === val }, n)));
 };
 const stampText = (t) => (t ? `${fmtDate(t.slice(0, 10))}, ${t.slice(11, 16)}` : '');
+// The OT list as a landscape A4 picture, laid out like the printout, to circulate on WhatsApp.
+// Drawn straight onto a canvas so it works offline and the same on every phone.
+async function saveOtJpg(l, rows, extraNote) {
+  const W = 1754, M = 70, FONT = 'Arial, Helvetica, sans-serif';
+  const cols = [['SL NO', 4], ['WARD', 8], ['NAME', 12], ['AGE/SEX', 8], ['UHID', 9], ['DIAGNOSIS', 14], ['SURGERY', 15], ['CONSULTANT', 11], ['BLOOD ARRANGE', 9], ['SPECIAL REQ', 10]];
+  const total = cols.reduce((n, c) => n + c[1], 0), tw = W - 2 * M;
+  const widths = cols.map((c) => Math.round((c[1] / total) * tw));
+  const cells = rows.map((e, i) => [String(i + 1), wardCol(e.bed), (e.name || '').toUpperCase(), [e.age, e.sex].filter(Boolean).join('/'), e.uhid || '',
+    e.diagnosis || '', e.surgery || '', fullNames(e.consultant), e.blood || '', e.special || '']);
+  const cv = document.createElement('canvas'), g = cv.getContext('2d');
+  const wrap = (text, width, font) => {
+    g.font = font; const out = [];
+    for (const para of String(text).split('\n')) {
+      let line = '';
+      for (const word of para.split(/\s+/).filter(Boolean)) {
+        const t = line ? line + ' ' + word : word;
+        if (g.measureText(t).width <= width) { line = t; continue; }
+        if (line) out.push(line);
+        line = word;
+        while (g.measureText(line).width > width && line.length > 1) { let k = line.length; while (k > 1 && g.measureText(line.slice(0, k)).width > width) k--; out.push(line.slice(0, k)); line = line.slice(k); }
+      }
+      out.push(line);
+    }
+    return out;
+  };
+  const BODY = `22px ${FONT}`, HEAD = `bold 19px ${FONT}`, LH = 28, PAD = 10;
+  const heads = cols.map((c, j) => wrap(c[0], widths[j] - 2 * PAD, HEAD));
+  const headH = Math.max(...heads.map((x) => x.length)) * LH + 2 * PAD;
+  const lines = cells.map((row) => row.map((t, j) => wrap(t, widths[j] - 2 * PAD, BODY)));
+  const rowH = lines.map((row) => Math.max(1, ...row.map((x) => x.length)) * LH + 2 * PAD);
+  const titles = [[`bold 30px ${FONT}`, 'Department of Pediatric Surgery, MCH Block'], [`28px ${FONT}`, `${l.kind || 'Routine'} OT List - `, otName(l.ot)], [`26px ${FONT}`, `(${shortDate(l.date)})`]];
+  if (l.surgeon) titles.push([`bold 26px ${FONT}`, fullNames(l.surgeon).toUpperCase()]);
+  titles.push([`bold 26px ${FONT}`, 'KEEP OT WARM']);
+  if (extraNote) titles.push([`bold 26px ${FONT}`, extraNote.toUpperCase()]);
+  const top = M + titles.length * 42 + 16;
+  const tableH = headH + rowH.reduce((a, b) => a + b, 0);
+  cv.width = W; cv.height = Math.max(1240, top + tableH + 150);
+  g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+  g.fillStyle = '#000'; g.strokeStyle = '#000'; g.lineWidth = 2; g.textBaseline = 'top';
+  let y = M;
+  for (const [font, text, bold] of titles) {
+    g.font = font; const a = g.measureText(text).width;
+    const bf = font.startsWith('bold') ? font : 'bold ' + font, b = bold ? (g.font = bf, g.measureText(bold).width) : 0;
+    let x = (W - a - b) / 2; g.font = font; g.textAlign = 'left'; g.fillText(text, x, y);
+    if (bold) { g.font = bf; g.fillText(bold, x + a, y); }
+    y += 42;
+  }
+  y = top;
+  const drawRow = (row, h, font) => {
+    let x = M;
+    row.forEach((ls, j) => { g.strokeRect(x, y, widths[j], h); g.font = font; g.textAlign = 'center';
+      ls.forEach((t, k) => g.fillText(t, x + widths[j] / 2, y + PAD + k * LH + 3)); x += widths[j]; });
+    y += h;
+  };
+  drawRow(heads, headH, HEAD);
+  lines.forEach((row, i) => drawRow(row, rowH[i], BODY));
+  y += 70; g.font = `bold 24px ${FONT}`; g.textAlign = 'left'; g.fillText(`DATE: ${fmtDate(S.meta.today)}`, M + 60, y);
+  g.textAlign = 'right'; g.fillText('SIGNATURE', W - M - 60, y);
+  const blob = await new Promise((ok) => cv.toBlob(ok, 'image/jpeg', 0.92));
+  const name = `${otName(l.ot).replace(/\s+/g, '')}_${l.kind || 'Routine'}_${l.date}.jpg`;
+  const file = new File([blob], name, { type: 'image/jpeg' });
+  // Phones: the share menu (Save to gallery, WhatsApp…). Laptops: straight to Downloads.
+  if (matchMedia('(pointer: coarse)').matches && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const url = URL.createObjectURL(blob), a = h('a', { href: url, download: name });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+  toast('Saved ' + name);
+}
 const shortDate = (d) => { const [y, m, day] = d.split('-'); return `${day}/${m}/${y.slice(2)}`; };
 const listCard = (l, withOt = true) => h('a', { class: 'otcard', href: '#otlist/' + encodeURIComponent(l.id) },
   h('b', {}, withOt ? `${otName(l.ot)} · ` : '', fmtDay(l.date)),
@@ -1791,6 +1860,7 @@ async function otListView(main, id) {
         h('td', {}, e.uhid), h('td', {}, e.diagnosis), h('td', {}, e.surgery), h('td', {}, fullNames(e.consultant)), h('td', {}, e.blood), h('td', {}, e.special))))),
     h('div', { class: 'otfoot' }, h('b', {}, `DATE: ${fmtDate(S.meta.today)}`), h('b', {}, 'SIGNATURE')));
   drawSheet();
+  const doJpg = () => saveOtJpg(l, live.filter((e) => !e.case_cancelled), extraNote);
   const doPrint = () => { const st = h('style', {}, '@page { size: A4 landscape; margin: 16mm 15mm; }'); document.head.append(st); window.print(); st.remove(); };
   const move = async (e, dir) => { try { await api('POST', `/api/otentries/${encodeURIComponent(e.id)}/move`, { dir }); reload(); } catch (x) { toast(x.message, true); } };
   const card = (e, i) => h('div', { class: 'card otentry' + (e.case_cancelled ? ' casecancelled' : ''), 'data-entry': e.id },
@@ -1829,7 +1899,7 @@ async function otListView(main, id) {
   main.append(
     h('div', { class: 'toolbar noprint' }, h('a', { class: 'button ghost', href: '#ot/' + l.ot }, '‹ ' + otName(l.ot)),
       h('h2', {}, `${otName(l.ot)} · `, fmtDay(l.date)),
-      h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: doPrint }, 'Print'),
+      h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: doPrint }, 'Print'), h('button', { class: 'ghost', onclick: doJpg }, 'Save as JPG'),
         h('button', { class: 'ghost', onclick: () => { shiftBox.hidden = !shiftBox.hidden; } }, 'Shift list'),
         h('button', { class: 'ghost danger', onclick: async () => {
           if (!confirm(`Delete the whole ${otName(l.ot)} list for ${fmtDate(l.date)}${live.length ? ` with its ${live.length} patients` : ''}?`)) return;
