@@ -269,7 +269,8 @@ const Store = (() => {
   }
   // SR and JR edit everything; consultants view and add their round notes; admin is an SR who also runs the Admin page.
   const ANY = null, PUBLIC = 'public', EDITORS = ['admin', 'sr', 'jr'], ADMIN = ['admin'];
-  const ROLES = ['admin', 'sr', 'jr', 'consultant'];
+  // viewer: sees everything including Rounds, changes nothing (no rounds, admissions, discharges or consultant notes).
+  const ROLES = ['admin', 'sr', 'jr', 'consultant', 'viewer'];
   const failedLogins = new Map();
   const SESSION_HOURS = 12;
   const IDLE_MINUTES = 15; // keep in step with LOCK_MINUTES in app.js
@@ -723,7 +724,7 @@ const Store = (() => {
     return { ok: true };
   });
 
-  route('PUT', '/api/notes/:id/:date', ANY, ({ body, params: p }) => {
+  route('PUT', '/api/notes/:id/:date', ['admin', 'sr', 'jr', 'consultant'], ({ body, params: p }) => {
     const a = getAdmission(p.id);
     if (!isDate(p.date)) throw new HttpError(400, 'Bad date');
     const note = str(body.note, 2000);

@@ -1,7 +1,7 @@
 // Ward Register front end. Plain JavaScript, no libraries, works offline.
 'use strict';
 
-const ROLE_NAMES = { admin: 'Admin (SR)', sr: 'SR', jr: 'JR', consultant: 'Consultant' };
+const ROLE_NAMES = { admin: 'Admin (SR)', sr: 'SR', jr: 'JR', consultant: 'Consultant', viewer: 'View only (Rounds)' };
 const OUTCOMES = ['Discharged', 'LAMA', 'Referred', 'Transferred to other unit', 'Expired'];
 const S = { user: null, meta: null, date: null, filters: { ward: '', emptyOnly: false, q: '' }, dirty: new Set() };
 
@@ -60,6 +60,9 @@ const dayNo = (a, date) => (a.admit_date ? String(daysBetween(a.admit_date, date
 function daysBetween(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5); }
 
 const canEdit = () => S.user && ['admin', 'sr', 'jr'].includes(S.user.role);
+// Editors enter rounds; a 'viewer' only reads them.
+const canSeeRounds = () => canEdit() || (S.user && S.user.role === 'viewer');
+const isViewer = () => S.user && S.user.role === 'viewer';
 const paramMap = () => Object.fromEntries(S.meta.params.map((p) => [p.key, p]));
 const isIcu = (bed) => !!bed && (S.meta.icuBeds || []).includes(bed);
 
@@ -276,8 +279,8 @@ function view(route, arg, main) {
   if (route === 'ot') return arg ? otDatesView(main, arg) : otHomeView(main);
   if (route === 'otlist') return otListView(main, decodeURIComponent(arg || ''));
   if (route === 'otlog') return otLogView(main, decodeURIComponent(arg || ''));
-  if (route === 'rounds' && canEdit()) return roundsView(main, decodeURIComponent(arg || ''), false);
-  if (route === 'icurounds' && canEdit()) return roundsView(main, decodeURIComponent(arg || ''), true);
+  if (route === 'rounds' && canSeeRounds()) return roundsView(main, decodeURIComponent(arg || ''), false);
+  if (route === 'icurounds' && canSeeRounds()) return roundsView(main, decodeURIComponent(arg || ''), true);
   if (route === 'notes') return notesView(main, decodeURIComponent(arg || ''));
   if (route === 'admin' && S.user.role === 'admin') return adminView(main, arg || 'users');
   if (route === 'icu') return registerView(main, 'icu');
@@ -288,7 +291,7 @@ function topBar(route) {
   const link = (r, label) => h('a', { href: '#' + r, class: route === r || (r === 'ot' && route === 'otlist') ? 'active' : '' }, label);
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '' }), h('div', {}, h('b', {}, 'Register'), h('small', {}, 'Department of Pediatric Surgery'))),
-    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canEdit() && link('rounds', 'Rounds'), canEdit() && link('icurounds', 'ICU Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), link('monthly', 'Census'), S.user.role === 'admin' && link('admin', 'Admin')),
+    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canSeeRounds() && link('rounds', 'Rounds'), canSeeRounds() && link('icurounds', 'ICU Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), link('monthly', 'Census'), S.user.role === 'admin' && link('admin', 'Admin')),
     h('div', { class: 'me' },
       h('button', { id: 'sync-chip', class: 'sync-chip', onclick: async () => {
         if (updatesWaiting) { if (!confirmLeave()) return; updatesWaiting = false; S.dirty.clear(); S.meta = await api('GET', '/api/meta'); render(); }
@@ -1025,10 +1028,11 @@ async function roundsView(main, focus, icuTab) {
   const mine = (a) => !!isIcu(a.bed_on_date) === !!icuTab;
   // Opened from a bed on the register (#rounds/<patient>): show that patient's card.
   if (focus) { S.roundsSel = focus; history.replaceState(null, '', '#' + tab); lastHash = location.hash; }
-  const def = roundsDay();
+  // A viewer reads the rounds already saved, so they see today's (not the next day's empty rounds after 11:30).
+  const def = canEdit() ? roundsDay() : localStamp(new Date()).slice(0, 10);
   // A day picked with the arrows holds until the next 11:30 switch.
   const date = S.roundsPick && S.roundsPick.for === def ? S.roundsPick.d : def;
-  const go = (d) => { if (confirmLeave()) { S.roundsPick = { d, for: roundsDay() }; render(); } };
+  const go = (d) => { if (confirmLeave()) { S.roundsPick = { d, for: def }; render(); } };
   const wards = [...new Set(S.meta.sections.flatMap((s) => s.beds).filter((b) => !!isIcu(b) === !!icuTab).map(wardOf))];
   const wardSel = h('select', { onchange: (e) => { S.filters.ward = e.target.value; draw(); } },
     h('option', { value: '' }, 'All wards'), wards.map((w) => h('option', { value: w }, wardTitle(w))));
@@ -1043,7 +1047,7 @@ async function roundsView(main, focus, icuTab) {
         date !== def && h('button', { class: 'ghost small', onclick: () => go(def) }, 'Current rounds')),
       h('div', { class: 'filters' }, icuTab ? '' : wardSel, search)),
     h('h2', { class: 'daytitle' }, icuTab ? 'ICU Rounds · ' : 'Rounds · ', fmtDay(date)),
-    date === def && def !== localStamp(new Date()).slice(0, 10) ? h('p', { class: 'muted small roundsnote' },
+    canEdit() && date === def && def !== localStamp(new Date()).slice(0, 10) ? h('p', { class: 'muted small roundsnote' },
       `Cleared at 11:30 am for the next rounds. What you save now goes under ${fmtDay(date)}. Today's rounds stay on Status and the print until midnight, and in each patient's history.`) : '');
   const strips = h('div', { class: 'bedstrips' });
   const list = h('div', { class: 'register' }, h('p', { class: 'loading' }, 'Loading…'));
@@ -1055,7 +1059,8 @@ async function roundsView(main, focus, icuTab) {
   S.dirty.clear();
   const order = S.meta.sections.flatMap((s) => s.beds);
   const cards = new Map();
-  const cardFor = (a) => { const c = patientCard(a, date, reloadOne); cards.set(a.id, c); return c; };
+  const cardFor = (a) => { const c = canEdit() ? patientCard(a, date, reloadOne)
+    : h('article', { class: 'bed occupied rcard' }, h('div', { class: 'rtitle' }, h('span', { class: 'bedno' }, a.bed_on_date)), patientDetails(a, date)); cards.set(a.id, c); return c; };
   // One strip of bed numbers per ward (6B, 6A), slides left and right. Tap a bed to see only that patient; All shows everyone.
   const pick = (id) => { if (id === S.roundsSel || !confirmLeave()) return; S.dirty.clear(); S.roundsSel = id; draw(); window.scrollTo({ top: strips.offsetTop - 70 }); };
   function drawStrips() {
@@ -1124,7 +1129,7 @@ function patientDetails(a, date) {
       big('Gestation', a.gestation && `${a.gestation} wk`),
       big('Current weight', a.current_weight && `${a.current_weight} g`)),
     a.diagnosis && h('div', { class: 'diagnosis' }, h('span', {}, 'Diagnosis'), h('b', {}, a.diagnosis)),
-    (a.procedure_done || surgeries.length) && h('div', { class: 'surgery' },
+    (a.procedure_done || surgeries.length > 0) && h('div', { class: 'surgery' },
       h('span', {}, 'Procedure done'),
       h('b', {}, a.procedure_done || '—'),
       surgeries.length ? h('small', {}, 'on ' + surgeries.map(fmtDate).join(', ')) : null),
@@ -1134,7 +1139,7 @@ function patientDetails(a, date) {
     (findings || (a.round && a.round.remarks)) && h('div', { class: 'today' },
       h('span', { class: 'muted small' }, `Today's round · ${a.round.filled_by || ''} ${a.round.filled_at.slice(11, 16)}`),
       findings && h('p', {}, findings), a.round.remarks && h('p', {}, h('b', {}, 'Remarks: '), a.round.remarks)),
-    !canEdit() && a.unit && h('div', { class: 'foot' },
+    !canEdit() && !isViewer() && a.unit && h('div', { class: 'foot' },
       h('div', { class: 'btns' },
         h('a', { class: 'button ghost small', href: '#notes/' + encodeURIComponent(a.unit), onclick: () => document.getElementById('modal-root').replaceChildren() }, `${a.unit} round notes`),
         h('button', { class: 'ghost small', onclick: () => addToOtModal(a) }, 'Add to OT list'))),
@@ -2219,7 +2224,7 @@ function occupancyPanel(title, pts, icuPts, date, isUnit) {
     h('div', { class: 'modal card panel' },
       h('div', { class: 'mhead' }, h('h2', {}, `${title} · ${pts.length} patient${pts.length === 1 ? '' : 's'}`),
         h('div', { class: 'btns' },
-          isUnit && h('a', { class: 'button ghost small', href: '#notes/' + encodeURIComponent(title), onclick: close }, 'Round notes'),
+          isUnit && !isViewer() && h('a', { class: 'button ghost small', href: '#notes/' + encodeURIComponent(title), onclick: close }, 'Round notes'),
           isUnit && S.user.role === 'admin' && h('a', { class: 'button ghost small', href: '#otlog/' + encodeURIComponent(title), onclick: close }, 'Logbook'),
           h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       table(pts),
