@@ -870,6 +870,13 @@ function procedureBox(a, surgeries, onDates) {
     save: (v, dates) => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { procedure_done: v, ...(dates || {}) }).then(() => { a.procedure_done = v; Object.assign(a, dates || {}); if (dates && onDates) onDates(); }),
   });
 }
+// OT Findings: what was found at operation, below OT Overs.
+function findingsBox(a) {
+  return penBox('instr findings', 'OT Findings', a.ot_findings, {
+    placeholder: 'e.g. Dilated proximal colon, transition zone at rectosigmoid', hint: 'Write what was found at operation.',
+    save: (v) => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { ot_findings: v }).then(() => { a.ot_findings = v; }),
+  });
+}
 // OT Overs: what is to be done after the operation and when.
 const OVERS_HINT = 'Write the OT overs, e.g. Rectal pack to be removed on POD 2; Stent to be removed on POD 10; Drain out when output < 20 ml.';
 function oversBox(a) {
@@ -964,6 +971,7 @@ function patientCard(a, date, refresh) {
         h('div', { class: 'cfact pod' }, h('span', {}, 'POD'), h('b', {}, pod ? pod.replace('POD ', '') : '—')))),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
     oversBox(a),
+    findingsBox(a),
     invBox(a, date, () => refresh(id)));
 
   if (!discharged && a.discharge_date !== date) {
@@ -1136,6 +1144,7 @@ function patientDetails(a, date) {
     a.instructions && h('p', { class: 'instr' }, h('b', {}, 'Short notes: '), a.instructions),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
     a.ot_overs && h('p', { class: 'instr overs' }, h('b', {}, 'OT Overs: '), a.ot_overs),
+    a.ot_findings && h('p', { class: 'instr findings' }, h('b', {}, 'OT Findings: '), a.ot_findings),
     (findings || (a.round && a.round.remarks)) && h('div', { class: 'today' },
       h('span', { class: 'muted small' }, `Today's round · ${a.round.filled_by || ''} ${a.round.filled_at.slice(11, 16)}`),
       findings && h('p', {}, findings), a.round.remarks && h('p', {}, h('b', {}, 'Remarks: '), a.round.remarks)),

@@ -251,6 +251,7 @@ const Store = (() => {
       fields_set: !!body.fields_set,
       extra_fields: Array.isArray(body.extra_fields) ? extraFields(body.extra_fields) : [],
       instructions: str(body.instructions, 2000), // shown as "Short notes"
+      ot_findings: str(body.ot_findings, 3000), // "OT Findings": what was found at operation
       ot_overs: str(body.ot_overs, 3000), // "OT Overs": things to do after the operation (rectal pack out on POD 2, stent out on POD 10…)
       dob: isDate(body.dob) ? body.dob : null, birth_weight: str(body.birth_weight, 20), gestation: str(body.gestation, 20),
       current_weight: str(body.current_weight, 20), weight: str(body.weight, 20),
@@ -440,6 +441,7 @@ const Store = (() => {
     const sds = [...new Set([keep.surgery_date, keep.surgery_date2, keep.surgery_date3, other.surgery_date, other.surgery_date2, other.surgery_date3].filter(Boolean))].sort().slice(0, 3);
     [next.surgery_date, next.surgery_date2, next.surgery_date3] = [sds[0] || null, sds[1] || null, sds[2] || null];
     next.instructions = [keep.instructions, other.instructions].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
+    next.ot_findings = [keep.ot_findings, other.ot_findings].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
     next.ot_overs = [keep.ot_overs, other.ot_overs].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
     put(keep.id, 'admission', { ...next, updated_at: stamp() });
     put(other.id, 'admission', null);
