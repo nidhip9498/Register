@@ -1020,6 +1020,13 @@ const Store = (() => {
     if (surgeon !== (l.surgeon || '') || note !== (l.note || '')) touchOtList(l.id, surgeon !== (l.surgeon || '') ? 'changed the surgeon' : 'changed the note');
     return { ok: true };
   });
+  // One day's list marked Routine or Emergency (the print title follows). Admin only, like the OT's own setting.
+  route('PUT', '/api/otlists/:id/kind', ADMIN, ({ body, params: p }) => {
+    const l = getOtList(p.id);
+    if (!KINDS.includes(body.kind)) throw new HttpError(400, 'Pick Routine or Emergency');
+    if ((l.kind || 'Routine') !== body.kind) { put(l.id, 'otlist', { ...strip(l), kind: body.kind }); touchOtList(l.id, 'marked it ' + body.kind); }
+    return { ok: true };
+  });
   route('DELETE', '/api/otlists/:id', ANY, ({ params: p }) => {
     const l = getOtList(p.id);
     for (const e of otEntries(l.id)) put(e.id, 'otentry', null);

@@ -1755,6 +1755,15 @@ function todayDrop(l) {
     live.length ? h('div', { class: 'otrows' }, live.map(row)) : h('p', { class: 'muted small' }, 'No patients yet.'));
 }
 
+// Routine / Emergency for one day's list. Only the admin can change it.
+function listKindSeg(l, reload) {
+  const admin = S.user.role === 'admin', kind = l.kind || 'Routine';
+  return h('div', { class: 'seg otkind' }, ['Routine', 'Emergency'].map((k) => h('button', { type: 'button', class: (k === kind ? 'on' : '') + (k === 'Emergency' ? ' em' : ''), disabled: !admin && k !== kind, title: admin ? '' : 'Only the admin can change this', onclick: async () => {
+    if (k === kind || !admin) return;
+    try { await api('PUT', `/api/otlists/${encodeURIComponent(l.id)}/kind`, { kind: k }); toast(`This list is now ${k}`); reload(); } catch (e) { toast(e.message, true); }
+  } }, k)));
+}
+
 async function otDatesView(main, ot) {
   const today = S.meta.today;
   const [lists, kinds] = await Promise.all([api('GET', '/api/otlists?ot=' + encodeURIComponent(ot)), api('GET', '/api/otrooms')]);
@@ -1924,7 +1933,7 @@ async function otListView(main, id) {
         } }, 'Delete list'))),
     shiftBox,
     h('div', { class: 'noprint' },
-      h('div', { class: 'card othdr' }, h('label', {}, 'Surgeon', surgeon), h('label', {}, 'Second surgeon (if two run the OT)', surgeon2),
+      h('div', { class: 'card othdr' }, h('div', { class: 'label' }, 'This list is', listKindSeg(l, reload)), h('label', {}, 'Surgeon', surgeon), h('label', {}, 'Second surgeon (if two run the OT)', surgeon2),
         h('label', {}, 'Extra note (optional)', note, h('small', { class: 'muted' }, 'KEEP OT WARM is always printed.'))),
       h('div', { class: 'otadd' },
         h('button', { class: 'primary', onclick: () => otEntryModal(l, null, reload) }, '+ Add patient'),
