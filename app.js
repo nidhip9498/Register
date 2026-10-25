@@ -95,6 +95,9 @@ function stayBadges(a, date) {
 
 // "POD 5/2" when there has been more than one surgery, like the old sheet.
 function podText(a, date) {
+  // POD goes up at midnight: Rounds after 11:30 show the next day's page, but POD stays today's.
+  const now = localStamp(new Date()).slice(0, 10);
+  if (date > now) date = now;
   const pods = [a.surgery_date, a.surgery_date2, a.surgery_date3].filter((d) => d && d <= date).map((d) => daysBetween(d, date));
   if (!pods.length) return '';
   return 'POD ' + pods.join('/');
