@@ -681,6 +681,8 @@ const BIN_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" str
 // Worklist: everyone but consultants; the count and the tab that opens first are your own list (JR, or SR for SR and admin).
 const canWork = () => S.user && ['admin', 'sr', 'jr', 'viewer'].includes(S.user.role);
 const myWorkList = () => (S.user && ['admin', 'sr'].includes(S.user.role) ? 'sr' : 'jr');
+// Several tasks at once: one per line in the box (Enter starts a new line; Ctrl+Enter or Add saves them all).
+const workLines = (v) => v.split('\n').map((t) => t.trim()).filter(Boolean);
 const WORK_TABS = [['jr', 'JR Worklist'], ['sr', 'SR Worklist']];
 const workSort = (x, y) => (x.done !== y.done ? (x.done ? 1 : -1) : x.done ? (x.done_at || 0) - (y.done_at || 0)
   : x.priority !== y.priority ? (x.priority ? -1 : 1) : bedRank(x.bed) - bedRank(y.bed) || x.at - y.at);
@@ -700,16 +702,17 @@ async function worklistPanel(onClose) {
   const who = h('select', {}, h('option', { value: '' }, 'Choose patient'), pts.map((a) => h('option', { value: a.id }, `${a.bed_on_date} · ${a.name}`)), h('option', { value: 'other' }, 'Other (not in ward)…'));
   const otherIn = h('input', { placeholder: 'Bed / ward and name, e.g. 7C/2 Riya', hidden: true });
   who.onchange = () => { otherIn.hidden = who.value !== 'other'; if (!otherIn.hidden) otherIn.focus(); };
-  const text = h('input', { placeholder: 'To do, e.g. Send CBC, Call radiology for USG' });
+  const text = h('textarea', { rows: 3, placeholder: 'To do, one per line, e.g.\nSend CBC\nCall radiology for USG' });
   const pri = h('input', { type: 'checkbox' });
   const add = async () => {
     if (!who.value) return toast('Choose the patient', true);
-    if (!text.value.trim()) return toast('Type what is to be done', true);
-    const b = { list: tab(), text: text.value, priority: pri.checked };
+    const tasks = workLines(text.value);
+    if (!tasks.length) return toast('Type what is to be done', true);
+    const b = { list: tab(), priority: pri.checked };
     if (who.value === 'other') { if (!otherIn.value.trim()) return toast('Type the bed or name', true); b.bed = otherIn.value; } else b.admission_id = who.value;
-    try { await api('POST', '/api/work', b); text.value = ''; pri.checked = false; await load(); text.focus(); } catch (e) { toast(e.message, true); }
+    try { for (const t of tasks) await api('POST', '/api/work', { ...b, text: t }); text.value = ''; pri.checked = false; await load(); text.focus(); } catch (e) { toast(e.message, true); }
   };
-  text.onkeydown = (ev) => { if (ev.key === 'Enter') add(); };
+  text.onkeydown = (ev) => { if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); add(); } };
   const form = canWork() ? h('div', { class: 'workadd' }, who, otherIn, text, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'primary small', onclick: add }, 'Add')) : '';
   const table = h('div', { class: 'workwrap' });
   body.replaceChildren(form, table, h('p', { class: 'muted small' }, 'Ticked work stays struck through until 9 am, then clears. Pending work carries over to the next day.'));
@@ -735,7 +738,7 @@ async function worklistPanel(onClose) {
 // In a Rounds card: add work for this patient to the JR or SR worklist, and see what is pending.
 function workBox(a) {
   const box = h('div', {});
-  const text = h('input', { placeholder: 'Add to worklist, e.g. Repeat KFT' });
+  const text = h('textarea', { rows: 3, placeholder: 'Add to worklist, one per line, e.g.\nRepeat KFT\nSend urine C/S' });
   const list = h('select', {}, WORK_TABS.map(([k, label]) => h('option', { value: k }, label.replace(' Worklist', ''))));
   const pri = h('input', { type: 'checkbox' });
   list.value = S.workTab || myWorkList();
@@ -751,10 +754,11 @@ function workBox(a) {
   };
   const load = () => api('GET', '/api/work').then(draw).catch(() => draw([]));
   const add = async () => {
-    if (!text.value.trim()) return;
-    try { await api('POST', '/api/work', { list: list.value, admission_id: a.id, text: text.value, priority: pri.checked }); toast(`Added to the ${list.value.toUpperCase()} worklist`); text.value = ''; pri.checked = false; load(); } catch (e) { toast(e.message, true); }
+    const tasks = workLines(text.value);
+    if (!tasks.length) return;
+    try { for (const t of tasks) await api('POST', '/api/work', { list: list.value, admission_id: a.id, text: t, priority: pri.checked }); toast(`${tasks.length} added to the ${list.value.toUpperCase()} worklist`); text.value = ''; pri.checked = false; load(); } catch (e) { toast(e.message, true); }
   };
-  text.onkeydown = (ev) => { if (ev.key === 'Enter') add(); };
+  text.onkeydown = (ev) => { if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); add(); } };
   load();
   return box;
 }
