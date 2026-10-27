@@ -709,17 +709,19 @@ const Store = (() => {
   // Worklist (JR and SR): the day's to-dos per patient. The work day runs 9 am to 9 am; at 9 am ticked items are dropped
   // (deleted, not kept anywhere) and pending ones carry over.
   const WORK_LISTS = ['jr', 'sr'];
+  // Residents, the admin and the view-only (Rounds) role use the worklist; consultants don't see it (Nidhi, 2026-10-27).
+  const WORKERS = ['admin', 'sr', 'jr', 'viewer'];
   const workDayStart = () => { const d = new Date(); if (d.getHours() < 9) d.setDate(d.getDate() - 1); d.setHours(9, 0, 0, 0); return d.getTime(); };
   const pruneWork = () => { const start = workDayStart(); for (const w of all('work')) if (w.done && (w.done_at || 0) < start) put(w.id, 'work', null); };
   const getWork = (id) => { const w = get(id); if (!w || !id.startsWith('work:')) throw new HttpError(404, 'Worklist item not found'); return w; };
-  route('GET', '/api/work', ANY, () => {
+  route('GET', '/api/work', WORKERS, () => {
     pruneWork();
     return all('work').map((w) => {
       const a = w.admission_id ? get(w.admission_id) : null;
       return { ...w, bed: a ? a.bed : w.bed || '', name: a ? a.name : w.name || '', discharged: !!(a && a.discharge_date) };
     });
   });
-  route('POST', '/api/work', EDITORS, ({ body }) => {
+  route('POST', '/api/work', WORKERS, ({ body }) => {
     const list = WORK_LISTS.includes(body.list) ? body.list : 'jr';
     const text = str(body.text, 300);
     if (!text) throw new HttpError(400, 'Type what is to be done');
@@ -730,7 +732,7 @@ const Store = (() => {
     put(id, 'work', { list, admission_id, bed, name, text, priority: !!body.priority, done: false, done_at: null, by: currentUser.id, at: Date.now() });
     return { id };
   });
-  route('PUT', '/api/work/:id', EDITORS, ({ body, params: p }) => {
+  route('PUT', '/api/work/:id', WORKERS, ({ body, params: p }) => {
     const w = getWork(p.id);
     const next = { ...strip(w) };
     if (body.done != null) { next.done = !!body.done; next.done_at = next.done ? Date.now() : null; next.done_by = next.done ? currentUser.id : null; }
@@ -739,7 +741,7 @@ const Store = (() => {
     put(w.id, 'work', next);
     return { ok: true };
   });
-  route('DELETE', '/api/work/:id', EDITORS, ({ params: p }) => { getWork(p.id); put(p.id, 'work', null); return { ok: true }; });
+  route('DELETE', '/api/work/:id', WORKERS, ({ params: p }) => { getWork(p.id); put(p.id, 'work', null); return { ok: true }; });
   route('DELETE', '/api/inv/:iid', EDITORS, ({ params: p }) => {
     const v = get(p.iid);
     if (!v || !p.iid.startsWith('inv:')) throw new HttpError(404, 'Investigation not found');

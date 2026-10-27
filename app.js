@@ -657,6 +657,7 @@ const workDay = () => { const d = new Date(); if (d.getHours() < 9) d.setDate(d.
 function drawOtAlerts(box, admissions, open, date, withWork) {
   const day = !date || date === S.meta.today ? workDay() : date;
   const inv = invOn(admissions.filter((a) => !a.discharge_date || a.discharge_date > day), day);
+  withWork = withWork && canWork();
   if (!inv.length && !withWork) return box.replaceChildren();
   const bell = inv.length ? h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Investigations today', inv, day) },
     h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
@@ -668,8 +669,8 @@ function drawOtAlerts(box, admissions, open, date, withWork) {
   const tile = h('button', { type: 'button', class: 'otbar workbar', onclick: () => worklistPanel(() => drawOtAlerts(box, admissions, open, date, withWork)) },
     h('span', { 'aria-hidden': 'true' }, '📝'), h('b', {}, 'Worklist'), count);
   api('GET', '/api/work').then((w) => {
-    const pend = w.filter((x) => !x.done), pri = pend.filter((x) => x.priority).length;
-    count.replaceChildren(pend.length ? `${pend.length} pending${pri ? ` · ` : ''}` : 'Nothing pending', pri ? h('b', { class: 'prio' }, `${pri} priority`) : '');
+    const pend = w.filter((x) => !x.done && x.list === myWorkList()), pri = pend.filter((x) => x.priority).length;
+    count.replaceChildren(pend.length ? `${pend.length} pending on ${myWorkList().toUpperCase()}${pri ? ` · ` : ''}` : `Nothing pending on ${myWorkList().toUpperCase()}`, pri ? h('b', { class: 'prio' }, `${pri} priority`) : '');
     tile.classList.toggle('haspri', !!pri);
   }).catch(() => {});
   box.replaceChildren(h('div', { class: 'alertbar' }, bell, tile));
@@ -677,6 +678,9 @@ function drawOtAlerts(box, admissions, open, date, withWork) {
 
 // ---------- Worklist: JR and SR to-dos per patient, ticked ones cleared at 9 am ----------
 const BIN_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+// Worklist: everyone but consultants; the count and the tab that opens first are your own list (JR, or SR for SR and admin).
+const canWork = () => S.user && ['admin', 'sr', 'jr', 'viewer'].includes(S.user.role);
+const myWorkList = () => (S.user && ['admin', 'sr'].includes(S.user.role) ? 'sr' : 'jr');
 const WORK_TABS = [['jr', 'JR Worklist'], ['sr', 'SR Worklist']];
 const workSort = (x, y) => (x.done !== y.done ? (x.done ? 1 : -1) : x.done ? (x.done_at || 0) - (y.done_at || 0)
   : x.priority !== y.priority ? (x.priority ? -1 : 1) : bedRank(x.bed) - bedRank(y.bed) || x.at - y.at);
@@ -691,7 +695,7 @@ async function worklistPanel(onClose) {
   const reg = await api('GET', '/api/register?date=' + S.meta.today).catch(() => ({ admissions: [] }));
   const pts = reg.admissions.filter((a) => !a.discharge_date).sort((x, y) => bedRank(x.bed_on_date) - bedRank(y.bed_on_date));
   let items = [];
-  const tab = () => S.workTab || 'jr';
+  const tab = () => S.workTab || myWorkList();
   // Add a to-do: a patient in the ward, or "Other" for someone not in the ward (type the bed or name).
   const who = h('select', {}, h('option', { value: '' }, 'Choose patient'), pts.map((a) => h('option', { value: a.id }, `${a.bed_on_date} · ${a.name}`)), h('option', { value: 'other' }, 'Other (not in ward)…'));
   const otherIn = h('input', { placeholder: 'Bed / ward and name, e.g. 7C/2 Riya', hidden: true });
@@ -706,7 +710,7 @@ async function worklistPanel(onClose) {
     try { await api('POST', '/api/work', b); text.value = ''; pri.checked = false; await load(); text.focus(); } catch (e) { toast(e.message, true); }
   };
   text.onkeydown = (ev) => { if (ev.key === 'Enter') add(); };
-  const form = canEdit() ? h('div', { class: 'workadd' }, who, otherIn, text, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'primary small', onclick: add }, 'Add')) : '';
+  const form = canWork() ? h('div', { class: 'workadd' }, who, otherIn, text, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'primary small', onclick: add }, 'Add')) : '';
   const table = h('div', { class: 'tablewrap' });
   body.replaceChildren(form, table, h('p', { class: 'muted small' }, 'Ticked work stays struck through until 9 am, then clears. Pending work carries over to the next day.'));
   const set = async (w, b) => { try { await api('PUT', '/api/work/' + encodeURIComponent(w.id), b); await load(); } catch (e) { toast(e.message, true); } };
@@ -718,9 +722,9 @@ async function worklistPanel(onClose) {
     table.replaceChildren(rows.length ? h('ul', { class: 'worklines' }, rows.map((w) => h('li', { class: 'workline' + (w.done ? ' done' : '') + (w.priority && !w.done ? ' prio' : '') },
         h('span', { class: 'bedno' }, w.bed || '—'),
         h('span', { class: 'wtodo' }, w.name ? h('span', { class: 'wname' }, w.name + ' · ') : '', h('span', { class: 'wtext' }, w.text), w.discharged ? h('span', { class: 'small muted' }, ' · discharged') : ''),
-        h('label', { class: 'wbox', title: 'Priority' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canEdit() || w.done, onchange: (ev) => set(w, { priority: ev.target.checked }) }), h('span', {}, 'Priority')),
-        h('label', { class: 'wbox', title: 'Done' }, h('input', { type: 'checkbox', class: 'tick', checked: w.done, disabled: !canEdit(), onchange: (ev) => set(w, { done: ev.target.checked }) }), h('span', {}, 'Done')),
-        canEdit() ? iconBtn(BIN_SVG, 'Delete', () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); }, 'pencil bin') : '')))
+        h('label', { class: 'wbox', title: 'Priority' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canWork() || w.done, onchange: (ev) => set(w, { priority: ev.target.checked }) }), h('span', {}, 'Priority')),
+        h('label', { class: 'wbox', title: 'Done' }, h('input', { type: 'checkbox', class: 'tick', checked: w.done, disabled: !canWork(), onchange: (ev) => set(w, { done: ev.target.checked }) }), h('span', {}, 'Done')),
+        canWork() ? iconBtn(BIN_SVG, 'Delete', () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); }, 'pencil bin') : '')))
       : h('p', { class: 'muted' }, `Nothing on the ${WORK_TABS.find(([k]) => k === tab())[1]} yet.`));
   }
   async function load() { items = await api('GET', '/api/work').catch((e) => { toast(e.message, true); return items; }); draw(); }
@@ -732,14 +736,14 @@ function workBox(a) {
   const text = h('input', { placeholder: 'Add to worklist, e.g. Repeat KFT' });
   const list = h('select', {}, WORK_TABS.map(([k, label]) => h('option', { value: k }, label.replace(' Worklist', ''))));
   const pri = h('input', { type: 'checkbox' });
-  list.value = S.workTab || 'jr';
+  list.value = S.workTab || myWorkList();
   const draw = (items) => {
     const mine = items.filter((w) => w.admission_id === a.id).sort(workSort);
     const pend = mine.filter((w) => !w.done);
     box.replaceChildren(foldBox('work:' + a.id, 'work', 'Worklist', pend.length ? `${pend.length} pending` : '', [
       mine.length ? h('ul', { class: 'invlist worklistmini' }, mine.map((w) => h('li', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
         h('b', {}, w.list.toUpperCase()), ` · ${w.text}`))) : null,
-      canEdit() && h('div', { class: 'otadd invadd workadd' }, text, list, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add'))]));
+      canWork() && h('div', { class: 'otadd invadd workadd' }, text, list, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add'))]));
   };
   const load = () => api('GET', '/api/work').then(draw).catch(() => draw([]));
   const add = async () => {
