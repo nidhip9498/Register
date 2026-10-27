@@ -1959,20 +1959,23 @@ async function allOtListsPopup() {
     h('div', { class: 'modal card panel wide allot' }, h('div', { class: 'mhead' }, h('h2', {}, 'All OT lists'), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), body)));
   const rows = await api('GET', '/api/otall').catch((e) => { toast(e.message, true); return []; });
   const f = S.otAllFilter || (S.otAllFilter = { ot: '', date: '', month: '', kind: '', newest: true });
+  f.q = f.q || '';
+  const qIn = h('input', { type: 'search', class: 'allotq', placeholder: 'Search by UHID, name or consultant', value: f.q, oninput: (e) => { f.q = e.target.value; draw(); } });
   const otSel = h('select', { onchange: (e) => { f.ot = e.target.value; draw(); } }, h('option', { value: '' }, 'All OTs'), OT_ROOMS.map(([ot]) => h('option', { value: ot }, otName(ot))));
   const dateIn = h('input', { type: 'date', onchange: (e) => { f.date = e.target.value; if (f.date) { f.month = ''; monthIn.value = ''; } draw(); } });
   const monthIn = h('input', { type: 'month', onchange: (e) => { f.month = e.target.value; if (f.month) { f.date = ''; dateIn.value = ''; } draw(); } });
   const kindSel = h('select', { onchange: (e) => { f.kind = e.target.value; draw(); } }, h('option', { value: '' }, 'Routine and Emergency'), h('option', { value: 'Routine' }, 'Routine'), h('option', { value: 'Emergency' }, 'Emergency'));
   otSel.value = f.ot; dateIn.value = f.date; monthIn.value = f.month; kindSel.value = f.kind;
   const sortBtn = h('button', { type: 'button', class: 'ghost small', onclick: () => { f.newest = !f.newest; draw(); } });
-  const clear = h('button', { type: 'button', class: 'link small', onclick: () => { Object.assign(f, { ot: '', date: '', month: '', kind: '' }); otSel.value = dateIn.value = monthIn.value = kindSel.value = ''; draw(); } }, 'Clear filters');
+  const clear = h('button', { type: 'button', class: 'link small', onclick: () => { Object.assign(f, { ot: '', date: '', month: '', kind: '', q: '' }); otSel.value = dateIn.value = monthIn.value = kindSel.value = qIn.value = ''; draw(); } }, 'Clear filters');
   const count = h('p', { class: 'muted small' });
   const table = h('div', { class: 'tablewrap' });
   body.replaceChildren(h('div', { class: 'allotfilters' },
     h('label', {}, 'OT', otSel), h('label', {}, 'Date', dateIn), h('label', {}, 'Month', monthIn), h('label', {}, 'List', kindSel),
-    h('div', { class: 'allotsort' }, sortBtn, clear)), count, table);
+    h('div', { class: 'allotsort' }, sortBtn, clear)), qIn, count, table);
   function draw() {
-    const shown = rows.filter((r) => (!f.ot || r.ot === f.ot) && (!f.date || r.date === f.date) && (!f.month || r.date.startsWith(f.month)) && (!f.kind || r.kind === f.kind))
+    const q = f.q.trim().toLowerCase();
+    const shown = rows.filter((r) => (!q || [r.uhid, r.name, r.consultant, fullNames(r.consultant)].join(' ').toLowerCase().includes(q)) && (!f.ot || r.ot === f.ot) && (!f.date || r.date === f.date) && (!f.month || r.date.startsWith(f.month)) && (!f.kind || r.kind === f.kind))
       .sort((x, y) => (x.date !== y.date ? (x.date < y.date ? -1 : 1) * (f.newest ? -1 : 1) : x.ot !== y.ot ? (x.ot < y.ot ? -1 : 1) : x.order - y.order));
     sortBtn.textContent = f.newest ? 'Newest first ↓' : 'Oldest first ↑';
     count.textContent = `${shown.length} patient${shown.length === 1 ? '' : 's'}${shown.length ? ` on ${new Set(shown.map((r) => r.list_id)).size} list${new Set(shown.map((r) => r.list_id)).size === 1 ? '' : 's'}` : ''}`;

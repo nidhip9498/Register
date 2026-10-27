@@ -752,3 +752,4 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
 .wfadd input:not([type=checkbox]) { font-size: 1.05rem; }
 .wfadd label.prioopt { display: flex; align-items: center; gap: .3rem; white-space: nowrap; font-size: .95rem; }
 .worklist .workadd > textarea { grid-column: 1 / -1; min-height: 4.6em; resize: vertical; }
+.allotq { width: 100%; max-width: 460px; margin: .5rem 0 .2rem; }
