@@ -742,10 +742,12 @@ function workBox(a) {
   const draw = (items) => {
     const mine = items.filter((w) => w.admission_id === a.id).sort(workSort);
     const pend = mine.filter((w) => !w.done);
-    box.replaceChildren(foldBox('work:' + a.id, 'work', 'Worklist', pend.length ? `${pend.length} pending` : '', [
-      mine.length ? h('ul', { class: 'invlist worklistmini' }, mine.map((w) => h('li', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
+    // An open box (not a dropdown) beside Procedure done: type the work and Add.
+    box.replaceChildren(h('div', { class: 'workfield' },
+      h('div', { class: 'wfhead' }, h('span', { class: 'wficon', 'aria-hidden': 'true' }, '📝'), h('b', {}, 'Worklist'), pend.length ? h('span', { class: 'small muted' }, `${pend.length} pending`) : ''),
+      mine.length ? h('ul', { class: 'worklistmini' }, mine.map((w) => h('li', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
         h('b', {}, w.list.toUpperCase()), ` · ${w.text}`))) : null,
-      canWork() && h('div', { class: 'otadd invadd workadd' }, text, list, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add'))]));
+      canWork() ? h('div', { class: 'wfadd' }, text, list, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'primary small', onclick: add }, 'Add')) : ''));
   };
   const load = () => api('GET', '/api/work').then(draw).catch(() => draw([]));
   const add = async () => {
@@ -1064,7 +1066,7 @@ function patientCard(a, date, refresh) {
           icu && a.birth_weight && `BW ${a.birth_weight} g`, icu && a.gestation && `GA ${a.gestation} wk`, icu && a.current_weight && `Wt ${a.current_weight} g`,
           !icu && a.weight && `Wt ${a.weight} kg`].filter(Boolean).join(' · ')),
         a.diagnosis && h('div', { class: 'rdx' }, h('span', {}, 'Diagnosis'), a.diagnosis),
-        procedureBox(a, surgeries, () => refresh(id))),
+        h('div', { class: 'procwork' }, procedureBox(a, surgeries, () => refresh(id)), workBox(a))),
       h('div', { class: 'rcorner' },
         h('div', { class: 'cfact' }, h('span', {}, 'Age / Sex'), h('b', {}, ageSex(a, date) || '—')),
         h('div', { class: 'cfact' }, h('span', {}, 'Consultant'), h('b', {}, a.unit || '—')),
@@ -1072,8 +1074,7 @@ function patientCard(a, date, refresh) {
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
     oversBox(a),
     findingsBox(a),
-    invBox(a, date, () => refresh(id)),
-    workBox(a));
+    invBox(a, date, () => refresh(id)));
 
   if (!discharged && a.discharge_date !== date) {
     add(

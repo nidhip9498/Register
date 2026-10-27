@@ -737,3 +737,17 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
 .workline.done .wtodo { text-decoration: line-through; color: var(--muted); }
 .workline.done { opacity: .7; }
 .workline .wundo { flex: none; min-height: 0; padding: .2rem .6rem; }
+
+/* Worklist box beside Procedure done in Rounds (v98) */
+.procwork { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; align-items: start; margin-top: .3rem; }
+@media (max-width: 760px) { .procwork { grid-template-columns: 1fr; } }
+.workfield { border: 2px solid var(--plan); background: var(--plan-soft); border-radius: 10px; padding: .6rem .7rem; font-size: 1.05rem; }
+.wfhead { display: flex; align-items: center; gap: .45rem; margin-bottom: .4rem; }
+.wfhead b { font-size: 1.15rem; color: var(--plan); }
+.wficon { font-size: 1.3rem; }
+.worklistmini { list-style: none; margin: 0 0 .5rem; padding: 0; }
+.worklistmini li { padding: .15rem 0; }
+.wfadd { display: grid; grid-template-columns: 1fr auto auto; gap: .4rem; align-items: center; }
+.wfadd > input:first-child { grid-column: 1 / -1; }
+.wfadd input:not([type=checkbox]) { font-size: 1.05rem; }
+.wfadd label.prioopt { display: flex; align-items: center; gap: .3rem; white-space: nowrap; font-size: .95rem; }
