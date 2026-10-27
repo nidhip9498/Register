@@ -711,7 +711,7 @@ async function worklistPanel(onClose) {
   };
   text.onkeydown = (ev) => { if (ev.key === 'Enter') add(); };
   const form = canWork() ? h('div', { class: 'workadd' }, who, otherIn, text, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'primary small', onclick: add }, 'Add')) : '';
-  const table = h('div', { class: 'tablewrap' });
+  const table = h('div', { class: 'workwrap' });
   body.replaceChildren(form, table, h('p', { class: 'muted small' }, 'Ticked work stays struck through until 9 am, then clears. Pending work carries over to the next day.'));
   const set = async (w, b) => { try { await api('PUT', '/api/work/' + encodeURIComponent(w.id), b); await load(); } catch (e) { toast(e.message, true); } };
   function draw() {
@@ -720,8 +720,8 @@ async function worklistPanel(onClose) {
     const rows = items.filter((w) => w.list === tab()).sort(workSort);
     // One line per to-do: bed, name and the to-do (widest), then the Priority and Done boxes and a bin.
     table.replaceChildren(rows.length ? h('ul', { class: 'worklines' }, rows.map((w) => h('li', { class: 'workline' + (w.done ? ' done' : '') + (w.priority && !w.done ? ' prio' : '') },
-        h('span', { class: 'bedno' }, w.bed || '—'),
-        h('span', { class: 'wtodo' }, w.name ? h('span', { class: 'wname' }, w.name + ' · ') : '', h('span', { class: 'wtext' }, w.text), w.discharged ? h('span', { class: 'small muted' }, ' · discharged') : ''),
+        h('b', { class: 'wbed' }, w.bed || '—'),
+        h('span', { class: 'wtodo' }, h('span', { class: 'wtext' }, w.text), w.discharged ? h('span', { class: 'small muted' }, ' · discharged') : ''),
         h('label', { class: 'wbox', title: 'Priority' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canWork() || w.done, onchange: (ev) => set(w, { priority: ev.target.checked }) }), h('span', {}, 'Priority')),
         h('label', { class: 'wbox', title: 'Done' }, h('input', { type: 'checkbox', class: 'tick', checked: w.done, disabled: !canWork(), onchange: (ev) => set(w, { done: ev.target.checked }) }), h('span', {}, 'Done')),
         canWork() ? iconBtn(BIN_SVG, 'Delete', () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); }, 'pencil bin') : '')))
