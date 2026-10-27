@@ -673,3 +673,28 @@ table.print tr.notesrow .unote { margin-left: 1rem; }
 .sxdates { margin: 6px 0; }
 .sxdaterow { display: flex; flex-wrap: wrap; gap: 6px; }
 .sxdaterow input { width: auto; flex: 1; min-width: 140px; }
+
+/* View all OT lists */
+.otsearchrow { display: flex; align-items: flex-start; gap: .4rem 1rem; flex-wrap: wrap; }
+.otsearchrow .otsearch { flex: 1 1 280px; }
+.viewall { font-weight: 600; white-space: nowrap; color: var(--accent) !important; text-decoration: underline; margin: 1.6rem 0 0; }
+@media (max-width: 640px) { .viewall { margin: .3rem 0 0; } }
+.allottable { min-width: 900px; }
+.allotfilters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .5rem; align-items: end; margin-bottom: .4rem; }
+.allotfilters label { display: flex; flex-direction: column; gap: .2rem; font-size: .85rem; color: var(--muted); }
+.allotsort { display: flex; gap: .6rem; align-items: center; }
+.allottable td, .allottable th { font-size: .85rem; vertical-align: top; }
+.allottable tbody tr { cursor: pointer; }
+.allottable tbody tr:hover { background: var(--accent-soft); }
+.allottable tr.casecancelled td { opacity: .6; }
+.allottable .nowrap { white-space: nowrap; }
+.emtag { color: var(--warn); font-weight: 600; }
+
+/* Status tab: every section is a dropdown */
+details.statusdrop { border: 1px solid var(--line); border-radius: 10px; background: var(--card); margin: 0 0 .7rem; }
+details.statusdrop > summary { cursor: pointer; padding: .8rem 1rem; font-weight: 700; font-size: 1.05rem; }
+details.statusdrop > :not(summary) { padding: 0 1rem .8rem; }
+details.statusdrop .register { padding: 0 1rem .8rem; }
+@media print { details.statusdrop { border: 0; } details.statusdrop > summary { display: none; } details.statusdrop:not([open]) { display: none; } }
+.wardlist { min-width: 760px; }
+.wardlist td { font-size: .9rem; }

@@ -457,11 +457,14 @@ const Store = (() => {
     return { ok: true };
   });
 
+  const UNDO_DISCHARGE_MS = 24 * 3600e3;
+  // Discharges from before this rule carry no time: those count from their discharge date (today or yesterday only).
+  const undoableDischarge = (a) => !!a.discharge_date && (typeof a.discharged_at === 'number' ? Date.now() - a.discharged_at <= UNDO_DISCHARGE_MS : a.discharge_date >= shiftDate(today(), -1));
   route('POST', '/api/admissions/:id/discharge', EDITORS, ({ body, params: p }) => {
     const a = getAdmission(p.id);
     const date = isDate(body.date) ? body.date : today();
     if (a.admit_date && date < a.admit_date) throw new HttpError(400, 'Discharge date is before the admission date');
-    put(a.id, 'admission', { ...strip(a), discharge_date: date, outcome: str(body.outcome, 60) || 'Discharged' });
+    put(a.id, 'admission', { ...strip(a), discharge_date: date, outcome: str(body.outcome, 60) || 'Discharged', discharged_at: Date.now() });
     audit('discharge', `${a.name} from ${a.bed} on ${date}`);
     const shifted = resumeShifts() || 0;
     return { ok: true, shifted };
@@ -470,9 +473,12 @@ const Store = (() => {
   route('POST', '/api/admissions/:id/undo-discharge', EDITORS, ({ params: p }) => {
     const a = getAdmission(p.id);
     // The bed may have been given to someone else since; the patient can't come back into an occupied bed.
+    // Only within 24 hours of pressing Discharge (Nidhi, 2026-10-27). Older discharges, and ones made before this rule, stay.
+    if (!a.discharge_date) throw new HttpError(400, 'This patient is not discharged');
+    if (!undoableDischarge(a)) throw new HttpError(400, 'A discharge can only be undone within 24 hours. Admit the patient again instead.');
     const occ = occupants(a.bed, a.id);
     if (occ.length) throw new HttpError(409, `${a.bed} now has ${occ.map((o) => o.name).join(', ')}. Free the bed or move them first.`);
-    put(a.id, 'admission', { ...strip(a), discharge_date: null, outcome: '' });
+    put(a.id, 'admission', { ...strip(a), discharge_date: null, outcome: '', discharged_at: null });
     audit('undo discharge', a.name);
     return { ok: true };
   });
@@ -1069,6 +1075,16 @@ const Store = (() => {
     return all('otentry').filter((e) => lists.has(e.list_id) && ((e.uhid || '').toLowerCase().includes(q) || (e.name || '').toLowerCase().includes(q)))
       .map((e) => { const l = lists.get(e.list_id); return { ...e, ot: l.ot, date: l.date, surgeon: l.surgeon || '', bed: liveBed(e, l), case_cancelled: e.case_cancelled ? { ...e.case_cancelled, by: userName(e.case_cancelled.by) } : undefined }; })
       .sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0)).slice(0, 50);
+  });
+  // Every patient on every OT list, one row each (shifted copies left out), for "View all OT lists".
+  route('GET', '/api/otall', ANY, () => {
+    const rows = [];
+    for (const l of all('otlist')) for (const e of otEntries(l.id)) {
+      if (e.cancelled) continue;
+      rows.push({ list_id: l.id, entry_id: e.id, date: l.date, ot: l.ot, kind: l.kind || 'Routine', uhid: e.uhid || '', name: e.name || '', age: e.age || '', sex: e.sex || '',
+        diagnosis: e.diagnosis || '', procedure: e.done || e.surgery || '', consultant: e.consultant || '', scrub: e.scrub || [], order: e.order || 0, case_cancelled: !!e.case_cancelled });
+    }
+    return rows;
   });
   route('GET', '/api/uhid/:uhid', ANY, ({ params: p, query }) => lookupUhid(p.uhid, isDate(query.date) ? query.date : today()) || {});
   route('POST', '/api/otlists/:id/entries', ANY, ({ body, params: p }) => {

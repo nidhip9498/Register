@@ -60,6 +60,8 @@ const dayNo = (a, date) => (a.admit_date ? String(daysBetween(a.admit_date, date
 function daysBetween(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5); }
 
 const canEdit = () => S.user && ['admin', 'sr', 'jr'].includes(S.user.role);
+// A discharge can be undone for 24 hours after it was made (the server checks the same).
+const canUndoDischarge = (a) => !!a.discharge_date && (typeof a.discharged_at === 'number' ? Date.now() - a.discharged_at <= 24 * 3600e3 : a.discharge_date >= addDays(S.meta.today, -1));
 // Editors enter rounds; a 'viewer' only reads them.
 const canSeeRounds = () => canEdit() || (S.user && S.user.role === 'viewer');
 const isViewer = () => S.user && S.user.role === 'viewer';
@@ -291,10 +293,10 @@ function view(route, arg, main) {
 }
 
 function topBar(route) {
-  const link = (r, label) => h('a', { href: '#' + r, class: route === r || (r === 'ot' && route === 'otlist') ? 'active' : '' }, label);
+  const link = (r, label) => h('a', { href: '#' + r, class: route === r || (r === 'ot' && (route === 'otlist' || route === 'otlog')) ? 'active' : '' }, label);
   return h('header', { class: 'top' },
     h('div', { class: 'brand' }, h('img', { src: 'icon.svg', alt: '' }), h('div', {}, h('b', {}, 'Register'), h('small', {}, 'Department of Pediatric Surgery'))),
-    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canSeeRounds() && link('rounds', 'Rounds'), canSeeRounds() && link('icurounds', 'ICU Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('otlog', 'Logbook'), link('patients', 'Status'), link('monthly', 'Census'), S.user.role === 'admin' && link('admin', 'Admin')),
+    h('nav', {}, link('register', 'Ward Register'), link('icu', 'ICU Register'), canSeeRounds() && link('rounds', 'Rounds'), canSeeRounds() && link('icurounds', 'ICU Rounds'), link('census', 'Bed Occupancy'), link('ot', 'OT Lists'), link('patients', 'Status'), link('monthly', 'Census'), S.user.role === 'admin' && link('admin', 'Admin')),
     h('div', { class: 'me' },
       h('button', { id: 'sync-chip', class: 'sync-chip', onclick: async () => {
         if (updatesWaiting) { if (!confirmLeave()) return; updatesWaiting = false; S.dirty.clear(); S.meta = await api('GET', '/api/meta'); render(); }
@@ -1376,7 +1378,7 @@ async function patientView(main, id) {
     h('div', { class: 'toolbar' },
       h('a', { href: isIcu(a.bed) ? '#icu' : '#register', class: 'button ghost' }, '‹ Register'),
       h('div', { class: 'actions' },
-        canEdit() && a.discharge_date && h('button', { class: 'ghost', onclick: async () => {
+        canEdit() && canUndoDischarge(a) && h('button', { class: 'ghost', onclick: async () => {
           if (!confirm('Bring this patient back into the ward register?')) return;
           try { await api('POST', `/api/admissions/${a.id}/undo-discharge`); toast('Discharge undone'); render(); } catch (e) { toast(e.message, true); }
         } }, 'Undo discharge'),
@@ -1418,14 +1420,33 @@ async function statusView(main) {
         h('input', { type: 'date', value: date, onchange: (e) => e.target.value && go(e.target.value) }),
         h('button', { class: 'ghost', onclick: () => go(addDays(date, 1)), 'aria-label': 'Next day' }, '›'),
         date !== S.meta.today && h('button', { class: 'ghost small', onclick: () => go(S.meta.today) }, 'Today')),
-      h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
+      h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: () => {
+        // The Rounds dropdown is what prints; open it for the print, then put it back.
+        const was = roundsDrop.open; roundsDrop.open = true; window.print(); roundsDrop.open = was;
+      } }, 'Print'))),
     h('h2', { class: 'daytitle' }, 'Status · ', fmtDay(date)));
+  // Everything on Status is a dropdown, closed until tapped; the open ones stay open while you move around the app.
+  S.statusOpen = S.statusOpen || {};
+  const drop = (key, title, ...kids) => { const d = h('details', { class: 'statusdrop' + (key === 'rounds' ? '' : ' noprint'), ontoggle: () => { S.statusOpen[key] = d.open; } }, h('summary', {}, title), ...kids); d.open = !!S.statusOpen[key]; return d; };
   const box = h('div', { class: 'register' }, h('p', { class: 'loading' }, 'Loading…'));
-  main.append(box);
+  const wardBox = h('div', {}, h('p', { class: 'loading' }, 'Loading…'));
+  const wardTitleEl = h('span', {}, 'Current ward list');
+  const roundsTitleEl = h('span', {}, 'Rounds');
+  const wardDrop = drop('ward', wardTitleEl, wardBox);
+  const roundsDrop = drop('rounds', roundsTitleEl, box);
+  main.append(wardDrop, roundsDrop);
   const data = await api('GET', '/api/register?date=' + date);
   const order = S.meta.sections.flatMap((s) => s.beds);
   const pts = data.admissions.filter((a) => a.discharge_date !== date).sort((x, y) => order.indexOf(x.bed_on_date) - order.indexOf(y.bed_on_date));
   const filled = pts.filter((a) => a.round).length;
+  wardTitleEl.textContent = `Current ward list · ${pts.length}`;
+  roundsTitleEl.textContent = `Rounds · filled for ${filled} of ${pts.length}`;
+  // The patients in the ward on this date, by bed: a quick list without the round details.
+  wardBox.replaceChildren(pts.length ? h('div', { class: 'tablewrap' }, h('table', { class: 'list wardlist' },
+    h('thead', {}, h('tr', {}, ['Bed', 'Patient', 'UHID', 'Age / Sex', 'Consultant', 'Diagnosis', 'POD · Day'].map((t) => h('th', {}, t)))),
+    h('tbody', {}, pts.map((a) => h('tr', {}, h('td', {}, h('span', { class: 'bedno' }, a.bed_on_date)), h('td', {}, h('a', { href: '#patient/' + a.id, class: 'pname' }, a.name)),
+      h('td', {}, a.ip_no || ''), h('td', {}, ageSex(a, date)), h('td', {}, a.unit || ''), h('td', {}, a.diagnosis || ''),
+      h('td', {}, [podText(a, date), dayNo(a, date) && `Day ${dayNo(a, date)}`].filter(Boolean).join(' · '))))))) : h('p', { class: 'muted' }, 'No patients on this date.'));
   box.replaceChildren(h('p', { class: 'muted' }, `Round entries filled for ${filled} of ${pts.length} patients. Click a name for their full record.`));
   // Same layout as the printed register: every section in bed order, with the morning round and short notes.
   const byBed = {};
@@ -1448,21 +1469,21 @@ async function statusView(main) {
   if (canEdit()) {
     const recent = (await api('GET', '/api/patients?from=' + addDays(S.meta.today, -7))).filter((a) => a.discharge_date)
       .sort((x, y) => (x.discharge_date < y.discharge_date ? 1 : -1));
-    main.append(h('section', { class: 'noprint undodis' }, h('h3', {}, 'Recent discharges'),
-      h('p', { class: 'muted small' }, 'Discharged in the last 7 days. Undo brings the patient back into the same bed.'),
+    main.append(drop('discharges', `Recent discharges · ${recent.length}`, h('section', { class: 'noprint undodis' },
+      h('p', { class: 'muted small' }, 'Discharged in the last 7 days. Undo brings the patient back into the same bed, and works for 24 hours after the discharge.'),
       recent.length ? h('ul', { class: 'invlist' }, recent.map((a) => h('li', {},
         h('b', {}, fmtDate(a.discharge_date)), ` · ${a.bed} · `, h('a', { href: '#patient/' + a.id }, a.name), a.diagnosis ? h('span', { class: 'muted small' }, ` · ${a.diagnosis}`) : null,
         a.outcome && a.outcome !== 'Discharged' ? h('span', { class: 'small outcome-bad' }, ` · ${a.outcome}`) : null,
-        h('button', { type: 'button', class: 'ghost small undo', onclick: async () => {
+        canUndoDischarge(a) ? h('button', { type: 'button', class: 'ghost small undo', onclick: async () => {
           if (!confirm(`Undo the discharge of ${a.name} and bring them back into ${a.bed}?`)) return;
           try { await api('POST', `/api/admissions/${a.id}/undo-discharge`); toast(`${a.name} is back in ${a.bed}`); render(); } catch (e) { toast(e.message, true); }
-        } }, 'Undo discharge')))) : h('p', { class: 'muted' }, 'No discharges in the last 7 days.')));
+        } }, 'Undo discharge') : ''))) : h('p', { class: 'muted' }, 'No discharges in the last 7 days.'))));
   }
-  const search = h('section', { class: 'noprint' }, h('h3', {}, 'Find any patient, including discharged'));
-  main.append(search);
+  const search = h('section', { class: 'noprint' });
+  main.append(drop('find', 'Find any patient, including discharged', search));
   patientSearch(search);
-  const arch = h('section', { class: 'noprint' }, h('h3', {}, 'Search the archive'), h('p', { class: 'muted small' }, 'Patients discharged more than a year ago and archived by the admin. Needs internet.'));
-  main.append(arch);
+  const arch = h('section', { class: 'noprint' }, h('p', { class: 'muted small' }, 'Patients discharged more than a year ago and archived by the admin. Needs internet.'));
+  main.append(drop('archive', 'Search the archive', arch));
   archiveSearch(arch);
 }
 
@@ -1677,7 +1698,7 @@ async function otHomeView(main) {
   const full = await Promise.all(todays.map((l) => api('GET', '/api/otlists/' + encodeURIComponent(l.id))));
   main.append(
     h('div', { class: 'toolbar' }, h('h2', {}, 'OT Lists'),
-      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal() }, '+ Create list'))),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => createOtListModal() }, '+ Create list'), h('a', { class: 'button ghost', href: '#otlog' }, 'Logbook'))),
     // A blocked OT is a plain grey tile that does not open; the admin taps it to unblock.
     h('div', { class: 'otgrid' }, OT_ROOMS.map(([ot]) => otBlocked(ot)
       ? h('div', { class: 'otroom blocked', onclick: async () => {
@@ -1685,7 +1706,7 @@ async function otHomeView(main) {
         try { await api('PUT', '/api/otrooms/' + ot, { blocked: false }); S.meta = await api('GET', '/api/meta'); toast(`${otName(ot)} unblocked`); render(); } catch (e) { toast(e.message, true); }
       } }, h('b', {}, otName(ot)))
       : h('a', { class: 'otroom' + (kinds[ot] === 'Emergency' ? ' emerg' : ''), href: '#ot/' + ot }, h('b', {}, otName(ot))))),
-    otSearchBox(),
+    h('div', { class: 'otsearchrow' }, otSearchBox(), h('button', { type: 'button', class: 'link viewall', onclick: allOtListsPopup }, 'View all OT lists')),
     h('div', { class: 'otdaynav' },
       h('button', { type: 'button', class: 'ghost small', disabled: !prev, title: prev ? `Previous OT day: ${fmtDay(prev)}` : 'No earlier lists', 'aria-label': 'Previous OT day', onclick: () => goDay(prev) }, '‹'),
       h('h3', {}, day === today ? 'Today · ' : day < today ? 'Earlier · ' : 'Coming up · ', fmtDay(day)),
@@ -1826,6 +1847,42 @@ function otSearchBox() {
   return h('div', { class: 'otsearch' },
     h('input', { type: 'search', placeholder: 'Search a patient by UHID or name', autocomplete: 'off', value: S.otQ || '', oninput: (ev) => { S.otQ = ev.target.value; clearTimeout(timer); timer = setTimeout(() => run(ev.target.value), 250); } }),
     out, S.otQ ? (run(S.otQ), '') : '');
+}
+
+// Every patient on every OT list in one table, with filters (OT, day, month, Routine / Emergency) and newest or oldest first.
+async function allOtListsPopup() {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  const body = h('div', {}, h('p', { class: 'loading' }, 'Loading…'));
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
+    h('div', { class: 'modal card panel wide allot' }, h('div', { class: 'mhead' }, h('h2', {}, 'All OT lists'), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), body)));
+  const rows = await api('GET', '/api/otall').catch((e) => { toast(e.message, true); return []; });
+  const f = S.otAllFilter || (S.otAllFilter = { ot: '', date: '', month: '', kind: '', newest: true });
+  const otSel = h('select', { onchange: (e) => { f.ot = e.target.value; draw(); } }, h('option', { value: '' }, 'All OTs'), OT_ROOMS.map(([ot]) => h('option', { value: ot }, otName(ot))));
+  const dateIn = h('input', { type: 'date', onchange: (e) => { f.date = e.target.value; if (f.date) { f.month = ''; monthIn.value = ''; } draw(); } });
+  const monthIn = h('input', { type: 'month', onchange: (e) => { f.month = e.target.value; if (f.month) { f.date = ''; dateIn.value = ''; } draw(); } });
+  const kindSel = h('select', { onchange: (e) => { f.kind = e.target.value; draw(); } }, h('option', { value: '' }, 'Routine and Emergency'), h('option', { value: 'Routine' }, 'Routine'), h('option', { value: 'Emergency' }, 'Emergency'));
+  otSel.value = f.ot; dateIn.value = f.date; monthIn.value = f.month; kindSel.value = f.kind;
+  const sortBtn = h('button', { type: 'button', class: 'ghost small', onclick: () => { f.newest = !f.newest; draw(); } });
+  const clear = h('button', { type: 'button', class: 'link small', onclick: () => { Object.assign(f, { ot: '', date: '', month: '', kind: '' }); otSel.value = dateIn.value = monthIn.value = kindSel.value = ''; draw(); } }, 'Clear filters');
+  const count = h('p', { class: 'muted small' });
+  const table = h('div', { class: 'tablewrap' });
+  body.replaceChildren(h('div', { class: 'allotfilters' },
+    h('label', {}, 'OT', otSel), h('label', {}, 'Date', dateIn), h('label', {}, 'Month', monthIn), h('label', {}, 'List', kindSel),
+    h('div', { class: 'allotsort' }, sortBtn, clear)), count, table);
+  function draw() {
+    const shown = rows.filter((r) => (!f.ot || r.ot === f.ot) && (!f.date || r.date === f.date) && (!f.month || r.date.startsWith(f.month)) && (!f.kind || r.kind === f.kind))
+      .sort((x, y) => (x.date !== y.date ? (x.date < y.date ? -1 : 1) * (f.newest ? -1 : 1) : x.ot !== y.ot ? (x.ot < y.ot ? -1 : 1) : x.order - y.order));
+    sortBtn.textContent = f.newest ? 'Newest first ↓' : 'Oldest first ↑';
+    count.textContent = `${shown.length} patient${shown.length === 1 ? '' : 's'}${shown.length ? ` on ${new Set(shown.map((r) => r.list_id)).size} list${new Set(shown.map((r) => r.list_id)).size === 1 ? '' : 's'}` : ''}`;
+    table.replaceChildren(shown.length ? h('table', { class: 'list allottable' },
+      h('thead', {}, h('tr', {}, ['Date', 'UHID', 'Name', 'Age / Sex', 'Diagnosis', 'Procedure', 'Consultant', 'OT', 'Scrub team'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, shown.map((r) => h('tr', { class: r.case_cancelled ? 'casecancelled' : '', onclick: () => { close(); location.hash = `otlist/${encodeURIComponent(r.list_id)}/${encodeURIComponent(r.entry_id)}`; } },
+        h('td', { class: 'nowrap' }, fmtDate(r.date)), h('td', {}, r.uhid), h('td', {}, h('b', {}, r.name)), h('td', { class: 'nowrap' }, [r.age, r.sex].filter(Boolean).join(' / ')),
+        h('td', {}, r.diagnosis), h('td', {}, r.procedure, r.case_cancelled ? h('div', { class: 'small cctag' }, 'Case cancelled') : ''), h('td', {}, fullNames(r.consultant)),
+        h('td', { class: 'nowrap' }, otName(r.ot), r.kind === 'Emergency' ? h('div', { class: 'small emtag' }, 'Emergency') : ''), h('td', {}, r.scrub.join('/')))))) : h('p', { class: 'muted' }, 'No OT lists match these filters.'));
+  }
+  draw();
 }
 
 // Every list of one OT grouped by month and year; tapping a month opens its dates right there.
@@ -2046,7 +2103,7 @@ async function otLogView(main, who) {
   for (const r of rows) byRole[r.role] = (byRole[r.role] || 0) + 1;
   const title = `Logbook · ${personName(who)}${personName(who) !== who ? ` (${who})` : ''}`;
   main.append(
-    h('div', { class: 'toolbar' }, h('h2', {}, 'Logbook'),
+    h('div', { class: 'toolbar' }, h('a', { class: 'button ghost noprint', href: '#ot' }, '‹ OT Lists'), h('h2', {}, 'Logbook'),
       h('div', { class: 'actions' }, own ? h('span', {}, `Your logbook · ${personName(who)}`) : h('label', { class: 'inline' }, 'Logbook of ', sel), h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
     h('h2', { class: 'printonly' }, title),
     h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : `No operations logged for ${who} yet. A log fills when ${who} is in a scrub team on an OT list.`),
