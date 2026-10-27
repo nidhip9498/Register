@@ -738,27 +738,27 @@ async function worklistPanel(onClose) {
 // In a Rounds card: add work for this patient to the JR or SR worklist, and see what is pending.
 function workBox(a) {
   const box = h('div', {});
-  const text = h('textarea', { rows: 3, placeholder: 'Add to worklist, one per line, e.g.\nRepeat KFT\nSend urine C/S' });
+  const text = h('input', { type: 'text', placeholder: 'Add to worklist…' });
   const list = h('select', {}, WORK_TABS.map(([k, label]) => h('option', { value: k }, label.replace(' Worklist', ''))));
-  const pri = h('input', { type: 'checkbox' });
+  const pri = h('input', { type: 'checkbox', title: 'Priority' });
   list.value = S.workTab || myWorkList();
   const draw = (items) => {
     const mine = items.filter((w) => w.admission_id === a.id).sort(workSort);
-    const pend = mine.filter((w) => !w.done);
-    // An open box (not a dropdown) beside Procedure done: type the work and Add.
+    // One slim bar: icon, to-do, JR/SR, priority, Add; this bed's items listed small underneath.
     box.replaceChildren(h('div', { class: 'workfield' },
-      h('div', { class: 'wfhead' }, h('span', { class: 'wficon', 'aria-hidden': 'true' }, '📝'), h('b', {}, 'Worklist'), pend.length ? h('span', { class: 'small muted' }, `${pend.length} pending`) : ''),
-      mine.length ? h('ul', { class: 'worklistmini' }, mine.map((w) => h('li', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
-        h('b', {}, w.list.toUpperCase()), ` · ${w.text}`))) : null,
-      canWork() ? h('div', { class: 'wfadd' }, text, list, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'primary small', onclick: add }, 'Add')) : ''));
+      canWork() ? h('div', { class: 'wfadd' }, h('span', { class: 'wficon', title: 'Worklist', 'aria-hidden': 'true' }, '📝'), text, list,
+        h('label', { class: 'inline prioopt', title: 'Priority' }, pri, ' Priority'), h('button', { type: 'button', class: 'small', onclick: add }, 'Add'))
+        : h('span', { class: 'small muted' }, '📝 Worklist'),
+      mine.length ? h('div', { class: 'worklistmini' }, mine.map((w) => h('span', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
+        `${w.list.toUpperCase()}: ${w.text}`))) : ''));
   };
   const load = () => api('GET', '/api/work').then(draw).catch(() => draw([]));
   const add = async () => {
     const tasks = workLines(text.value);
     if (!tasks.length) return;
-    try { for (const t of tasks) await api('POST', '/api/work', { list: list.value, admission_id: a.id, text: t, priority: pri.checked }); toast(`${tasks.length} added to the ${list.value.toUpperCase()} worklist`); text.value = ''; pri.checked = false; load(); } catch (e) { toast(e.message, true); }
+    try { for (const t of tasks) await api('POST', '/api/work', { list: list.value, admission_id: a.id, text: t, priority: pri.checked }); toast(`Added to the ${list.value.toUpperCase()} worklist`); text.value = ''; pri.checked = false; load(); text.focus(); } catch (e) { toast(e.message, true); }
   };
-  text.onkeydown = (ev) => { if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); add(); } };
+  text.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } };
   load();
   return box;
 }

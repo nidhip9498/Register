@@ -717,8 +717,8 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
 .worktable tr.done td:nth-child(2) { text-decoration: line-through; color: var(--muted); }
 .worktable tr.done td { opacity: .7; }
 .worktable .del { margin-left: .5rem; color: var(--muted); }
-.worklistmini li.done { text-decoration: line-through; color: var(--muted); }
-.worklistmini li.prio { color: var(--bad); font-weight: 600; }
+.worklistmini .done { text-decoration: line-through; color: var(--muted); }
+.worklistmini .prio { color: var(--bad); font-weight: 600; }
 .workadd.invadd { grid-template-columns: 2fr auto auto auto; }
 @media (max-width: 640px) { .workadd.invadd { grid-template-columns: 1fr auto auto; } .workadd.invadd > input:first-child { grid-column: 1 / -1; } }
 /* Worklist: one line per to-do (v94) */
@@ -739,17 +739,16 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
 .workline .wundo { flex: none; min-height: 0; padding: .2rem .6rem; }
 
 /* Worklist box beside Procedure done in Rounds (v98) */
-.procwork { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; align-items: start; margin-top: .3rem; }
-@media (max-width: 760px) { .procwork { grid-template-columns: 1fr; } }
-.workfield { border: 2px solid var(--plan); background: var(--plan-soft); border-radius: 10px; padding: .6rem .7rem; font-size: 1.05rem; }
-.wfhead { display: flex; align-items: center; gap: .45rem; margin-bottom: .4rem; }
-.wfhead b { font-size: 1.15rem; color: var(--plan); }
-.wficon { font-size: 1.3rem; }
-.worklistmini { list-style: none; margin: 0 0 .5rem; padding: 0; }
-.worklistmini li { padding: .15rem 0; }
-.wfadd { display: grid; grid-template-columns: 1fr auto auto; gap: .4rem; align-items: center; }
-.wfadd > textarea { grid-column: 1 / -1; font-size: 1.05rem; min-height: 4.6em; resize: vertical; }
-.wfadd input:not([type=checkbox]) { font-size: 1.05rem; }
-.wfadd label.prioopt { display: flex; align-items: center; gap: .3rem; white-space: nowrap; font-size: .95rem; }
+.procwork { margin-top: .3rem; }
+.procwork > div + div { margin-top: .5rem; }
+.workfield { width: 70%; }
+@media (max-width: 760px) { .workfield { width: 100%; } }
+.wfadd { display: flex; align-items: center; gap: .4rem; border: 1px solid var(--line); border-left: 3px solid var(--plan); border-radius: 8px; padding: .2rem .4rem; }
+.wfadd .wficon { font-size: 1rem; }
+.wfadd > input[type=text] { flex: 1; min-width: 0; border: 0; background: transparent; padding: .3rem .2rem; }
+.wfadd > input[type=text]:focus { outline: none; }
+.wfadd select { width: auto; padding: .2rem .3rem; }
+.wfadd label.prioopt { display: flex; align-items: center; gap: .25rem; white-space: nowrap; font-size: .85rem; margin: 0; }
+.worklistmini { display: flex; flex-wrap: wrap; gap: .2rem .9rem; font-size: .88rem; margin-top: .25rem; padding-left: .3rem; }
 .worklist .workadd > textarea { grid-column: 1 / -1; min-height: 4.6em; resize: vertical; }
 .allotq { width: 100%; max-width: 460px; margin: .5rem 0 .2rem; }
