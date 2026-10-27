@@ -722,9 +722,11 @@ async function worklistPanel(onClose) {
     table.replaceChildren(rows.length ? h('ul', { class: 'worklines' }, rows.map((w) => h('li', { class: 'workline' + (w.done ? ' done' : '') + (w.priority && !w.done ? ' prio' : '') },
         h('b', { class: 'wbed' }, w.bed || '—'),
         h('span', { class: 'wtodo' }, h('span', { class: 'wtext' }, w.text), w.discharged ? h('span', { class: 'small muted' }, ' · discharged') : ''),
-        h('label', { class: 'wbox', title: 'Priority' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canWork() || w.done, onchange: (ev) => set(w, { priority: ev.target.checked }) }), h('span', {}, 'Priority')),
-        h('label', { class: 'wbox', title: 'Done' }, h('input', { type: 'checkbox', class: 'tick', checked: w.done, disabled: !canWork(), onchange: (ev) => set(w, { done: ev.target.checked }) }), h('span', {}, 'Done')),
-        canWork() ? iconBtn(BIN_SVG, 'Delete', () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); }, 'pencil bin') : '')))
+        // Done: struck through with an Undo; the Priority box and the bin go away.
+        w.done ? (canWork() ? h('button', { type: 'button', class: 'ghost small wundo', onclick: () => set(w, { done: false }) }, 'Undo') : h('span', { class: 'small muted' }, 'Done'))
+          : [h('label', { class: 'wbox', title: 'Priority' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canWork(), onchange: (ev) => set(w, { priority: ev.target.checked }) }), h('span', {}, 'Priority')),
+            h('label', { class: 'wbox', title: 'Done' }, h('input', { type: 'checkbox', class: 'tick', disabled: !canWork(), onchange: (ev) => set(w, { done: ev.target.checked }) }), h('span', {}, 'Done')),
+            canWork() ? iconBtn(BIN_SVG, 'Delete', () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); }, 'pencil bin') : ''])))
       : h('p', { class: 'muted' }, `Nothing on the ${WORK_TABS.find(([k]) => k === tab())[1]} yet.`));
   }
   async function load() { items = await api('GET', '/api/work').catch((e) => { toast(e.message, true); return items; }); draw(); }
