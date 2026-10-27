@@ -676,6 +676,7 @@ function drawOtAlerts(box, admissions, open, date, withWork) {
 }
 
 // ---------- Worklist: JR and SR to-dos per patient, ticked ones cleared at 9 am ----------
+const BIN_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
 const WORK_TABS = [['jr', 'JR Worklist'], ['sr', 'SR Worklist']];
 const workSort = (x, y) => (x.done !== y.done ? (x.done ? 1 : -1) : x.done ? (x.done_at || 0) - (y.done_at || 0)
   : x.priority !== y.priority ? (x.priority ? -1 : 1) : bedRank(x.bed) - bedRank(y.bed) || x.at - y.at);
@@ -713,14 +714,13 @@ async function worklistPanel(onClose) {
     seg.replaceChildren(...WORK_TABS.map(([k, label]) => { const n = items.filter((w) => w.list === k && !w.done).length;
       return h('button', { type: 'button', class: k === tab() ? 'on' : '', onclick: () => { S.workTab = k; draw(); } }, label, n ? ` · ${n}` : ''); }));
     const rows = items.filter((w) => w.list === tab()).sort(workSort);
-    table.replaceChildren(rows.length ? h('table', { class: 'list worktable' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Bed'), h('th', {}, 'To do'), h('th', { class: 'c' }, 'Priority'), h('th', { class: 'c' }, 'Done'))),
-      h('tbody', {}, rows.map((w) => h('tr', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
-        h('td', { class: 'nowrap' }, h('span', { class: 'bedno' }, w.bed || '—'), w.name ? h('div', { class: 'small muted' }, w.name) : ''),
-        h('td', {}, w.text, w.discharged ? h('span', { class: 'small muted' }, ' · discharged') : '',
-          canEdit() && !w.done ? h('button', { type: 'button', class: 'link small del', title: 'Delete', onclick: () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); } }, '✕') : ''),
-        h('td', { class: 'c' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canEdit() || w.done, title: 'Priority', onchange: (ev) => set(w, { priority: ev.target.checked }) })),
-        h('td', { class: 'c' }, h('input', { type: 'checkbox', class: 'tick', checked: w.done, disabled: !canEdit(), title: 'Done', onchange: (ev) => set(w, { done: ev.target.checked }) }))))))
+    // One line per to-do: bed, name and the to-do (widest), then the Priority and Done boxes and a bin.
+    table.replaceChildren(rows.length ? h('ul', { class: 'worklines' }, rows.map((w) => h('li', { class: 'workline' + (w.done ? ' done' : '') + (w.priority && !w.done ? ' prio' : '') },
+        h('span', { class: 'bedno' }, w.bed || '—'),
+        h('span', { class: 'wtodo' }, w.name ? h('span', { class: 'wname' }, w.name + ' · ') : '', h('span', { class: 'wtext' }, w.text), w.discharged ? h('span', { class: 'small muted' }, ' · discharged') : ''),
+        h('label', { class: 'wbox', title: 'Priority' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canEdit() || w.done, onchange: (ev) => set(w, { priority: ev.target.checked }) }), h('span', {}, 'Priority')),
+        h('label', { class: 'wbox', title: 'Done' }, h('input', { type: 'checkbox', class: 'tick', checked: w.done, disabled: !canEdit(), onchange: (ev) => set(w, { done: ev.target.checked }) }), h('span', {}, 'Done')),
+        canEdit() ? iconBtn(BIN_SVG, 'Delete', () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); }, 'pencil bin') : '')))
       : h('p', { class: 'muted' }, `Nothing on the ${WORK_TABS.find(([k]) => k === tab())[1]} yet.`));
   }
   async function load() { items = await api('GET', '/api/work').catch((e) => { toast(e.message, true); return items; }); draw(); }

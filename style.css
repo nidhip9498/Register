@@ -721,3 +721,17 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
 .worklistmini li.prio { color: var(--bad); font-weight: 600; }
 .workadd.invadd { grid-template-columns: 2fr auto auto auto; }
 @media (max-width: 640px) { .workadd.invadd { grid-template-columns: 1fr auto auto; } .workadd.invadd > input:first-child { grid-column: 1 / -1; } }
+/* Worklist: one line per to-do (v94) */
+.worklines { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.workline { display: flex; align-items: center; gap: .5rem; padding: .45rem .6rem; border-top: 1px solid var(--line); }
+.workline:first-child { border-top: 0; }
+.workline .bedno { flex: none; }
+.workline .wname { color: var(--muted); font-size: .9rem; font-weight: 400; }
+.workline .wtodo { flex: 1 1 auto; min-width: 0; }
+.workline .wbox { flex: none; display: flex; flex-direction: column; align-items: center; font-size: .65rem; color: var(--muted); gap: 1px; cursor: pointer; }
+.workline .wbox input { width: 1.2rem; height: 1.2rem; margin: 0; }
+.workline .bin { flex: none; color: var(--muted); border: 0; background: none; padding: 4px; min-height: 0; width: auto; height: auto; }
+.workline.prio { background: var(--bad-soft); }
+.workline.prio .wtext { color: var(--bad); font-weight: 600; }
+.workline.done .wtodo { text-decoration: line-through; color: var(--muted); }
+.workline.done { opacity: .7; }
