@@ -698,3 +698,26 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
 @media print { details.statusdrop { border: 0; } details.statusdrop > summary { display: none; } details.statusdrop:not([open]) { display: none; } }
 .wardlist { min-width: 760px; }
 .wardlist td { font-size: .9rem; }
+
+/* Worklist */
+.otbar.workbar { border-color: var(--plan); background: var(--plan-soft); }
+.otbar.workbar.haspri { border-color: var(--bad); }
+.prio, b.prio { color: var(--bad); }
+.worklist { max-width: 820px; }
+.worktabs { margin: .2rem 0 .8rem; }
+.workadd { display: grid; grid-template-columns: minmax(150px, 1fr) 2fr auto auto; gap: .5rem; align-items: center; margin-bottom: .8rem; }
+.workadd input[hidden] { display: none; }
+.workadd label.prioopt, .workadd label.inline { display: flex; align-items: center; gap: .3rem; white-space: nowrap; }
+@media (max-width: 640px) { .workadd { grid-template-columns: 1fr 1fr; } .workadd > input:not([type=checkbox]) { grid-column: 1 / -1; } }
+.worktable td, .worktable th { vertical-align: middle; }
+.worktable .c { text-align: center; width: 4.5rem; }
+.worktable input[type=checkbox] { width: 1.25rem; height: 1.25rem; }
+.worktable tr.prio td { background: var(--bad-soft); }
+.worktable tr.prio td:nth-child(2) { color: var(--bad); font-weight: 600; }
+.worktable tr.done td:nth-child(2) { text-decoration: line-through; color: var(--muted); }
+.worktable tr.done td { opacity: .7; }
+.worktable .del { margin-left: .5rem; color: var(--muted); }
+.worklistmini li.done { text-decoration: line-through; color: var(--muted); }
+.worklistmini li.prio { color: var(--bad); font-weight: 600; }
+.workadd.invadd { grid-template-columns: 2fr auto auto auto; }
+@media (max-width: 640px) { .workadd.invadd { grid-template-columns: 1fr auto auto; } .workadd.invadd > input:first-child { grid-column: 1 / -1; } }

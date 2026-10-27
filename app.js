@@ -486,7 +486,7 @@ async function registerView(main, mode) {
   S.dirty.clear();
 
   const inBed = (bed) => data.admissions.filter((a) => a.bed_on_date === bed && a.discharge_date !== date);
-  drawOtAlerts(alerts, data.admissions, (a) => bedPanel(a.bed_on_date), date);
+  drawOtAlerts(alerts, data.admissions, (a) => bedPanel(a.bed_on_date), date, !icuMode);
 
   function drawGrid() {
     const allBeds = sections.flatMap((s) => s.beds);
@@ -651,15 +651,104 @@ async function shiftsModal() {
 function otSeenKey() { return 'ward-ot-seen:' + (S.user && S.user.id); }
 function otSeen() { try { return localStorage.getItem(otSeenKey()) || ''; } catch { return ''; } }
 const localStamp = (d) => { const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; };
-function drawOtAlerts(box, admissions, open, date) {
-  const day = date || S.meta.today;
+// The work day runs 9 am to 9 am: before 9 am it is still yesterday's (worklist and today's investigations).
+const workDay = () => { const d = new Date(); if (d.getHours() < 9) d.setDate(d.getDate() - 1); return localStamp(d).slice(0, 10); };
+// The bell (today's investigations) and, on the Ward Register, the Worklist tile: half the row each.
+function drawOtAlerts(box, admissions, open, date, withWork) {
+  const day = !date || date === S.meta.today ? workDay() : date;
   const inv = invOn(admissions.filter((a) => !a.discharge_date || a.discharge_date > day), day);
-  if (!inv.length) return box.replaceChildren();
-  box.replaceChildren(h('div', { class: 'alertbar one' },
-    h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Investigations today', inv, day) },
-      h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
-      h('b', {}, `${inv.length} investigation${inv.length === 1 ? '' : 's'} today`),
-      h('span', { class: 'muted small' }, 'Tap to view'))));
+  if (!inv.length && !withWork) return box.replaceChildren();
+  const bell = inv.length ? h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Investigations today', inv, day) },
+    h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
+    h('b', {}, `${inv.length} investigation${inv.length === 1 ? '' : 's'} today`),
+    h('span', { class: 'muted small' }, 'Tap to view'))
+    : h('div', { class: 'otbar quiet' }, h('span', { 'aria-hidden': 'true' }, '🔔'), h('span', { class: 'muted small' }, 'No investigations today'));
+  if (!withWork) return box.replaceChildren(h('div', { class: 'alertbar one' }, bell));
+  const count = h('span', { class: 'muted small' }, 'Tap to open');
+  const tile = h('button', { type: 'button', class: 'otbar workbar', onclick: () => worklistPanel(() => drawOtAlerts(box, admissions, open, date, withWork)) },
+    h('span', { 'aria-hidden': 'true' }, '📝'), h('b', {}, 'Worklist'), count);
+  api('GET', '/api/work').then((w) => {
+    const pend = w.filter((x) => !x.done), pri = pend.filter((x) => x.priority).length;
+    count.replaceChildren(pend.length ? `${pend.length} pending${pri ? ` · ` : ''}` : 'Nothing pending', pri ? h('b', { class: 'prio' }, `${pri} priority`) : '');
+    tile.classList.toggle('haspri', !!pri);
+  }).catch(() => {});
+  box.replaceChildren(h('div', { class: 'alertbar' }, bell, tile));
+}
+
+// ---------- Worklist: JR and SR to-dos per patient, ticked ones cleared at 9 am ----------
+const WORK_TABS = [['jr', 'JR Worklist'], ['sr', 'SR Worklist']];
+const workSort = (x, y) => (x.done !== y.done ? (x.done ? 1 : -1) : x.done ? (x.done_at || 0) - (y.done_at || 0)
+  : x.priority !== y.priority ? (x.priority ? -1 : 1) : bedRank(x.bed) - bedRank(y.bed) || x.at - y.at);
+async function worklistPanel(onClose) {
+  const root = document.getElementById('modal-root');
+  const close = () => { root.replaceChildren(); if (onClose) onClose(); };
+  const body = h('div', {}, h('p', { class: 'loading' }, 'Loading…'));
+  const seg = h('div', { class: 'seg worktabs' });
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
+    h('div', { class: 'modal card panel worklist' }, h('div', { class: 'mhead' }, h('h2', {}, 'Worklist'), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+      seg, body)));
+  const reg = await api('GET', '/api/register?date=' + S.meta.today).catch(() => ({ admissions: [] }));
+  const pts = reg.admissions.filter((a) => !a.discharge_date).sort((x, y) => bedRank(x.bed_on_date) - bedRank(y.bed_on_date));
+  let items = [];
+  const tab = () => S.workTab || 'jr';
+  // Add a to-do: a patient in the ward, or "Other" for someone not in the ward (type the bed or name).
+  const who = h('select', {}, h('option', { value: '' }, 'Choose patient'), pts.map((a) => h('option', { value: a.id }, `${a.bed_on_date} · ${a.name}`)), h('option', { value: 'other' }, 'Other (not in ward)…'));
+  const otherIn = h('input', { placeholder: 'Bed / ward and name, e.g. 7C/2 Riya', hidden: true });
+  who.onchange = () => { otherIn.hidden = who.value !== 'other'; if (!otherIn.hidden) otherIn.focus(); };
+  const text = h('input', { placeholder: 'To do, e.g. Send CBC, Call radiology for USG' });
+  const pri = h('input', { type: 'checkbox' });
+  const add = async () => {
+    if (!who.value) return toast('Choose the patient', true);
+    if (!text.value.trim()) return toast('Type what is to be done', true);
+    const b = { list: tab(), text: text.value, priority: pri.checked };
+    if (who.value === 'other') { if (!otherIn.value.trim()) return toast('Type the bed or name', true); b.bed = otherIn.value; } else b.admission_id = who.value;
+    try { await api('POST', '/api/work', b); text.value = ''; pri.checked = false; await load(); text.focus(); } catch (e) { toast(e.message, true); }
+  };
+  text.onkeydown = (ev) => { if (ev.key === 'Enter') add(); };
+  const form = canEdit() ? h('div', { class: 'workadd' }, who, otherIn, text, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'primary small', onclick: add }, 'Add')) : '';
+  const table = h('div', { class: 'tablewrap' });
+  body.replaceChildren(form, table, h('p', { class: 'muted small' }, 'Ticked work stays struck through until 9 am, then clears. Pending work carries over to the next day.'));
+  const set = async (w, b) => { try { await api('PUT', '/api/work/' + encodeURIComponent(w.id), b); await load(); } catch (e) { toast(e.message, true); } };
+  function draw() {
+    seg.replaceChildren(...WORK_TABS.map(([k, label]) => { const n = items.filter((w) => w.list === k && !w.done).length;
+      return h('button', { type: 'button', class: k === tab() ? 'on' : '', onclick: () => { S.workTab = k; draw(); } }, label, n ? ` · ${n}` : ''); }));
+    const rows = items.filter((w) => w.list === tab()).sort(workSort);
+    table.replaceChildren(rows.length ? h('table', { class: 'list worktable' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Bed'), h('th', {}, 'To do'), h('th', { class: 'c' }, 'Priority'), h('th', { class: 'c' }, 'Done'))),
+      h('tbody', {}, rows.map((w) => h('tr', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
+        h('td', { class: 'nowrap' }, h('span', { class: 'bedno' }, w.bed || '—'), w.name ? h('div', { class: 'small muted' }, w.name) : ''),
+        h('td', {}, w.text, w.discharged ? h('span', { class: 'small muted' }, ' · discharged') : '',
+          canEdit() && !w.done ? h('button', { type: 'button', class: 'link small del', title: 'Delete', onclick: () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); } }, '✕') : ''),
+        h('td', { class: 'c' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canEdit() || w.done, title: 'Priority', onchange: (ev) => set(w, { priority: ev.target.checked }) })),
+        h('td', { class: 'c' }, h('input', { type: 'checkbox', class: 'tick', checked: w.done, disabled: !canEdit(), title: 'Done', onchange: (ev) => set(w, { done: ev.target.checked }) }))))))
+      : h('p', { class: 'muted' }, `Nothing on the ${WORK_TABS.find(([k]) => k === tab())[1]} yet.`));
+  }
+  async function load() { items = await api('GET', '/api/work').catch((e) => { toast(e.message, true); return items; }); draw(); }
+  await load();
+}
+// In a Rounds card: add work for this patient to the JR or SR worklist, and see what is pending.
+function workBox(a) {
+  const box = h('div', {});
+  const text = h('input', { placeholder: 'Add to worklist, e.g. Repeat KFT' });
+  const list = h('select', {}, WORK_TABS.map(([k, label]) => h('option', { value: k }, label.replace(' Worklist', ''))));
+  const pri = h('input', { type: 'checkbox' });
+  list.value = S.workTab || 'jr';
+  const draw = (items) => {
+    const mine = items.filter((w) => w.admission_id === a.id).sort(workSort);
+    const pend = mine.filter((w) => !w.done);
+    box.replaceChildren(foldBox('work:' + a.id, 'work', 'Worklist', pend.length ? `${pend.length} pending` : '', [
+      mine.length ? h('ul', { class: 'invlist worklistmini' }, mine.map((w) => h('li', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
+        h('b', {}, w.list.toUpperCase()), ` · ${w.text}`))) : null,
+      canEdit() && h('div', { class: 'otadd invadd workadd' }, text, list, h('label', { class: 'inline prioopt' }, pri, ' Priority'), h('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add'))]));
+  };
+  const load = () => api('GET', '/api/work').then(draw).catch(() => draw([]));
+  const add = async () => {
+    if (!text.value.trim()) return;
+    try { await api('POST', '/api/work', { list: list.value, admission_id: a.id, text: text.value, priority: pri.checked }); toast(`Added to the ${list.value.toUpperCase()} worklist`); text.value = ''; pri.checked = false; load(); } catch (e) { toast(e.message, true); }
+  };
+  text.onkeydown = (ev) => { if (ev.key === 'Enter') add(); };
+  load();
+  return box;
 }
 
 // List of empty beds, one column per ward (6B, 6A).
@@ -977,7 +1066,8 @@ function patientCard(a, date, refresh) {
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
     oversBox(a),
     findingsBox(a),
-    invBox(a, date, () => refresh(id)));
+    invBox(a, date, () => refresh(id)),
+    workBox(a));
 
   if (!discharged && a.discharge_date !== date) {
     add(
