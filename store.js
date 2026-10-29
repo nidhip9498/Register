@@ -642,7 +642,7 @@ const Store = (() => {
     for (const e of all('otentry')) {
       if (e.cancelled || e.case_cancelled || !e.admission_id || !(e.scrub || []).length) continue;
       const l = get(e.list_id);
-      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id });
+      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || e.surgery || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id });
     }
     for (const k in out) out[k].sort((x, y) => (x.date < y.date ? -1 : 1));
     return out;

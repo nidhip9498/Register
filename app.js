@@ -210,7 +210,7 @@ function checkNewDay() {
   let redraw = false;
   if (d !== S.meta.today) { if (S.date === S.meta.today) S.date = d; S.meta.today = d; redraw = true; }
   const rd = roundsDay() + '|' + rosterDay(d);
-  if (rd !== lastRoundsDay && (route === 'rounds' || route === 'icurounds' || route === 'register')) redraw = true;
+  if (rd !== lastRoundsDay && (route === 'rounds' || route === 'icurounds' || route === 'register' || route === 'print')) redraw = true;
   lastRoundsDay = rd;
   if (redraw && !S.dirty.size && !document.querySelector('#modal-root > *')) render();
 }
@@ -278,7 +278,7 @@ function render() {
 function view(route, arg, main) {
   if (route === 'patients') return statusView(main);
   if (route === 'patient') return patientView(main, arg);
-  if (route === 'print') return printView(main, arg || S.date, location.hash.split('/')[2] || '');
+  if (route === 'print') return printView(main, !arg || arg === 'today' ? localStamp(new Date()).slice(0, 10) : arg, location.hash.split('/')[2] || '');
   if (route === 'census') return censusView(main);
   if (route === 'monthly') return monthlyView(main, arg);
   if (route === 'ot') return arg ? otDatesView(main, arg) : otHomeView(main);
@@ -471,7 +471,7 @@ async function registerView(main, mode) {
       h('div', { class: 'actions' },
         canEdit() && h('button', { class: 'primary', onclick: () => admitModal(null, null, { icu: icuMode }) }, icuMode ? '+ Admit to ICU' : '+ Admit'),
         !icuMode && h('button', { class: 'ghost', onclick: () => shiftsModal() }, 'Bed shifts'),
-        wards.map((w) => h('a', { class: 'button ghost', href: `#print/${date}/${w}` }, 'Print ' + w)))),
+        wards.map((w) => h('a', { class: 'button ghost', href: `#print/${date === S.meta.today ? 'today' : date}/${w}` }, 'Print ' + w)))),
     icuMode ? '' : rosterStrip(date),
     canEdit() && dupBanner(),
     alerts,
@@ -1679,7 +1679,7 @@ function notesRow(a, cols) {
   if (!a.instructions && !a.unit_note && !procs.length && !a.ot_overs) return null;
   return h('tr', { class: 'notesrow' }, h('td', { colspan: cols },
     procs.length ? h('div', { class: 'otnotes' }, h('b', {}, 'OT: '),
-      procs.map((x) => h('span', {}, `${fmtDate(x.date)} ${otName(x.ot)}: ${x.done || ''}${x.scrub.length ? ` (${x.scrub.join('/')})` : ''}. `))) : null,
+      procs.map((x) => h('span', {}, `${fmtDate(x.date)}, ${otName(x.ot)}: `, h('b', {}, x.done || a.procedure_done || 'Procedure not noted'), ` · Scrub team: ${x.scrub.join('/')}. `))) : null,
     a.ot_overs ? h('div', { class: 'otnotes' }, h('b', {}, 'OT Overs: '), a.ot_overs) : null,
     a.instructions ? [h('b', {}, 'Short notes: '), a.instructions] : null,
     a.unit_note ? h('span', { class: 'unote' }, h('b', {}, `${a.unit || 'Consultant'}: `), a.unit_note) : null));
