@@ -255,9 +255,17 @@ const Store = (() => {
       ot_overs: str(body.ot_overs, 3000), // "OT Overs": things to do after the operation (rectal pack out on POD 2, stent out on POD 10…)
       dob: isDate(body.dob) ? body.dob : null, birth_weight: str(body.birth_weight, 20), gestation: str(body.gestation, 20),
       current_weight: str(body.current_weight, 20), weight: str(body.weight, 20),
+      clinical: cleanFields(body.clinical, 3000), // ICU Rounds "Clinical Details": history and examination
     };
     if (!f.name) throw new HttpError(400, 'Patient name or initials are required');
     return f;
+  }
+  // A flat form of short texts (Clinical Details, OT notes): known-safe keys, strings only.
+  function cleanFields(x, max) {
+    const out = {};
+    if (!x || typeof x !== 'object' || Array.isArray(x)) return out;
+    for (const [k, v] of Object.entries(x).slice(0, 120)) if (/^[a-z0-9_]{1,40}$/.test(k) && v != null && v !== '') out[k] = str(String(v), max);
+    return out;
   }
   const strip = (o, ...keys) => { const c = { ...o }; delete c.id; keys.forEach((k) => delete c[k]); return c; };
 
@@ -432,7 +440,7 @@ const Store = (() => {
       put(nid, 'note', mine ? { ...strip(mine), note: [mine.note, n.note].filter((x, i, l) => x && l.indexOf(x) === i).join(' | ') } : { ...strip(n), admission_id: keep.id });
       put(n.id, 'note', null);
     }
-    for (const t of ['ot', 'inv', 'move', 'work']) for (const r of all(t).filter((x) => x.admission_id === other.id)) put(r.id, t, { ...strip(r), admission_id: keep.id });
+    for (const t of ['ot', 'inv', 'move', 'work', 'otnote']) for (const r of all(t).filter((x) => x.admission_id === other.id)) put(r.id, t, { ...strip(r), admission_id: keep.id });
     for (const e of all('otentry').filter((x) => x.admission_id === other.id)) put(e.id, 'otentry', { ...strip(e), admission_id: keep.id });
     // Details: fill what the kept entry is missing; short notes from both are kept.
     const next = { ...strip(keep) };
@@ -727,6 +735,22 @@ const Store = (() => {
     audit('investigation', `${a.name}: ${text} on ${body.date}`);
     return { ok: true };
   });
+  // OT notes (operation records) for a patient: the form fields, filled once and printed as the department's Operation Record.
+  const getOtNote = (id) => { const n = get(id); if (!n || !id.startsWith('otnote:')) throw new HttpError(404, 'OT note not found'); return n; };
+  route('GET', '/api/otnotes/:id', ANY, ({ params: p }) => all('otnote').filter((n) => n.admission_id === p.id)
+    .sort((x, y) => (x.at < y.at ? 1 : -1)).map((n) => ({ ...n, by_name: userName(n.by), edited_name: n.edited_by ? userName(n.edited_by) : '' })));
+  route('POST', '/api/otnotes/:id', EDITORS, ({ body, params: p }) => {
+    const a = getAdmission(p.id), id = 'otnote:' + uuid();
+    put(id, 'otnote', { admission_id: a.id, f: cleanFields(body.f, 4000), by: currentUser.id, at: stamp() });
+    audit('OT note', a.name);
+    return { id };
+  });
+  route('PUT', '/api/otnote/:id', EDITORS, ({ body, params: p }) => {
+    const n = getOtNote(p.id);
+    put(n.id, 'otnote', { ...strip(n), f: cleanFields(body.f, 4000), edited_by: currentUser.id, edited_at: stamp() });
+    return { ok: true };
+  });
+  route('DELETE', '/api/otnote/:id', EDITORS, ({ params: p }) => { getOtNote(p.id); put(p.id, 'otnote', null); return { ok: true }; });
   // Worklist (JR and SR): the day's to-dos per patient. The work day runs 9 am to 9 am; at 9 am ticked items are dropped
   // (deleted, not kept anywhere) and pending ones carry over.
   const WORK_LISTS = ['jr', 'sr', 'icu'];
@@ -899,7 +923,7 @@ const Store = (() => {
       for (const r of [...R.values()]) {
         if (!r.data) continue;
         if (r.type === 'admission') { put(r.id, 'admission', null); out.removed++; }
-        else if (['round', 'note', 'ot', 'move', 'inv'].includes(r.type)) put(r.id, r.type, null);
+        else if (['round', 'note', 'ot', 'move', 'inv', 'otnote'].includes(r.type)) put(r.id, r.type, null);
       }
     }
     for (const p of list) {
@@ -1459,7 +1483,7 @@ const Store = (() => {
     const cutoff = shiftDate(today(), -365);
     const old = all('admission').filter((a) => a.discharge_date && a.discharge_date < cutoff);
     const ids = new Set(old.map((a) => a.id));
-    const related = [...all('round'), ...all('note'), ...all('ot'), ...all('move'), ...all('inv')].filter((r) => ids.has(r.admission_id)).map((r) => r.id);
+    const related = [...all('round'), ...all('note'), ...all('ot'), ...all('move'), ...all('inv'), ...all('otnote')].filter((r) => ids.has(r.admission_id)).map((r) => r.id);
     return { cutoff, patients: old.length, ids: [...ids, ...related] };
   });
 

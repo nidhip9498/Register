@@ -752,3 +752,41 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
 .worklistmini { display: flex; flex-wrap: wrap; gap: .2rem .9rem; font-size: .88rem; margin-top: .25rem; padding-left: .3rem; }
 .worklist .workadd > textarea { grid-column: 1 / -1; min-height: 4.6em; resize: vertical; }
 .allotq { width: 100%; max-width: 460px; margin: .5rem 0 .2rem; }
+
+/* ICU Rounds tiles: Clinical Details, Investigations, OT Notes, Progress Notes, Discharge Summary (v104) */
+.icutiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; margin-top: .5rem; }
+@media (max-width: 760px) { .icutiles { grid-template-columns: repeat(3, 1fr); } }
+.icutile { display: flex; flex-direction: column; align-items: center; gap: .15rem; padding: .45rem .3rem; font-size: .85rem; border: 1px solid var(--line); border-radius: 10px; background: var(--card, transparent); color: inherit; }
+.icutile span { font-size: 1.15rem; }
+.icutile.has { border-color: var(--accent); }
+.modal.clinical, .modal.otnotes { max-width: 980px; }
+.formsec { margin: 1rem 0 .4rem; padding-bottom: .2rem; border-bottom: 1px solid var(--line); font-size: 1rem; }
+.formsub { margin: .6rem 0 .3rem; font-size: .9rem; color: var(--muted); }
+.formgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .5rem .8rem; }
+.formgrid .field.wide { grid-column: 1 / -1; }
+.formgrid.yn { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); margin-top: .5rem; }
+.inline2 { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.inline2 > input { flex: 1; min-width: 70px; max-width: 220px; }
+.pickrow { display: flex; flex-wrap: wrap; gap: .3rem; }
+.tapopt { width: auto; flex: 0 0 auto; min-height: 0; padding: .3rem .7rem; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: inherit; font-size: .9rem; }
+.tapopt.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.subfields { grid-column: 1 / -1; padding-left: .8rem; border-left: 2px solid var(--line); margin-top: .4rem; }
+.phones { display: grid; gap: .3rem; }
+.btns.end { justify-content: flex-end; margin-top: 1rem; }
+.notelist { list-style: none; padding: 0; margin: .6rem 0 0; }
+.notelist li { display: flex; align-items: center; gap: .5rem; padding: .5rem 0; border-top: 1px solid var(--line); }
+#sheet-root { display: none; }
+@media print {
+  body.print-sheet #app, body.print-sheet #modal-root { display: none !important; }
+  body.print-sheet #sheet-root { display: block !important; color: #000; font-family: Arial, Helvetica, sans-serif; font-size: 11px; }
+  .opnote .ophead { text-align: center; margin-bottom: 8px; }
+  .opnote .ophi { font-size: 15px; font-weight: 700; }
+  .opnote .open { font-size: 15px; font-weight: 700; }
+  .opnote .opdept { font-size: 15px; font-weight: 700; margin-top: 10px; }
+  .opnote table { width: 100%; border-collapse: collapse; }
+  .opnote th, .opnote td { border: 1px solid #bbb; padding: 3px 5px; vertical-align: top; text-align: left; color: #000; }
+  .opnote .opgrid th { font-weight: 700; white-space: nowrap; }
+  .opnote .oprows th { width: 38%; font-weight: 700; }
+  .opnote .oprows td { white-space: pre-wrap; }
+  .opnote th .plain { font-weight: 400; }
+}
