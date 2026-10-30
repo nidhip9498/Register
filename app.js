@@ -1089,7 +1089,8 @@ function patientCard(a, date, refresh) {
         h('div', { class: 'cfact' }, h('span', {}, 'Consultant'), h('b', {}, a.unit || '—')),
         h('div', { class: 'cfact pod' }, h('span', {}, 'POD'), h('b', {}, pod ? pod.replace('POD ', '') : '—')),
         icu ? weightFact(a) : '',
-        icu ? h('div', { class: 'cornerwork' }, workBox(a)) : '')),
+        icu ? h('div', { class: 'cornerwork' }, workBox(a)) : '',
+        icu ? h('div', { class: 'cornerwork' }, dischargeSummaryBtn(a)) : '')),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
     oversBox(a),
     findingsBox(a),
@@ -2907,14 +2908,18 @@ function weightFact(a) {
 // A row of tiles under Procedure done on each ICU Rounds card (Nidhi, 2026-10-30).
 function icuTiles(a, onSaved) {
   const later = (label) => () => toast(`${label}: tell me what you want here and I'll add it`);
-  const tile = (icon, label, onclick, has) => h('button', { type: 'button', class: 'icutile' + (has ? ' has' : ''), onclick }, `${icon} ${label}`);
+  const tile = (icon, label, onclick, has) => h('button', { type: 'button', class: 'icutile' + (has ? ' has' : ''), onclick }, icon ? `${icon} ${label}` : label);
   const filled = a.clinical && Object.keys(a.clinical).length > 0;
   return h('div', { class: 'icutiles' },
-    tile('🩺', 'Clinical Details', () => clinicalPopup(a, onSaved), filled),
-    tile('🧪', 'Investigations', later('Investigations')),
+    tile('', 'Clinical Details', () => clinicalPopup(a, onSaved), filled),
+    tile('', 'Investigations', later('Investigations')),
     tile('🔪', 'OT Notes', () => otNotesPopup(a)),
-    tile('📈', 'Progress Notes', later('Progress Notes')),
-    tile('📄', 'Discharge Summary', later('Discharge Summary')));
+    tile('', 'Progress Notes', later('Progress Notes')));
+}
+// Discharge Summary: a large icon under the worklist in the ICU card's corner (what goes in it is still to be decided).
+function dischargeSummaryBtn(a) {
+  return h('button', { type: 'button', class: 'dsbtn', onclick: () => toast("Discharge Summary: tell me what you want here and I'll add it") },
+    h('span', { class: 'dsicon', 'aria-hidden': 'true' }, '📄'), h('b', {}, 'Discharge Summary'));
 }
 // Age from the date of birth, counted afresh every day: days for the first month, then months and days, then years.
 function ageFromBirth(dob, date) {
