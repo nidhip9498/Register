@@ -2986,7 +2986,7 @@ function printSheet(title, parts, signed) {
   document.getElementById('sheet-root')?.remove();
   document.body.append(sheet);
   document.body.classList.add('print-sheet');
-  const st = h('style', {}, '@page { size: A4 portrait; margin: 10mm 12mm; }');
+  const st = h('style', {}, '@page { size: A4 portrait; margin: 15mm 15mm; }');
   document.head.append(st);
   window.print();
   st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();
@@ -3204,7 +3204,7 @@ function printOtNote(f, signed) {
   document.getElementById('sheet-root')?.remove();
   document.body.append(sheet);
   document.body.classList.add('print-sheet');
-  const st = h('style', {}, '@page { size: A4 portrait; margin: 10mm 12mm; }');
+  const st = h('style', {}, '@page { size: A4 portrait; margin: 15mm 15mm; }');
   document.head.append(st);
   window.print();
   st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();
@@ -3314,19 +3314,23 @@ async function progressPopup(a, onSaved) {
   };
   list();
 }
+// Written like a ward progress note: a patient line, then short labelled lines, the plan, and one line per medicine ("Inj Meropenem 40 mg IV q8h D5").
 function printProgress(v, date, meds, signed) {
   const on = meds.filter((m) => medOn(m, date));
   const uo = [v.uo_ml && `${v.uo_ml} ml${v.uo_hrs ? ` in ${v.uo_hrs} h` : ''}`, v.uo_rate && `${v.uo_rate} ml/kg/hr`].filter(Boolean).join(' = ');
+  const line = (label, text) => (text ? h('p', { class: 'nl' }, h('b', {}, label + ': '), text) : '');
+  const join = (parts) => parts.filter(([, x]) => x).map(([l, x]) => (l ? `${l} ${x}` : x)).join(', ');
+  const oe = join([['GC', (v.gc || '').toLowerCase()], ['CRT', v.crt], ['Activity', (v.activity || '').toLowerCase()], ['Cry', (v.cry || '').toLowerCase()], ['Peripheries', (v.periph || '').toLowerCase()]]);
+  const vitals = join([['HR', v.hr && `${v.hr}/min`], ['SpO2', spo2Text(v)], ['Temp', v.temp]]);
   printSheet('PROGRESS NOTE', [
-    docGrid([['Name', v.name], ['Age / Sex', v.age_sex], ['UHID', v.uhid], ['Date', fmtDate(date)], ["Today's weight", v.weight && `${v.weight} g`]]),
-    docBlock('Complaints', v.complaints),
-    docGrid([['Oral intake', v.oral], ['Stools', v.stools], ['Urine output', uo]]),
-    docHead('Examination'),
-    docGrid([['General condition', v.gc], ['CRT', v.crt], ['Activity', v.activity], ['Cry', v.cry], ['Peripheries', v.periph], ['HR', v.hr], ['SpO2', spo2Text(v)], ['Temp', v.temp]]),
-    docBlock('Per abdomen', v.pa), docBlock('CVS', v.cvs), docBlock('CNS', v.cns), docBlock('RS', v.rs),
-    v.plan ? [docHead('Plan'), h('div', { class: 'docblock pre' }, v.plan)] : '',
-    on.length ? [docHead('Medications'), h('table', { class: 'docmeds' }, h('thead', {}, h('tr', {}, ['Medicine', 'Dose', 'Route', 'Frequency', 'Started', 'Day'].map((t) => h('th', {}, t)))),
-      h('tbody', {}, on.map((m) => h('tr', {}, h('td', {}, m.drug, m.antibiotic ? ' (antibiotic)' : ''), h('td', {}, m.dose), h('td', {}, m.route), h('td', {}, m.freq), h('td', {}, fmtDate(m.start)), h('td', {}, h('b', {}, `Day ${medDay(m, date)}`))))))] : '',
+    h('div', { class: 'ptline' }, ...[['Name', v.name], ['Age/Sex', v.age_sex], ['UHID', v.uhid], ['Date', fmtDate(date)], ['Wt', v.weight && `${v.weight} g`]]
+      .filter(([, x]) => x).map(([l, x]) => h('span', {}, h('b', {}, l + ': '), x))),
+    line('Complaints', v.complaints || 'Nil'),
+    line('Intake / output', join([['Oral intake', v.oral], ['Stools', v.stools], ['Urine output', uo]])),
+    line('O/E', oe), line('Vitals', vitals),
+    line('P/A', v.pa), line('CVS', v.cvs), line('CNS', v.cns), line('RS', v.rs),
+    v.plan ? [h('p', { class: 'nh' }, 'Plan'), h('div', { class: 'nblock' }, v.plan)] : '',
+    on.length ? [h('p', { class: 'nh' }, 'Medications'), h('div', { class: 'nmeds' }, on.map((m) => h('div', {}, `${medLine(m)} `, h('b', {}, `D${medDay(m, date)}`))))] : '',
   ], signed);
 }
 
@@ -3446,7 +3450,7 @@ function printDischarge(v, signed, courseLabel) {
   document.getElementById('sheet-root')?.remove();
   document.body.append(sheet);
   document.body.classList.add('print-sheet');
-  const st = h('style', {}, '@page { size: A4 portrait; margin: 20mm 20mm; }');
+  const st = h('style', {}, '@page { size: A4 portrait; margin: 18mm 18mm; }');
   document.head.append(st);
   window.print();
   st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();

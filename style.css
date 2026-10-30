@@ -852,3 +852,23 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
   .dsum .opsign > div { min-width: 60mm; border-top: 1px solid #000; padding-top: 3px; }
   .dsum .dsinvh { font-weight: 700; margin: 10px 0 4px; break-before: page; }
 }
+
+/* v108: prints without table lines or shading, with a margin inside the page edge (Nidhi) */
+@media print {
+  body.print-sheet #sheet-root { padding: 4mm 6mm; box-sizing: border-box; }
+  body.print-sheet #sheet-root.opnote { height: 265mm; }
+  #sheet-root th, #sheet-root td { border: 0 !important; background: none !important; padding: 2px 6px 2px 0 !important; }
+  #sheet-root th { color: #000; }
+  #sheet-root .opbig { border: 0 !important; margin-top: 8px; }
+  #sheet-root .opbighead { background: none !important; border: 0 !important; padding: 0 0 2px !important; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  #sheet-root .opbigtext { padding: 2px 0 !important; }
+  #sheet-root .dochead { border: 0 !important; text-transform: uppercase; letter-spacing: .03em; margin-top: 10px; }
+  #sheet-root .ophead { margin-bottom: 14px; }
+  #sheet-root .opgrid, #sheet-root .docgrid, #sheet-root table { margin-bottom: 8px; }
+  .docsheet .ptline { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 4px 0 12px; font-size: 12px; }
+  .docsheet p.nl { margin: 0 0 6px; white-space: pre-wrap; font-size: 12px; line-height: 1.45; }
+  .docsheet p.nh { margin: 12px 0 4px; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  .docsheet .nblock { white-space: pre-wrap; font-size: 12px; line-height: 1.45; }
+  .docsheet .nmeds div { font-size: 12px; line-height: 1.6; }
+  .dsum td.b { text-align: left; }
+}
