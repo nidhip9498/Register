@@ -1081,12 +1081,15 @@ function patientCard(a, date, refresh) {
           icu && a.birth_weight && `BW ${a.birth_weight} g`, icu && a.gestation && `GA ${a.gestation} wk`, icu && a.current_weight && `Wt ${a.current_weight} g`,
           !icu && a.weight && `Wt ${a.weight} kg`].filter(Boolean).join(' · ')),
         a.diagnosis && h('div', { class: 'rdx' }, h('span', {}, 'Diagnosis'), a.diagnosis),
-        h('div', { class: 'procwork' }, procedureBox(a, surgeries, () => refresh(id)), workBox(a)),
+        h('div', { class: 'procwork' + (icu ? ' icu' : '') }, procedureBox(a, surgeries, () => refresh(id)), icu ? '' : workBox(a)),
         icu ? icuTiles(a, () => refresh(id)) : ''),
-      h('div', { class: 'rcorner' },
+      // ICU: today's weight beside POD, and the worklist under these tiles (Nidhi, 2026-10-30).
+      h('div', { class: 'rcorner' + (icu ? ' icu' : '') },
         h('div', { class: 'cfact' }, h('span', {}, 'Age / Sex'), h('b', {}, ageSex(a, date) || '—')),
         h('div', { class: 'cfact' }, h('span', {}, 'Consultant'), h('b', {}, a.unit || '—')),
-        h('div', { class: 'cfact pod' }, h('span', {}, 'POD'), h('b', {}, pod ? pod.replace('POD ', '') : '—')))),
+        h('div', { class: 'cfact pod' }, h('span', {}, 'POD'), h('b', {}, pod ? pod.replace('POD ', '') : '—')),
+        icu ? weightFact(a) : '',
+        icu ? h('div', { class: 'cornerwork' }, workBox(a)) : '')),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
     oversBox(a),
     findingsBox(a),
@@ -2876,11 +2879,35 @@ async function monthlyView(main, arg) {
 
 boot().catch((e) => { document.getElementById('app').replaceChildren(h('p', { class: 'error center' }, 'The app could not start on this browser. ' + e.message)); });
 
+// Today's weight (grams) for an ICU baby: tap to type it. A weight from an earlier day shows that day's date.
+function weightFact(a) {
+  const box = h('div', { class: 'cfact wt' + (canEdit() ? ' clickable' : ''), title: canEdit() ? "Tap to enter today's weight" : '' });
+  const show = () => {
+    const old = a.weight_date && a.weight_date !== S.meta.today;
+    box.replaceChildren(h('span', {}, "Today's wt"), h('b', {}, a.current_weight ? `${a.current_weight} g` : '—'), old ? h('small', { class: 'muted' }, `on ${fmtDate(a.weight_date).slice(0, 5)}`) : '');
+  };
+  box.onclick = () => {
+    if (!canEdit() || box.querySelector('input')) return;
+    const inp = h('input', { inputmode: 'numeric', value: a.weight_date === S.meta.today ? a.current_weight || '' : '', placeholder: 'g' });
+    const save = async () => {
+      const w = inp.value.trim();
+      if (!w) return show();
+      try { await api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { current_weight: w, weight_date: S.meta.today }); a.current_weight = w; a.weight_date = S.meta.today; toast('Weight saved'); } catch (e) { toast(e.message, true); }
+      show();
+    };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') show(); };
+    inp.onblur = save;
+    box.replaceChildren(h('span', {}, "Today's wt (g)"), inp); inp.focus();
+  };
+  show();
+  return box;
+}
+
 // ---------- ICU Rounds: Clinical Details, OT Notes (and tiles still to be designed) ----------
 // A row of tiles under Procedure done on each ICU Rounds card (Nidhi, 2026-10-30).
 function icuTiles(a, onSaved) {
   const later = (label) => () => toast(`${label}: tell me what you want here and I'll add it`);
-  const tile = (icon, label, onclick, has) => h('button', { type: 'button', class: 'icutile' + (has ? ' has' : ''), onclick }, h('span', { 'aria-hidden': 'true' }, icon), label);
+  const tile = (icon, label, onclick, has) => h('button', { type: 'button', class: 'icutile' + (has ? ' has' : ''), onclick }, `${icon} ${label}`);
   const filled = a.clinical && Object.keys(a.clinical).length > 0;
   return h('div', { class: 'icutiles' },
     tile('🩺', 'Clinical Details', () => clinicalPopup(a, onSaved), filled),
@@ -2995,110 +3022,123 @@ function clinicalPopup(a, onSaved) {
       ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'primary', onclick: save }, 'Save clinical details')))));
 }
 
-// OT notes: the department's Operation Record. Filled here (name and details prefilled), printed in the same layout.
-const OTNOTE_LATER = [['asa', 'ASA'], ['ceopd', 'CEOPD'], ['renal', 'Is this a new renal transplant'], ['ot_reg', 'O.T. Registration No.'], ['anaesthesia', 'Anaesthesia'],
-  ['an_duration', 'Anaesthesia Duration'], ['skin_prep', 'Skin Preparation'], ['incision', 'Incision'], ['findings', 'Findings'], ['steps', 'Operative Steps'],
-  ['blood_loss', 'Blood Loss'], ['sponge', 'Sponge Count'], ['sheath', 'Closure of Seath']];
-// What can be filled in from the patient: name, age from date of birth, ward and bed, diagnosis, planned and done procedure, and the scrub team of the latest operation.
+// OT notes: the department's Operation Record (v105 layout, Nidhi 2026-10-30): patient, operation, operative findings, procedure notes.
+// Filled in from the patient and the latest scrub team; printed on one A4 page with most space for findings and procedure notes.
+const OTNOTE_ITEMS = [
+  ['op_proposed', 'Operative procedure proposed'], ['urgency', 'Routine / Emergency'], ['major', 'Major / Minor'], ['op_executed', 'Procedure done'],
+  ['surgeon', 'Operating surgeon'], ['asst1', 'First assistant'], ['asst2', 'Second assistant'],
+];
+const OTNOTE_ITEMS2 = [['an_team', 'Anaesthesia team'], ['anaesthesia', 'Anaesthesia'], ['ot_duration', 'OT duration'], ['blood_loss', 'Blood loss'], ['iv_fluids', 'IV fluids'],
+  ['pathology', 'Sent to Pathology'], ['skin_prep', 'Skin preparation']];
+const listOf = (s) => (s || '').split('\n').map((x) => x.trim()).filter(Boolean);
+// What can be filled in from the patient: name, age from date of birth, ward and bed, diagnosis, the latest operation's list (planned surgery, routine or emergency) and scrub team.
 function otNotePrefill(a) {
   const bed = a.bed_on_date || a.bed || '', ward = wardOf(bed);
   const ops = a.otprocs || [], op = ops[ops.length - 1];
-  const team = op ? op.scrub : [];
-  const nth = ['1st', '2nd', '3rd', '4th'];
+  const team = (op ? op.scrub : []).map((x) => rosterName(x, {}));
   const c = a.clinical || {};
   return {
-    name: a.name || '', age: ageFromBirth(a.dob) || a.age || '', sex: a.sex === 'M' ? 'Male' : a.sex === 'F' ? 'Female' : a.sex || '', marital: 'Unmarried',
-    cr_no: c.cr_no || '', ward: ward ? 'MCH ' + ward : '', bed: bed.includes('/') ? bed.split('/').pop() : bed,
-    pre_dx: a.diagnosis || '', post_dx: a.diagnosis || '', op_proposed: a.planned_surgery || '', op_executed: (op && op.done) || a.procedure_done || '',
-    surgeon: team[0] ? rosterName(team[0], {}) : '',
-    assistants: team.slice(1).map((x, i) => `${rosterName(x, {})} - Assistant Surgeon (${nth[i] || i + 1 + 'th'})`).join(' + '),
-    path_date: op ? op.date : S.meta.today, findings: a.ot_findings || '',
+    name: a.name || '', age_sex: [ageFromBirth(a.dob) || a.age || '', a.sex === 'M' ? 'Male' : a.sex === 'F' ? 'Female' : a.sex || ''].filter(Boolean).join(' / '),
+    uhid: a.ip_no || '', cr_no: c.cr_no || '', bed: bed.includes('/') ? bed.split('/').pop() : bed, ward: ward ? 'MCH ' + ward : '',
+    op_date: op ? op.date : S.meta.today, pre_dx: a.diagnosis || '', post_dx: a.diagnosis || '',
+    op_proposed: (op && op.surgery) || a.planned_surgery || '', urgency: op && op.kind ? op.kind : '', op_executed: (op && op.done) || a.procedure_done || '',
+    surgeon: team[0] || '', asst1: team[1] || '', asst2: team[2] || '', asst_more: team.slice(3).join('\n'), findings: a.ot_findings || '',
   };
 }
 async function otNotesPopup(a) {
   const root = document.getElementById('modal-root');
   const close = () => root.replaceChildren();
-  const body = h('div', {}, h('p', { class: 'loading' }, 'Loading…'));
+  const body = h('div', { class: 'otnbody' }, h('p', { class: 'loading' }, 'Loading…'));
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
     h('div', { class: 'modal card panel wide otnotes' }, h('div', { class: 'mhead' }, h('h2', {}, `OT Notes · ${a.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), body)));
   const full = await api('GET', '/api/admissions/' + encodeURIComponent(a.id)).catch(() => a);
   a = { ...a, ...full, bed_on_date: a.bed_on_date };
+  const me = () => ({ name: S.user.name, designation: { admin: 'Senior Resident', sr: 'Senior Resident', jr: 'Junior Resident', consultant: 'Consultant' }[S.user.role] || '' });
   const list = async () => {
     const notes = await api('GET', '/api/otnotes/' + encodeURIComponent(a.id)).catch((e) => { toast(e.message, true); return []; });
     body.replaceChildren(
       canEdit() ? h('div', { class: 'btns' }, h('button', { type: 'button', class: 'primary', onclick: () => form(null, otNotePrefill(a)) }, '+ New OT note')) : '',
       notes.length ? h('ul', { class: 'notelist' }, notes.map((n) => h('li', {},
-        h('div', { class: 'grow' }, h('b', {}, n.f.op_executed || n.f.op_proposed || 'OT note'), h('div', { class: 'small muted' }, `${n.f.path_date ? fmtDate(n.f.path_date) + ' · ' : ''}by ${n.by_name}${n.edited_name ? ` · edited by ${n.edited_name}` : ''}`)),
+        h('div', { class: 'grow' }, h('b', {}, n.f.op_executed || n.f.op_proposed || 'OT note'), h('div', { class: 'small muted' }, `${n.f.op_date ? fmtDate(n.f.op_date) + ' · ' : ''}by ${n.by_name}${n.edited_name ? ` · edited by ${n.edited_name}` : ''}`)),
         h('button', { type: 'button', class: 'ghost small', onclick: () => form(n, n.f) }, canEdit() ? 'Open' : 'View'),
-        h('button', { type: 'button', class: 'ghost small', onclick: () => printOtNote(n.f) }, 'Print'))))
+        h('button', { type: 'button', class: 'ghost small', onclick: () => printOtNote(n.f, n.signed) }, 'Print'))))
         : h('p', { class: 'muted' }, 'No OT notes yet.'));
   };
   const form = (n, start) => {
     const v = { ...start }, ro = !canEdit(), K = formKit(v, ro);
+    // Extra assistants (3rd, 4th…) and stents: one box each, with an Add button.
+    const many = (key, label, ph, addLabel) => {
+      const items = listOf(v[key]);
+      const box = h('div', { class: 'phones' });
+      const sync = () => { v[key] = items.map((x) => x.trim()).filter(Boolean).join('\n'); };
+      const draw = () => box.replaceChildren(...items.map((x, i) => h('input', { value: x, placeholder: ph(i), disabled: ro, oninput: (e) => { items[i] = e.target.value; sync(); } })),
+        ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: () => { items.push(''); draw(); box.lastElementChild.previousElementSibling.focus(); } }, addLabel));
+      draw();
+      return h('div', { class: 'field wide' }, h('span', { class: 'flabel' }, label), box);
+    };
+    const nth = ['3rd', '4th', '5th', '6th'];
     const save = async (andPrint) => {
       try {
         if (n) await api('PUT', '/api/otnote/' + encodeURIComponent(n.id), { f: v }); else n = { id: (await api('POST', '/api/otnotes/' + encodeURIComponent(a.id), { f: v })).id };
-        toast('OT note saved'); if (andPrint) printOtNote(v); list();
+        toast('OT note saved'); if (andPrint) printOtNote(v, me()); list();
       } catch (e) { toast(e.message, true); }
     };
     body.replaceChildren(
       h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: list }, '‹ All OT notes'), h('span', { class: 'grow' }),
-        h('button', { type: 'button', class: 'ghost small', onclick: () => printOtNote(v) }, 'Print'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => printOtNote(v, (n && n.signed) || me()) }, 'Print'),
         ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: () => save(false) }, 'Save')),
-      sectionHead('Patient'),
-      h('div', { class: 'formgrid' }, K.text('name', 'Name'), K.text('age', 'Age'), K.text('sex', 'Sex'), K.text('marital', 'Marital status'), K.text('cr_no', 'C.R. No.'),
-        K.text('service', 'Service'), K.text('ward', 'Ward'), K.text('bed', 'Bed'), K.text('occupation', 'Occupation'), K.text('religion', 'Religion')),
-      sectionHead('Diagnosis and procedure'),
-      h('div', { class: 'formgrid' }, K.area('pre_dx', 'Pre-operative diagnosis', 2), K.text('pre_icd', 'Pre-op ICD 11 codes'),
-        K.area('post_dx', 'Post-operative diagnosis', 2), K.text('post_icd', 'Post-op ICD 11 codes'),
-        K.text('op_procedure', 'Operative procedure', { placeholder: 'e.g. Open, Trans Peritoneal' }), K.area('op_proposed', 'Operative procedure proposed', 2), K.area('op_executed', 'Operative procedure executed', 2)),
-      sectionHead('Team'),
-      h('div', { class: 'formgrid' }, K.text('surgeon', 'Surgeon'), K.area('assistants', 'Assistant surgeon(s)', 2), K.text('an_consultant', 'Anaesthesia consultant'),
-        K.text('an_resident', 'Anaesthesia resident'), K.text('floor_nurse', 'Floor nurse'), K.text('scrub_nurse', 'Scrub nurse')),
-      sectionHead('Operation'),
-      h('div', { class: 'formgrid' }, K.text('pathology', 'Materials forwarded to Pathology', { placeholder: 'none' }), K.text('path_date', 'Date', { type: 'date' }),
-        K.text('asa', 'ASA', { list: 'asa-list', placeholder: 'ASA I - Normal/Healthy' }), K.text('ceopd', 'CEOPD', { list: 'ceopd-list', placeholder: 'Elective: Surgery at convenient time' }),
-        K.text('renal', 'New renal transplant?', { placeholder: 'No' }), K.text('ot_reg', 'O.T. Registration No.'), K.text('anaesthesia', 'Anaesthesia', { placeholder: 'General Anaesthesia' }),
-        K.text('an_duration', 'Anaesthesia duration', { placeholder: 'e.g. 1 hour' }), K.text('skin_prep', 'Skin preparation', { placeholder: 'e.g. 10% Betadine' }), K.text('incision', 'Incision'),
-        K.area('findings', 'Findings', 6), K.area('steps', 'Operative steps', 6), K.text('blood_loss', 'Blood loss'), K.text('sponge', 'Sponge count'), K.text('sheath', 'Closure of sheath')),
-      h('datalist', { id: 'asa-list' }, ['ASA I - Normal/Healthy', 'ASA II - Mild systemic disease', 'ASA III - Severe systemic disease', 'ASA IV - Severe disease, constant threat to life', 'ASA V - Moribund', 'ASA VI - Brain dead'].map((x) => h('option', { value: x }))),
-      h('datalist', { id: 'ceopd-list' }, ['Elective: Surgery at convenient time', 'Expedited: Surgery within days', 'Urgent: Surgery within hours', 'Immediate: Surgery within minutes'].map((x) => h('option', { value: x }))),
+      h('section', { class: 'otnsec' }, sectionHead('Patient'),
+        h('div', { class: 'formgrid' }, K.text('name', 'Name'), K.text('age_sex', 'Age / Sex'), K.text('uhid', 'UHID'), K.text('cr_no', 'CR No.'), K.text('bed', 'Bed No.'), K.text('ward', 'Ward'),
+          K.text('op_date', 'Date of surgery', { type: 'date' }))),
+      h('section', { class: 'otnsec' }, sectionHead('Operation'),
+        h('div', { class: 'formgrid' }, K.area('pre_dx', 'Pre-operative diagnosis', 2), K.area('post_dx', 'Post-operative diagnosis', 2),
+          K.area('op_proposed', 'Operative procedure proposed', 2),
+          K.pick('urgency', 'Routine / Emergency', ['Routine', 'Emergency']), K.pick('major', 'Major / Minor', ['Major', 'Minor']),
+          K.area('op_executed', 'Procedure done', 2),
+          K.text('surgeon', 'Operating surgeon'), K.text('asst1', 'First assistant'), K.text('asst2', 'Second assistant'),
+          many('asst_more', 'More assistants (if any)', (i) => `${nth[i] || i + 3 + 'th'} assistant`, '+ Add assistant'),
+          K.text('an_team', 'Anaesthesia team'), K.text('anaesthesia', 'Anaesthesia', { placeholder: 'e.g. GA + caudal' }), K.text('ot_duration', 'OT duration', { placeholder: 'e.g. 2 hours' }),
+          K.text('blood_loss', 'Blood loss'), K.text('iv_fluids', 'IV fluids'), K.text('skin_prep', 'Skin preparation', { placeholder: 'e.g. 10% Betadine' }),
+          K.area('pathology', 'Materials forwarded to Pathology for examination', 2, { placeholder: 'none' }),
+          many('stents', 'Stents / drains / catheters', (i) => i ? 'Another' : 'e.g. 4 Fr DJ stent, left', '+ Add stent'))),
+      h('section', { class: 'otnsec' }, sectionHead('Operative findings'), K.area('findings', '', 7)),
+      h('section', { class: 'otnsec' }, sectionHead('Procedure notes'), K.area('proc_notes', '', 9)),
       ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'ghost', onclick: () => save(true) }, 'Save and print'), h('button', { type: 'button', class: 'primary', onclick: () => save(false) }, 'Save')));
     body.parentElement.scrollTop = 0;
   };
   list();
 }
-// The Operation Record as printed by the department: bilingual header, a patient grid, then one row per item.
-function printOtNote(f) {
+// The Operation Record on one A4 page: header, patient grid, the operation in two columns, then findings and procedure notes (the largest), and the signature.
+function printOtNote(f, signed) {
   const val = (k) => f[k] || '';
-  const cell = (hi, en, k, cls) => [h('th', {}, hi, h('br'), en), h('td', { class: cls || '' }, val(k))];
-  const row = (label, ...right) => h('tr', {}, h('th', {}, label), h('td', {}, ...right));
   const bold = (t) => h('b', {}, t);
-  const dx = (k, icd) => [val(k), val(icd) ? h('div', {}, bold('ICD 11 Codes: '), val(icd)) : ''];
-  const date = val('path_date') ? val('path_date').split('-').reverse().join('-') : '';
+  const kv = (label, k, span) => h('tr', {}, h('th', {}, label), h('td', { colspan: span || 1 }, val(k)));
+  const pairs = (items) => { const rows = []; for (let i = 0; i < items.length; i += 2) rows.push(h('tr', {}, ...items.slice(i, i + 2).flatMap(([l, x]) => [h('th', {}, l), h('td', {}, x)]), items[i + 1] ? '' : h('td', { colspan: 2 }))); return rows; };
+  const date = val('op_date') ? val('op_date').split('-').reverse().join('/') : '';
+  const assistants = listOf(val('asst_more'));
+  const stents = listOf(val('stents'));
   const sheet = h('div', { id: 'sheet-root', class: 'opnote' },
     h('div', { class: 'ophead' },
       h('div', { class: 'ophi' }, 'अखिल भारतीय आयुर्विज्ञान संस्थान, नई दिल्ली - 110029'),
       h('div', { class: 'open' }, 'ALL INDIA INSTITUTE OF MEDICAL SCIENCES, NEW DELHI - 110029'),
       h('div', { class: 'opdept' }, 'DEPARTMENT OF PAEDIATRIC SURGERY', h('br'), 'OPERATION RECORD')),
     h('table', { class: 'opgrid' }, h('tbody', {},
-      h('tr', {}, cell('नाम', 'Name', 'name'), cell('उम्र', 'Age', 'age'), cell('लिंग', 'Sex', 'sex'), cell('वैवाहिक स्थिति', 'Marital Status', 'marital'), cell('सी. आर. नं.', 'C.R. No.', 'cr_no')),
-      h('tr', {}, cell('सर्विस', 'Service', 'service'), cell('वार्ड', 'Ward', 'ward'), cell('बेड', 'Bed', 'bed'), cell('व्यवसाय', 'Occupation', 'occupation'), cell('धर्म', 'Religion', 'religion')))),
-    h('table', { class: 'oprows' }, h('tbody', {},
-      row('Pre-Operative Diagnosis ICD 11', ...dx('pre_dx', 'pre_icd')),
-      row('Post-Operative Diagnosis ICD 11', ...dx('post_dx', 'post_icd')),
-      row('Operative Procedure', val('op_procedure')),
-      row('Operative Procedure Proposed', val('op_proposed')),
-      row('Operative Procedure Executed', val('op_executed')),
-      h('tr', {}, h('th', {}, 'Surgeon: ', h('span', { class: 'plain' }, val('surgeon'))), h('td', {}, bold('Assistant Surgeon: '), val('assistants'))),
-      h('tr', {}, h('th', {}, 'Anaesthesia Consultant: ', h('span', { class: 'plain' }, val('an_consultant'))),
-        h('td', {}, bold('Anaesthesia Resident: '), val('an_resident'), ' | ', bold('Floor Nurse: '), val('floor_nurse'), ' | ', bold('Scrub Nurse: '), val('scrub_nurse'))),
-      row('Materials forwarded to Pathology Department for Examination', val('pathology') || 'none', ' | ', bold('Date: '), date),
-      ...OTNOTE_LATER.map(([k, l]) => row(l, val(k))))));
+      h('tr', {}, h('th', {}, 'Name'), h('td', {}, val('name')), h('th', {}, 'Age / Sex'), h('td', {}, val('age_sex')), h('th', {}, 'UHID'), h('td', {}, val('uhid'))),
+      h('tr', {}, h('th', {}, 'CR No.'), h('td', {}, val('cr_no')), h('th', {}, 'Bed No. / Ward'), h('td', {}, [val('bed'), val('ward')].filter(Boolean).join(' · ')), h('th', {}, 'Date of surgery'), h('td', {}, date)))),
+    h('table', { class: 'oprows' }, h('colgroup', {}, ['20%', '30%', '20%', '30%'].map((w) => h('col', { style: `width:${w}` }))), h('tbody', {},
+      kv('Pre-operative diagnosis', 'pre_dx', 3), kv('Post-operative diagnosis', 'post_dx', 3),
+      // Two items to a row, so the findings and procedure notes get most of the page.
+      ...pairs([...OTNOTE_ITEMS.map(([k, l]) => [l, val(k)]),
+        ...assistants.map((x, i) => [`${['Third', 'Fourth', 'Fifth', 'Sixth'][i] || i + 3 + 'th'} assistant`, x]),
+        ...OTNOTE_ITEMS2.map(([k, l]) => [l, val(k)]),
+        ...(stents.length ? [['Stents / drains', stents.join('; ')]] : [])]))),
+    h('div', { class: 'opbig' }, h('div', { class: 'opbighead' }, 'Operative Findings'), h('div', { class: 'opbigtext' }, val('findings'))),
+    h('div', { class: 'opbig notes' }, h('div', { class: 'opbighead' }, 'Procedure Notes'), h('div', { class: 'opbigtext' }, val('proc_notes'))),
+    h('div', { class: 'opsign' }, h('div', {}, signed && signed.name ? [bold(signed.name), h('br'), signed.designation || '', h('br'), 'Department of Paediatric Surgery'] : 'Signature')));
   document.getElementById('sheet-root')?.remove();
   document.body.append(sheet);
   document.body.classList.add('print-sheet');
-  const st = h('style', {}, '@page { size: A4 portrait; margin: 12mm 12mm; }');
+  const st = h('style', {}, '@page { size: A4 portrait; margin: 10mm 12mm; }');
   document.head.append(st);
   window.print();
   st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();

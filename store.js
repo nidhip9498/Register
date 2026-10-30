@@ -254,7 +254,7 @@ const Store = (() => {
       ot_findings: str(body.ot_findings, 3000), // "OT Findings": what was found at operation
       ot_overs: str(body.ot_overs, 3000), // "OT Overs": things to do after the operation (rectal pack out on POD 2, stent out on POD 10…)
       dob: isDate(body.dob) ? body.dob : null, birth_weight: str(body.birth_weight, 20), gestation: str(body.gestation, 20),
-      current_weight: str(body.current_weight, 20), weight: str(body.weight, 20),
+      current_weight: str(body.current_weight, 20), weight_date: isDate(body.weight_date) ? body.weight_date : null, weight: str(body.weight, 20),
       clinical: cleanFields(body.clinical, 3000), // ICU Rounds "Clinical Details": history and examination
     };
     if (!f.name) throw new HttpError(400, 'Patient name or initials are required');
@@ -656,7 +656,7 @@ const Store = (() => {
     for (const e of all('otentry')) {
       if (e.cancelled || e.case_cancelled || !e.admission_id || !(e.scrub || []).length) continue;
       const l = get(e.list_id);
-      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || e.surgery || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id });
+      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || e.surgery || '', surgery: e.surgery || '', kind: l.kind || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id });
     }
     for (const k in out) out[k].sort((x, y) => (x.date < y.date ? -1 : 1));
     return out;
@@ -736,18 +736,21 @@ const Store = (() => {
     return { ok: true };
   });
   // OT notes (operation records) for a patient: the form fields, filled once and printed as the department's Operation Record.
+  // Whoever saves an OT note signs it: their name and designation print at the foot.
+  const DESIGNATION = { admin: 'Senior Resident', sr: 'Senior Resident', jr: 'Junior Resident', consultant: 'Consultant', viewer: 'Resident' };
+  const signer = () => ({ name: currentUser.name || '', designation: currentUser.designation || DESIGNATION[currentUser.role] || '' });
   const getOtNote = (id) => { const n = get(id); if (!n || !id.startsWith('otnote:')) throw new HttpError(404, 'OT note not found'); return n; };
   route('GET', '/api/otnotes/:id', ANY, ({ params: p }) => all('otnote').filter((n) => n.admission_id === p.id)
     .sort((x, y) => (x.at < y.at ? 1 : -1)).map((n) => ({ ...n, by_name: userName(n.by), edited_name: n.edited_by ? userName(n.edited_by) : '' })));
   route('POST', '/api/otnotes/:id', EDITORS, ({ body, params: p }) => {
     const a = getAdmission(p.id), id = 'otnote:' + uuid();
-    put(id, 'otnote', { admission_id: a.id, f: cleanFields(body.f, 4000), by: currentUser.id, at: stamp() });
+    put(id, 'otnote', { admission_id: a.id, f: cleanFields(body.f, 6000), by: currentUser.id, at: stamp(), signed: signer() });
     audit('OT note', a.name);
     return { id };
   });
   route('PUT', '/api/otnote/:id', EDITORS, ({ body, params: p }) => {
     const n = getOtNote(p.id);
-    put(n.id, 'otnote', { ...strip(n), f: cleanFields(body.f, 4000), edited_by: currentUser.id, edited_at: stamp() });
+    put(n.id, 'otnote', { ...strip(n), f: cleanFields(body.f, 6000), edited_by: currentUser.id, edited_at: stamp(), signed: signer() });
     return { ok: true };
   });
   route('DELETE', '/api/otnote/:id', EDITORS, ({ params: p }) => { getOtNote(p.id); put(p.id, 'otnote', null); return { ok: true }; });
