@@ -3901,16 +3901,18 @@ async function investigationsPopup(a) {
     };
     const row = (x, main, sub, open) => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `${fmtDate(x.date)} · ${main}`), sub ? h('div', { class: 'small' }, sub) : ''),
       h('button', { type: 'button', class: 'ghost small', onclick: open }, ro ? 'View' : 'Open'));
+    // One slim row of add buttons; a section shows only once it has something in it.
     body.replaceChildren(
-      ro ? '' : h('div', { class: 'btns' },
-        h('button', { type: 'button', class: 'primary small', onclick: () => labForm(null) }, '+ Lab results'),
-        h('button', { type: 'button', class: 'primary small', onclick: () => cultureForm(null) }, '+ Culture'),
-        h('button', { type: 'button', class: 'primary small', onclick: () => reportForm(null) }, '+ Imaging / other report')),
-      h('section', { class: 'otnsec' }, sectionHead('Blood / Serum'), labs.length ? grid() : h('p', { class: 'muted small' }, 'No lab results yet.')),
-      h('section', { class: 'otnsec' }, sectionHead('Cultures'), cultures.length ? h('ul', { class: 'notelist' }, cultures.map((x) =>
-        row(x, `${x.f.specimen || 'Culture'}${x.f.site ? ` (${x.f.site})` : ''}`, cultureLine(x.f), () => cultureForm(x)))) : h('p', { class: 'muted small' }, 'No cultures yet.')),
-      h('section', { class: 'otnsec' }, sectionHead('Imaging and other reports'), reports.length ? h('ul', { class: 'notelist' }, reports.map((x) =>
-        row(x, x.f.type || 'Report', (x.f.impression || x.f.findings || '').split('\n').slice(0, 2).join(' · '), () => reportForm(x)))) : h('p', { class: 'muted small' }, 'No reports yet.')));
+      ro ? '' : h('div', { class: 'ixadd' },
+        h('button', { type: 'button', class: 'ghost small', onclick: () => labForm(null) }, '+ Lab'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => cultureForm(null) }, '+ Culture'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => reportForm(null) }, '+ Report')),
+      items.length ? '' : h('p', { class: 'muted small ixempty' }, 'Nothing added yet.'),
+      labs.length ? h('section', { class: 'ixsec' }, sectionHead('Blood / Serum'), grid()) : '',
+      cultures.length ? h('section', { class: 'ixsec' }, sectionHead('Cultures'), h('ul', { class: 'notelist' }, cultures.map((x) =>
+        row(x, `${x.f.specimen || 'Culture'}${x.f.site ? ` (${x.f.site})` : ''}`, cultureLine(x.f), () => cultureForm(x))))) : '',
+      reports.length ? h('section', { class: 'ixsec' }, sectionHead('Imaging and other reports'), h('ul', { class: 'notelist' }, reports.map((x) =>
+        row(x, x.f.type || 'Report', (x.f.impression || x.f.findings || '').split('\n').slice(0, 2).join(' · '), () => reportForm(x))))) : '');
   };
   list();
 }

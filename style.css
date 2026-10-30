@@ -897,7 +897,7 @@ input.check, textarea.check { border-color: #f59e0b !important; background: rgba
 .labgrid { border-collapse: collapse; font-size: .9rem; min-width: 100%; }
 .labgrid th, .labgrid td { border-bottom: 1px solid var(--line); padding: .25rem .5rem; text-align: left; white-space: nowrap; }
 .labgrid tbody th { font-weight: 600; position: sticky; left: 0; background: var(--card); }
-.labgrid thead th { position: sticky; left: 0; background: var(--card); }
+.labgrid thead th { vertical-align: bottom; position: sticky; left: 0; background: var(--card); }
 .labgrid tr.labpanel td { font-weight: 700; color: var(--accent); padding-top: .6rem; }
 .labgrid td.small { white-space: normal; min-width: 10rem; }
 button.linkish { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 700; text-decoration: underline; cursor: pointer; font: inherit; }
@@ -913,3 +913,15 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .ocrwrap { text-align: center; margin: .4rem 0; }
 .ocrcanvas { max-width: 100%; touch-action: none; cursor: crosshair; border-radius: 6px; }
 .ocrtilt input { width: 9rem; vertical-align: middle; }
+/* v112: Investigations list kept slim; on phones the ICU pop-ups fill the screen so the card behind doesn't show through. */
+.ixadd { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4rem; max-width: 30rem; margin: .3rem 0 .4rem; }
+.ixadd button { font-weight: 700; }
+.ixempty { margin: .6rem 0; }
+.ixsec { margin-top: .6rem; }
+.ixsec .formsec { margin: .4rem 0 .2rem; color: var(--accent); border-bottom: 0; }
+@media (max-width: 700px) {
+  .backdrop:has(> .modal.otnotes), .backdrop:has(> .modal.clinical) { padding: 0; place-items: stretch; }
+  .modal.otnotes, .modal.clinical { max-width: none; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; padding: max(12px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+  .modal.otnotes .mhead h2, .modal.clinical .mhead h2 { font-size: 1.15rem; }
+  .otnbody { padding: .2rem 0 .6rem; }
+}
