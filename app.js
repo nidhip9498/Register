@@ -2913,7 +2913,7 @@ function icuTiles(a, onSaved) {
   return h('div', { class: 'icutiles' },
     tile('', 'Clinical Details', () => clinicalPopup(a, onSaved), filled),
     tile('', 'Investigations', () => investigationsPopup(a)),
-    tile('🔪', 'OT Notes', () => otNotesPopup(a)),
+    tile('', 'OT Notes', () => otNotesPopup(a)),
     tile('', 'Progress Notes', () => progressPopup(a, onSaved)));
 }
 // Discharge Summary: a large icon under the worklist in the ICU card's corner (what goes in it is still to be decided).
