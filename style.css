@@ -872,3 +872,14 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
   .docsheet .nmeds div { font-size: 12px; line-height: 1.6; }
   .dsum td.b { text-align: left; }
 }
+/* v109: bigger print text (Nidhi); the discharge summary keeps its table lines like her Word file */
+@media print {
+  body.print-sheet #sheet-root.docsheet, body.print-sheet #sheet-root.opnote { font-size: 13.5px !important; }
+  #sheet-root.docsheet th, #sheet-root.docsheet td, #sheet-root.opnote th, #sheet-root.opnote td { font-size: 13.5px !important; }
+  .docsheet .ptline, .docsheet p.nl, .docsheet .nblock, .docsheet .nmeds div, .docsheet .docblock { font-size: 13.5px !important; }
+  .docsheet p.nh, #sheet-root .dochead, #sheet-root .opbighead { font-size: 14px !important; }
+  #sheet-root .ophead, #sheet-root .ophead div { font-size: 16px !important; }
+  body.print-sheet #sheet-root.dsum, #sheet-root.dsum th, #sheet-root.dsum td { font-size: 12.5pt !important; }
+  #sheet-root.dsum .dshead { font-size: 13.5pt !important; }
+  #sheet-root.dsum th, #sheet-root.dsum td { border: 1px solid #000 !important; padding: 3px 6px !important; }
+}
