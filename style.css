@@ -883,3 +883,33 @@ details.statusdrop .register { padding: 0 1rem .8rem; }
   #sheet-root.dsum .dshead { font-size: 13.5pt !important; }
   #sheet-root.dsum th, #sheet-root.dsum td { border: 1px solid #000 !important; padding: 3px 6px !important; }
 }
+
+/* ICU Investigations (v110) */
+.labform { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .5rem .8rem; }
+.labcell { display: flex; flex-direction: column; gap: .15rem; font-size: .88rem; font-weight: 600; }
+.labcell small { font-weight: 400; color: var(--muted); }
+.labcell input { width: 100%; }
+input.check, textarea.check { border-color: #f59e0b !important; background: rgba(245, 158, 11, .14) !important; box-shadow: 0 0 0 1px #f59e0b; }
+.ocrnote { background: rgba(245, 158, 11, .14); border-left: 4px solid #f59e0b; padding: .45rem .7rem; border-radius: 6px; }
+.ocrconfirm { background: rgba(245, 158, 11, .12); border: 1px solid #f59e0b; border-radius: 10px; padding: .6rem .8rem; margin-top: .6rem; }
+.ocrconfirm p { margin: .3rem 0 .5rem; }
+.labgridwrap { overflow-x: auto; }
+.labgrid { border-collapse: collapse; font-size: .9rem; min-width: 100%; }
+.labgrid th, .labgrid td { border-bottom: 1px solid var(--line); padding: .25rem .5rem; text-align: left; white-space: nowrap; }
+.labgrid tbody th { font-weight: 600; position: sticky; left: 0; background: var(--card); }
+.labgrid thead th { position: sticky; left: 0; background: var(--card); }
+.labgrid tr.labpanel td { font-weight: 700; color: var(--accent); padding-top: .6rem; }
+.labgrid td.small { white-space: normal; min-width: 10rem; }
+button.linkish { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 700; text-decoration: underline; cursor: pointer; font: inherit; }
+.sensrow { display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem; }
+.sensrow input { flex: 1; min-width: 0; }
+.tapopt.sir { min-width: 2.4rem; }
+.tapopt.sir.on.S { background: #15803d; border-color: #15803d; color: #fff; }
+.tapopt.sir.on.I { background: #b45309; border-color: #b45309; color: #fff; }
+.tapopt.sir.on.R { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+.ocrlayer { position: fixed; inset: 0; z-index: 2000; background: rgba(0, 0, 0, .6); display: flex; align-items: center; justify-content: center; padding: 12px; }
+.ocrbox { max-width: 1040px; width: 100%; max-height: 100%; overflow: auto; padding: .8rem 1rem; }
+.ocrbox h2 { margin: 0 0 .2rem; font-size: 1.1rem; }
+.ocrwrap { text-align: center; margin: .4rem 0; }
+.ocrcanvas { max-width: 100%; touch-action: none; cursor: crosshair; border-radius: 6px; }
+.ocrtilt input { width: 9rem; vertical-align: middle; }

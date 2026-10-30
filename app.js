@@ -2912,7 +2912,7 @@ function icuTiles(a, onSaved) {
   const filled = a.clinical && Object.keys(a.clinical).length > 0;
   return h('div', { class: 'icutiles' },
     tile('', 'Clinical Details', () => clinicalPopup(a, onSaved), filled),
-    tile('', 'Investigations', later('Investigations')),
+    tile('', 'Investigations', () => investigationsPopup(a)),
     tile('🔪', 'OT Notes', () => otNotesPopup(a)),
     tile('', 'Progress Notes', () => progressPopup(a, onSaved)));
 }
@@ -3020,13 +3020,31 @@ function printClinical(a, v, top) {
 }
 
 
-function clinicalPopup(a, onSaved) {
+function clinicalPopup(a, onSaved, draft) {
   const root = document.getElementById('modal-root');
   const close = () => root.replaceChildren();
   const ro = !canEdit();
-  const v = { ...(a.clinical || {}) };
+  const v = draft ? draft.v : { ...(a.clinical || {}) };
   // Name, date of birth, UHID, birth weight and gestation live on the patient record itself (the register and Rounds use them).
-  const top = { name: a.name || '', dob: a.dob || '', ip_no: a.ip_no || '', birth_weight: a.birth_weight || '' };
+  const top = draft ? draft.top : { name: a.name || '', dob: a.dob || '', ip_no: a.ip_no || '', birth_weight: a.birth_weight || '' };
+  const marked = draft ? draft.marked : new Set();
+  // 📷 Face sheet: fills CR No., UHID, name, father's name and date of birth (worked out from the printed age); asks before replacing what is already typed.
+  const faceSheet = async () => {
+    const text = await readPhoto('Face sheet', 'Drag across the top box of the face sheet (CR No. down to the UHID).');
+    if (text == null) return;
+    v.phones = phones.map((x) => x.trim()).filter(Boolean).join('\n');
+    const got = parseFaceSheet(text);
+    const where = { name: top, ip_no: top, dob: top, cr_no: v, father: v };
+    const labels = { name: 'Name', ip_no: 'UHID', cr_no: 'CR No.', father: "Father's name", dob: 'Date of birth' };
+    const keys = Object.keys(where).filter((k) => got[k] && got[k] !== where[k][k]);
+    if (!keys.length) return toast(Object.keys(got).length ? 'The face sheet matches what is already here.' : 'Could not read the face sheet. Try again, cropping to the top box.', !Object.keys(got).length);
+    const clash = keys.filter((k) => where[k][k]);
+    const replace = clash.length && confirm(`The face sheet says something different. Replace these?\n\n${clash.map((k) => `${labels[k]}: ${k === 'dob' ? fmtDate(where[k][k]) : where[k][k]} → ${k === 'dob' ? fmtDate(got[k]) : got[k]}`).join('\n')}`);
+    const fill = keys.filter((k) => !where[k][k] || replace);
+    fill.forEach((k) => { where[k][k] = got[k]; marked.add(k); });
+    toast(fill.length ? `Filled ${fill.map((k) => labels[k]).join(', ')}. Check the orange boxes, then Save.` : 'Nothing changed');
+    clinicalPopup(a, onSaved, { v, top, marked });
+  };
   const [gw, gd] = (a.gestation || '').split('+');
   v.ga_w = v.ga_w || (gw || '').trim(); v.ga_d = v.ga_d || (gd || '').trim();
   const K = formKit(v, ro), T = formKit(top, ro);
@@ -3053,6 +3071,7 @@ function clinicalPopup(a, onSaved) {
     h('div', { class: 'modal card panel wide clinical' },
       h('div', { class: 'mhead' }, h('h2', {}, `Clinical Details · ${a.bed_on_date || a.bed}`), h('div', { class: 'btns' },
         h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'),
+        ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: faceSheet }, '📷 Read face sheet'),
         h('button', { type: 'button', class: 'ghost small', onclick: () => { v.phones = phones.map((x) => x.trim()).filter(Boolean).join('\n'); printClinical(a, v, top); } }, 'Print'),
         ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: save }, 'Save'))),
       h('div', { class: 'formgrid' },
@@ -3086,6 +3105,11 @@ function clinicalPopup(a, onSaved) {
       h('h4', { class: 'formsub' }, 'Systemic examination'),
       h('div', { class: 'formgrid' }, K.area('pa', 'Per abdomen'), K.area('rs', 'Respiratory system'), K.area('cns', 'CNS'), K.area('cvs', 'CVS')),
       ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'primary', onclick: save }, 'Save clinical details')))));
+  if (marked.size) {
+    const box = root.querySelector('.clinical .formgrid');
+    const byLabel = { name: 'Name', ip_no: 'UHID', cr_no: 'CR No.', father: "Father's name", dob: 'Date and time of birth' };
+    marked.forEach((k) => { const f = [...box.querySelectorAll('.field')].find((x) => x.querySelector('.flabel')?.textContent === byLabel[k]); const i = f && f.querySelector('input'); if (i) checkMark(i, true); });
+  }
 }
 
 // OT notes: the department's Operation Record (v105 layout, Nidhi 2026-10-30): patient, operation, operative findings, procedure notes.
@@ -3375,19 +3399,25 @@ async function dischargeSummaryPopup(a) {
   const body = h('div', { class: 'otnbody' }, h('p', { class: 'loading' }, 'Loading…'));
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
     h('div', { class: 'modal card panel wide otnotes' }, h('div', { class: 'mhead' }, h('h2', {}, `Discharge Summary · ${a.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), body)));
-  const [full, otnotes, saved] = await Promise.all([api('GET', '/api/admissions/' + encodeURIComponent(a.id)).catch(() => a),
-    api('GET', '/api/otnotes/' + encodeURIComponent(a.id)).catch(() => []), api('GET', '/api/dsum/' + encodeURIComponent(a.id)).catch(() => null)]);
+  const [full, otnotes, saved, ixs] = await Promise.all([api('GET', '/api/admissions/' + encodeURIComponent(a.id)).catch(() => a),
+    api('GET', '/api/otnotes/' + encodeURIComponent(a.id)).catch(() => []), api('GET', '/api/dsum/' + encodeURIComponent(a.id)).catch(() => null),
+    api('GET', '/api/ixs/' + encodeURIComponent(a.id)).catch(() => [])]);
+  const ixText = () => ixRows(ixs).map((r) => r.map((x) => x.replace(/\s*\|\s*/g, '/')).join(' | ')).join('\n');
   a = { ...a, ...full, bed_on_date: a.bed_on_date };
   const courseLabel = isIcu(a.bed_on_date || a.bed) ? 'ICU Course' : 'Ward Course';
   const draw = (start, signed) => {
     const v = { ...start }, ro = !canEdit(), K = formKit(v, ro);
-    // Investigations: one row each (test, date, report). Linking them to the Investigations tile comes later.
+    // Investigations: one row each (test, date, report), filled from the Investigations tile and editable here.
     const inv = listOf(v.inv).map((l) => { const [t = '', d = '', r = ''] = l.split(' | '); return { t, d, r }; });
     const invBox = h('div', { class: 'invrows' });
     const syncInv = () => { v.inv = inv.filter((x) => x.t || x.d || x.r).map((x) => [x.t, x.d, x.r].map((s) => s.replace(/\s*\|\s*/g, '/').replace(/\n/g, ' ')).join(' | ')).join('\n'); };
     const drawInv = () => invBox.replaceChildren(...inv.map((x) => h('div', { class: 'invrow' },
       ...['t', 'd', 'r'].map((k, i) => h('input', { value: x[k], placeholder: ['Investigation', 'Date', 'Report'][i], disabled: ro, oninput: (e) => { x[k] = e.target.value; syncInv(); } })))),
-      ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: () => { inv.push({ t: '', d: '', r: '' }); drawInv(); } }, '+ Add investigation'));
+      ro ? '' : h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: () => { inv.push({ t: '', d: '', r: '' }); drawInv(); } }, '+ Add investigation'),
+        ixs.length ? h('button', { type: 'button', class: 'ghost small', onclick: () => {
+          if (inv.some((x) => x.t || x.r) && !confirm('Replace these rows with everything in the Investigations tile?')) return;
+          inv.splice(0, inv.length, ...listOf(ixText()).map((l) => { const [t = '', d = '', r = ''] = l.split(' | '); return { t, d, r }; })); syncInv(); drawInv();
+        } }, 'Fill from Investigations tile') : ''));
     drawInv();
     const save = async (andPrint) => {
       syncInv();
@@ -3419,7 +3449,7 @@ async function dischargeSummaryPopup(a) {
     body.parentElement.scrollTop = 0;
   };
   const had = saved && saved.f;
-  draw(had ? saved.f : dsumPrefill(a, otnotes), had ? saved.signed : null);
+  draw(had ? saved.f : { ...dsumPrefill(a, otnotes), inv: ixText() }, had ? saved.signed : null);
 }
 // Printed exactly in the department's Word layout: Cambria heading, a 6-column patient table, then one row per section, the team, date and signature, and the investigations.
 function printDischarge(v, signed, courseLabel) {
@@ -3454,4 +3484,433 @@ function printDischarge(v, signed, courseLabel) {
   document.head.append(st);
   window.print();
   st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();
+}
+
+// ---------- ICU Investigations (Nidhi, 2026-10-30) ----------
+// Three kinds: lab results (one entry per sample date), cultures (specimen, organism, sensitivities) and written reports (USG, CT, contrast studies…).
+// Any of them can be read from a photo on this device: the photo is cropped and cleaned up, read with Tesseract, and never leaves the phone.
+// Lab tests from the department's eHospital slips: [key, label, unit, how the name starts on the slip (lower case), plausible range].
+const LAB_PANELS = [
+  ['Hematology (CBC)', [
+    ['hb', 'Hb', 'g/dL', /^(h[bo8]|ha?emoglobin)\b/, [2, 25]], ['hct', 'Hematocrit', '%', /^(ha?emato\w*|hct|pcv)\b/, [8, 80]],
+    ['rbc', 'RBC count', '10⁶/µL', /^r[bo8e]c\b/, [0.5, 9]], ['wbc', 'TLC (WBC)', '10³/µL', /^(wbc|tlc|total leu)/, [0.1, 150]],
+    ['plt', 'Platelets', '10³/µL', /^plat/, [1, 1500]], ['mcv', 'MCV', 'fL', /^mcv\b/, [40, 150]], ['mch', 'MCH', 'pg', /^m[co]h\b/, [10, 50]],
+    ['mchc', 'MCHC', 'g/dL', /^m[co]hc\b/, [20, 45]], ['rdw', 'RDW-CV', '%', /^r[dop]w/, [5, 35]],
+    ['neut', 'Neutrophils', '%', /^neu/, [0, 100]], ['lymph', 'Lymphocytes', '%', /^l[yv]m/, [0, 100]], ['eos', 'Eosinophils', '%', /^(eo?s|ecs)/, [0, 30]],
+    ['mono', 'Monocytes', '%', /^(mon|hon)/, [0, 40]], ['baso', 'Basophils', '%', /^(bas|bis)/, [0, 10]], ['nrbc', 'NRBC', '%', /^nr[bec8]c/, [0, 100]],
+    ['neut_abs', 'Neutrophils abs', '10³/µL', /^neu/, [0, 100]], ['lymph_abs', 'Lymphocytes abs', '10³/µL', /^l[yv]m/, [0, 50]],
+    ['eos_abs', 'Eosinophils abs', '10³/µL', /^(eo?s|ecs)/, [0, 10]], ['mono_abs', 'Monocytes abs', '10³/µL', /^(mon|hon)/, [0, 10]],
+    ['baso_abs', 'Basophils abs', '10³/µL', /^(bas|bis)/, [0, 2]]]],
+  ['Biochemistry', [
+    ['urea', 'Urea', 'mg/dL', /^urea/, [1, 400]], ['creat', 'Creatinine', 'mg/dL', /^creat/, [0.05, 20]], ['uric', 'Uric acid', 'mg/dL', /^uric/, [0.5, 20]],
+    ['ca', 'Calcium', 'mg/dL', /^calc/, [3, 16]], ['phos', 'Phosphate', 'mg/dL', /^phos/, [0.5, 15]], ['na', 'Sodium', 'mmol/L', /^sod/, [100, 180]],
+    ['k', 'Potassium', 'mmol/L', /^pot/, [1.5, 10]], ['cl', 'Chloride', 'mmol/L', /^chlor/, [70, 140]],
+    ['bil_t', 'Bilirubin (T)', 'mg/dL', /^bil\w*\W+t/, [0, 50]], ['bil_d', 'Bilirubin (D)', 'mg/dL', /^bil\w*\W+[d0o]/, [0, 30]], ['bil_i', 'Bilirubin (I)', 'mg/dL', /^bil\w*\W+[i1l|]/, [0, 40]],
+    ['alt', 'ALT', 'U/L', /^(alt|sgpt)\b/, [1, 5000]], ['ast', 'AST', 'U/L', /^(ast|sgot)\b/, [1, 5000]], ['alp', 'ALP', 'U/L', /^(alp|alk)/, [10, 3000]],
+    ['tp', 'Total protein', 'g/dL', /^total\s*prot/, [2, 12]], ['alb', 'Albumin', 'g/dL', /^alb/, [0.8, 7]], ['glob', 'Globulin', 'g/dL', /^glob/, [0.5, 8]],
+    ['ag', 'A/G ratio', '', /^a\s*[\/i1l|]\s*g\b/, [0.1, 5]], ['chol', 'Total cholesterol', 'mg/dL', /^(total\s*)?chol/, [30, 600]],
+    ['tg', 'Triglycerides', 'mg/dL', /^tr\w*(ceride|glyc)/, [10, 3000]], ['vldl', 'VLDL', 'mg/dL', /^vldl/, [1, 300]], ['ldl', 'LDL', 'mg/dL', /^ldl/, [5, 400]],
+    ['hdl', 'HDL', 'mg/dL', /^hdl/, [5, 150]]]],
+  ['Others', [
+    ['crp', 'CRP', 'mg/L', /^c\W?r\W?p\b/, [0, 500]], ['pct', 'Procalcitonin', 'ng/mL', /^(pct|procalc)/, [0, 200]], ['pt', 'PT', 's', /^(pt|prothrombin time)\b/, [5, 120]],
+    ['inr', 'INR', '', /^inr\b/, [0.5, 15]], ['aptt', 'aPTT', 's', /^a\W?ptt/, [10, 200]], ['sugar', 'Blood sugar', 'mg/dL', /^(rbs|fbs|blood sugar|glucose|random)/, [10, 800]],
+    ['mg', 'Magnesium', 'mg/dL', /^magn/, [0.5, 6]]]],
+];
+const LAB_TESTS = LAB_PANELS.flatMap(([, t]) => t);
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+// The first date printed in a text (23-Jun-2026, 25/09/2026 or 2026-06-23), as yyyy-mm-dd.
+function dateInText(t) {
+  const ok = (y, m, d) => (y > 2000 && m >= 1 && m <= 12 && d >= 1 && d <= 31 ? `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` : '');
+  let m = t.match(/\b(\d{1,2})[-\s/]([A-Za-z]{3})[a-z]*[-\s/,]+(\d{4})\b/);
+  if (m && MONTHS.includes(m[2].toLowerCase())) return ok(+m[3], MONTHS.indexOf(m[2].toLowerCase()) + 1, +m[1]);
+  m = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (m) return ok(+m[1], +m[2], +m[3]);
+  m = t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  return m ? ok(+m[3], +m[2], +m[1]) : '';
+}
+// One line of a lab slip, after the test name: the result is the number just before the reference range, else the first number.
+// A value outside what is possible is tried with the decimal point the photo lost (49 → 4.9); either way it is marked for checking.
+function labValue(rest, range) {
+  rest = rest.replace(/\([^)]{0,40}\)/g, ' ').replace(/,/g, '.');
+  const toks = rest.split(/\s+/).filter(Boolean);
+  const isNum = (t) => /^\d+(\.\d+)?$/.test(t);
+  const r = toks.findIndex((t) => /^\d+(\.\d+)?[-–]\d/.test(t));
+  let raw = '';
+  if (r > 0) for (let i = r - 1; i >= 0 && !raw; i--) if (isNum(toks[i])) raw = toks[i];
+  if (!raw) raw = toks.find(isNum) || '';
+  if (!raw) return null;
+  let n = /^0\d/.test(raw) && !raw.includes('.') ? Number('0.' + raw.slice(1)) : Number(raw);
+  const fits = (x) => x >= range[0] && x <= range[1];
+  if (fits(n)) return { value: String(n), sure: n === Number(raw) };
+  for (const d of [10, 100]) if (fits(n / d)) return { value: String(+(n / d).toFixed(3)), sure: false };
+  return { value: '', sure: false };
+}
+function parseLab(text) {
+  const vals = {}, unsure = new Set();
+  for (let line of text.split('\n')) {
+    line = line.toLowerCase().replace(/^[^a-z0-9]+/, '');
+    const abs = /\babs/.test(line);
+    for (const [k, , , re, range] of LAB_TESTS) {
+      if (k in vals || k.endsWith('_abs') !== abs) continue;
+      const m = line.match(re);
+      if (!m) continue;
+      const got = labValue(line.slice(m[0].length).replace(/^.*?\babs\w*/, (x) => (abs ? '' : x)), range);
+      if (!got) continue;
+      vals[k] = got.value;
+      if (!got.sure) unsure.add(k);
+      break;
+    }
+  }
+  return { vals, unsure, date: dateInText(text) };
+}
+
+// Culture reports: organisms and antibiotics the reader looks for, and the pick lists in the form.
+const ORGANISMS = [
+  ['Escherichia coli', /escherichia|e\.?\s?coli\b/], ['Klebsiella pneumoniae', /klebsiella/], ['Pseudomonas aeruginosa', /pseudomonas/], ['Acinetobacter baumannii', /acinetobacter/],
+  ['Enterobacter spp.', /enterobacter\b/], ['Citrobacter spp.', /citrobacter/], ['Proteus mirabilis', /proteus/], ['Serratia marcescens', /serratia/],
+  ['Staphylococcus aureus (MRSA)', /mrsa|methicillin.resist/], ['Staphylococcus aureus (MSSA)', /aureus/], ['Coagulase-negative Staphylococcus', /coagulase.neg|\bcons\b/],
+  ['Enterococcus faecalis', /faecalis/], ['Enterococcus faecium', /faecium/], ['Streptococcus spp.', /streptococc/], ['Burkholderia cepacia', /burkholderia/],
+  ['Stenotrophomonas maltophilia', /stenotroph/], ['Candida albicans', /candida\s+albicans/], ['Candida (non-albicans)', /candida/],
+];
+const ANTIBIOTICS = ['Ampicillin', 'Amoxicillin-clavulanate', 'Piperacillin-tazobactam', 'Cefazolin', 'Cefuroxime', 'Ceftriaxone', 'Cefotaxime', 'Ceftazidime', 'Ceftazidime-avibactam',
+  'Cefepime', 'Cefoperazone-sulbactam', 'Cefoxitin', 'Imipenem', 'Meropenem', 'Ertapenem', 'Amikacin', 'Gentamicin', 'Tobramycin', 'Netilmicin', 'Ciprofloxacin', 'Levofloxacin',
+  'Cotrimoxazole', 'Nitrofurantoin', 'Fosfomycin', 'Colistin', 'Polymyxin B', 'Tigecycline', 'Minocycline', 'Aztreonam', 'Vancomycin', 'Teicoplanin', 'Linezolid',
+  'Clindamycin', 'Erythromycin', 'Azithromycin', 'Penicillin', 'Oxacillin', 'Doxycycline', 'Tetracycline', 'Rifampicin', 'Fluconazole', 'Voriconazole', 'Amphotericin B',
+  'Caspofungin', 'Micafungin'];
+const SPECIMENS = ['Blood', 'Urine', 'Pus', 'Wound swab', 'Tracheal aspirate', 'CSF', 'Peritoneal fluid', 'Catheter tip', 'Stool', 'Other'];
+// The antibiotic named on a line of a culture report, if any (combinations are told apart by their second drug).
+function abxIn(line) {
+  const l = line.toLowerCase();
+  if (/augment|amoxy?\w*.?clav/.test(l)) return 'Amoxicillin-clavulanate';
+  if (/pip\w*.?taz|tazobac/.test(l)) return 'Piperacillin-tazobactam';
+  if (/avibac/.test(l)) return 'Ceftazidime-avibactam';
+  if (/cefopera|sulbac/.test(l)) return 'Cefoperazone-sulbactam';
+  if (/co.?trimox|trimeth|sulfameth/.test(l)) return 'Cotrimoxazole';
+  if (/polymyx/.test(l)) return 'Polymyxin B';
+  if (/amphot/.test(l)) return 'Amphotericin B';
+  return ANTIBIOTICS.find((x) => !x.includes('-') && l.includes(x.toLowerCase().slice(0, 6))) || '';
+}
+function parseCulture(text) {
+  const low = text.toLowerCase(), out = { unsure: new Set(['organism', 'result']) };
+  if (/no growth|sterile|no organism/.test(low)) out.result = 'Sterile';
+  const org = ORGANISMS.find(([, re]) => re.test(low));
+  if (org) { out.organism = org[0]; out.result = 'Growth'; }
+  const cfu = text.match(/(\d+(?:\s*[x×]\s*10\s*\^?\s*\d+)?|>?\s*10\s*\^?\s*\d)\s*(cfu|colon)/i);
+  if (cfu) { out.count = cfu[0].trim(); out.unsure.add('count'); }
+  const sens = [];
+  for (const line of text.split('\n')) {
+    const drug = abxIn(line);
+    if (!drug || sens.some(([d]) => d === drug)) continue;
+    const m = line.slice(line.toLowerCase().indexOf(drug.toLowerCase().slice(0, 4)) + 4).match(/\b(sensitive|susceptible|resistant|intermediate|[SIR])\b/i);
+    if (m) sens.push([drug, m[1][0].toUpperCase()]);
+  }
+  if (sens.length) out.sens = sens.map(([d, r]) => `${d}: ${r}`).join('\n');
+  const spec = SPECIMENS.find((s) => s !== 'Other' && low.includes(s.toLowerCase().split(' ')[0]));
+  if (spec) { out.specimen = spec; out.unsure.add('specimen'); }
+  out.date = dateInText(text);
+  return out;
+}
+// Written reports (radiology): keep what follows "Report:-", stop at the signatures, split off the impression, and drop lines that are mostly specks.
+function parseReport(text) {
+  let lines = text.split('\n').map((l) => l.replace(/^[^A-Za-z0-9(]+/, '').replace(/\s+[^A-Za-z0-9.)%]{1,2}$/, '').trim())
+    .filter((l) => { const t = l.replace(/\s/g, ''); return t.length > 1 && (t.match(/[A-Za-z]/g) || []).length >= t.length * 0.55; });
+  const start = lines.findIndex((l) => /^report\s*:/i.test(l));
+  if (start >= 0) lines = lines.slice(start + 1);
+  const stop = lines.findIndex((l) => /liminary by|status\s*:\s*verif|verified by|electronically signed|^dr\.?\s|^professor\b|^consultant radiologist/i.test(l));
+  if (stop >= 0) lines = lines.slice(0, stop);
+  let type = '';
+  if (lines.length && lines[0].split(/\s+/).length <= 6 && !/:/.test(lines[0])) type = lines.shift();
+  const imp = lines.findIndex((l) => /^(impression|conclusion|opinion)\b/i.test(l));
+  const findings = (imp >= 0 ? lines.slice(0, imp) : lines).join('\n');
+  const impression = imp >= 0 ? [lines[imp].replace(/^(impression|conclusion|opinion)\s*[:.-]*\s*/i, ''), ...lines.slice(imp + 1)].filter(Boolean).join('\n') : '';
+  return { type, findings, impression, date: dateInText(text) };
+}
+// Face sheet (AIIMS eHospital, printed): CR No., UHID, name, father's name (S/O, D/O, W/O line), age, and the admission date the age was printed on.
+function parseFaceSheet(text) {
+  const out = {};
+  const caps = (s) => { const w = []; for (const x of s.trim().split(/\s+/)) { if (!/^[A-Z][A-Z.']*$/.test(x) || (x.length < 2 && w.length)) break; w.push(x); } return w.join(' '); };
+  const cr = text.match(/\b[H1Il|][-–—.]?\s?(\d{6})\s?[-–—]\s?(\d{2})\b/);
+  if (cr) out.cr_no = `H-${cr[1]}-${cr[2]}`;
+  const uh = text.match(/UHID[^\d\n]{0,10}(\d{8,10})/i) || text.match(/\b(10\d{7})\b/);
+  if (uh) out.ip_no = uh[1];
+  const nm = text.match(/\b(MR|MRS|MISS|MS|MASTER|BABY OF|B\/O)\.?\s+([A-Z].*)/);
+  const title = (s) => s.replace(/\b([A-Z])([A-Z.']+)/g, (x, a, b) => a + b.toLowerCase());
+  if (nm) { const rest = caps(nm[2]); if (rest) out.name = (/^(BABY OF|B\/O)$/.test(nm[1]) ? 'B/o ' : '') + title(rest); }
+  const fa = text.match(/\b[SDW]\s*[\/'’|]\s*[O0]\s+([A-Z].*)/);
+  if (fa) { const f = caps(fa[1]); if (f) out.father = title(f); }
+  const seen = dateInText(text);
+  let ag = text.match(/(\d{1,2})\s*years?\s*(\d{1,2})\s*mon\w*\s*(\d{1,2})\s*days?/i) || text.match(/(\d{1,2})\s*Y\s*(\d{1,2})\s*M\s*(\d{1,2})\s*D\b/);
+  let y = 0, mo = 0, d = 0;
+  if (ag) [y, mo, d] = [+ag[1], +ag[2], +ag[3]];
+  else if ((ag = text.match(/(\d{1,2})\s*mon\w*\s*(\d{1,2})\s*days?/i))) [mo, d] = [+ag[1], +ag[2]];
+  if (ag && seen) {
+    const b = new Date(seen + 'T12:00:00');
+    b.setFullYear(b.getFullYear() - y); b.setMonth(b.getMonth() - mo); b.setDate(b.getDate() - d);
+    out.dob = b.toISOString().slice(0, 10);
+  }
+  return out;
+}
+
+// The photo reader. Loaded from the app's own site the first time it is used (about 7 MB), then kept on the device.
+let ocrWorker = null, ocrProgress = null;
+async function ocrEngine() {
+  if (ocrWorker) return ocrWorker;
+  if (!window.Tesseract) await new Promise((res, rej) => document.head.append(h('script', { src: 'ocr/tesseract.min.js', onload: res, onerror: () => rej(new Error('Could not load the photo reader. It needs internet the first time.')) })));
+  const base = new URL('ocr/', location.href).href;
+  ocrWorker = await window.Tesseract.createWorker('eng', 1, { workerPath: base + 'worker.min.js', corePath: base, langPath: base, logger: (m) => ocrProgress && ocrProgress(m) });
+  return ocrWorker;
+}
+// Choose or take a photo, drag across the part to read, straighten it if needed, then read it. Resolves with the text, or null if cancelled.
+function readPhoto(title, hint) {
+  return new Promise((resolve) => {
+    const input = h('input', { type: 'file', accept: 'image/*', style: 'display:none' });
+    input.onchange = () => { const f = input.files[0]; input.remove(); if (f) cropAndRead(f, title, hint, resolve); else resolve(null); };
+    document.body.append(input);
+    input.click();
+  });
+}
+function cropAndRead(file, title, hint, resolve) {
+  const url = URL.createObjectURL(file), img = new Image();
+  const layer = h('div', { class: 'ocrlayer' });
+  const done = (text) => { URL.revokeObjectURL(url); layer.remove(); resolve(text); };
+  let turn = 0, tilt = 0, sel = null, view = null, scale = 1;
+  const cv = h('canvas', { class: 'ocrcanvas' });
+  // The photo turned by quarter turns and tilted, drawn at the given scale on a white page.
+  const drawn = (s) => {
+    const rad = ((turn * 90 + tilt) * Math.PI) / 180, w = img.naturalWidth, ht = img.naturalHeight;
+    const W = Math.ceil((Math.abs(w * Math.cos(rad)) + Math.abs(ht * Math.sin(rad))) * s), H = Math.ceil((Math.abs(w * Math.sin(rad)) + Math.abs(ht * Math.cos(rad))) * s);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+    g.translate(W / 2, H / 2); g.rotate(rad); g.scale(s, s); g.drawImage(img, -w / 2, -ht / 2);
+    return c;
+  };
+  const paint = () => {
+    cv.width = view.width; cv.height = view.height;
+    const g = cv.getContext('2d'); g.drawImage(view, 0, 0);
+    if (sel && Math.abs(sel.w) > 4 && Math.abs(sel.h) > 4) {
+      const x = Math.min(sel.x, sel.x + sel.w), y = Math.min(sel.y, sel.y + sel.h), w = Math.abs(sel.w), ht = Math.abs(sel.h);
+      g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, 0, cv.width, y); g.fillRect(0, y + ht, cv.width, cv.height - y - ht); g.fillRect(0, y, x, ht); g.fillRect(x + w, y, cv.width - x - w, ht);
+      g.strokeStyle = '#ffb300'; g.lineWidth = 3; g.strokeRect(x, y, w, ht);
+    }
+  };
+  const refresh = () => {
+    const rad = ((turn * 90 + tilt) * Math.PI) / 180, w = img.naturalWidth, ht = img.naturalHeight;
+    const W = Math.abs(w * Math.cos(rad)) + Math.abs(ht * Math.sin(rad)), H = Math.abs(w * Math.sin(rad)) + Math.abs(ht * Math.cos(rad));
+    scale = Math.min(1, Math.min(window.innerWidth - 32, 1000) / W, (window.innerHeight * 0.62) / H);
+    view = drawn(scale); sel = null; paint();
+  };
+  const at = (e) => { const r = cv.getBoundingClientRect(); return { x: ((e.clientX - r.left) * cv.width) / r.width, y: ((e.clientY - r.top) * cv.height) / r.height }; };
+  cv.onpointerdown = (e) => { cv.setPointerCapture(e.pointerId); const p = at(e); sel = { x: p.x, y: p.y, w: 0, h: 0 }; paint(); };
+  cv.onpointermove = (e) => { if (!sel || !cv.hasPointerCapture(e.pointerId)) return; const p = at(e); sel.w = p.x - sel.x; sel.h = p.y - sel.y; paint(); };
+  const status = h('p', { class: 'small muted' }, hint || 'Drag across the part you want read.');
+  const tiltIn = h('input', { type: 'range', min: -15, max: 15, step: 0.5, value: 0, oninput: (e) => { tilt = +e.target.value; refresh(); } });
+  const controls = h('div', { class: 'btns' },
+    h('button', { type: 'button', class: 'ghost small', onclick: () => { turn = (turn + 3) % 4; refresh(); } }, '↺ Turn'),
+    h('button', { type: 'button', class: 'ghost small', onclick: () => { turn = (turn + 1) % 4; refresh(); } }, '↻ Turn'),
+    h('label', { class: 'inline small ocrtilt' }, 'Straighten ', tiltIn),
+    h('span', { class: 'grow' }),
+    h('button', { type: 'button', class: 'ghost small', onclick: () => done(null) }, 'Cancel'),
+    h('button', { type: 'button', class: 'primary small', onclick: () => read() }, 'Read'));
+  const read = async () => {
+    // Full-resolution crop, sized so letters are big enough to read, in grey with the contrast stretched (screen photos come out dim and striped).
+    const full = drawn(1);
+    let x = 0, y = 0, w = full.width, ht = full.height;
+    if (sel && Math.abs(sel.w) > 4 && Math.abs(sel.h) > 4) { x = Math.min(sel.x, sel.x + sel.w) / scale; y = Math.min(sel.y, sel.y + sel.h) / scale; w = Math.abs(sel.w) / scale; ht = Math.abs(sel.h) / scale; }
+    const k = Math.max(0.5, Math.min(3, 2200 / w));
+    const c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(ht * k);
+    const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(full, x, y, w, ht, 0, 0, c.width, c.height);
+    const px = g.getImageData(0, 0, c.width, c.height), d = px.data, hist = new Uint32Array(256);
+    for (let i = 0; i < d.length; i += 4) { const v = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0; d[i] = v; hist[v]++; }
+    const n = d.length / 4; let lo = 0, hi = 255, acc = 0;
+    while (lo < 255 && (acc += hist[lo]) < n * 0.02) lo++;
+    acc = 0; while (hi > 0 && (acc += hist[hi]) < n * 0.02) hi--;
+    const span = Math.max(1, hi - lo);
+    for (let i = 0; i < d.length; i += 4) { const v = Math.max(0, Math.min(255, ((d[i] - lo) * 255) / span)); d[i] = d[i + 1] = d[i + 2] = v; }
+    g.putImageData(px, 0, 0);
+    controls.hidden = true;
+    status.textContent = ocrWorker ? 'Reading…' : 'Getting the photo reader ready (the first time it downloads about 7 MB)…';
+    ocrProgress = (m) => { if (m.status === 'recognizing text') status.textContent = `Reading… ${Math.round(m.progress * 100)}%`; };
+    try { const wk = await ocrEngine(); const { data } = await wk.recognize(c); done(data.text || ''); } catch (e) { toast(e.message || 'Could not read the photo', true); controls.hidden = false; status.textContent = hint || ''; }
+  };
+  img.onload = () => { layer.append(h('div', { class: 'ocrbox card' }, h('h2', {}, title), status, h('div', { class: 'ocrwrap' }, cv), controls)); document.body.append(layer); refresh(); };
+  img.onerror = () => { toast('Could not open that photo', true); done(null); };
+  img.src = url;
+}
+// Marks a box filled from a photo until it is edited.
+const checkMark = (el, on) => { if (on) { el.classList.add('check'); el.title = 'Read from the photo: check this'; el.addEventListener('input', () => el.classList.remove('check'), { once: true }); } return el; };
+
+// Lab values, one line: "Hb 11.4, TLC 4.85, Platelets 201".
+const labLine = (f) => LAB_TESTS.filter(([k]) => f[k]).map(([k, l]) => `${l} ${f[k]}`).concat(f.other ? [f.other.replace(/\n/g, '; ')] : []).join(', ');
+const cultureLine = (f) => {
+  if (f.result === 'Sterile') return 'Sterile';
+  if (f.result === 'Pending') return 'Pending';
+  const s = listOf(f.sens).map((l) => l.split(': ')), by = (r) => s.filter(([, x]) => x === r).map(([d]) => d);
+  return [[f.organism, f.count].filter(Boolean).join(' '), by('S').length ? `Sensitive: ${by('S').join(', ')}` : '', by('I').length ? `Intermediate: ${by('I').join(', ')}` : '',
+    by('R').length ? `Resistant: ${by('R').join(', ')}` : '', f.remarks].filter(Boolean).join('. ');
+};
+// Rows for the discharge summary's investigations page: test, date, result.
+function ixRows(ixs) {
+  return [...ixs].sort((x, y) => (x.date < y.date ? -1 : 1)).map((x) => x.kind === 'lab' ? ['Blood / Serum', dmy(x.date), labLine(x.f)]
+    : x.kind === 'culture' ? [`${x.f.specimen || ''} culture`.trim(), dmy(x.date), cultureLine(x.f)]
+      : [x.f.type || 'Report', dmy(x.date), (x.f.impression || x.f.findings || '').replace(/\n+/g, '; ')]).filter(([, , r]) => r);
+}
+
+async function investigationsPopup(a) {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  const body = h('div', { class: 'otnbody' }, h('p', { class: 'loading' }, 'Loading…'));
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
+    h('div', { class: 'modal card panel wide otnotes' }, h('div', { class: 'mhead' }, h('h2', {}, `Investigations · ${a.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), body)));
+  const ro = !canEdit();
+  const top = () => { body.parentElement.scrollTop = 0; };
+  const back = h('button', { type: 'button', class: 'ghost small', onclick: () => list() }, '‹ All investigations');
+  const saveIx = async (x, kind, date, f) => {
+    try {
+      if (x) await api('PUT', '/api/ix/' + encodeURIComponent(x.id), { date, f }); else await api('POST', '/api/ixs/' + encodeURIComponent(a.id), { kind, date, f });
+      toast('Saved'); list();
+    } catch (e) { toast(e.message, true); }
+  };
+  const delBtn = (x) => (x && !ro ? h('button', { type: 'button', class: 'ghost small danger', onclick: () => { if (confirm('Delete this entry?')) api('DELETE', '/api/ix/' + encodeURIComponent(x.id)).then(() => { toast('Deleted'); list(); }).catch((e) => toast(e.message, true)); } }, 'Delete') : '');
+  const dateField = (st) => h('label', { class: 'field' }, h('span', { class: 'flabel' }, 'Date'), checkMark(h('input', { type: 'date', value: st.date, max: S.meta.today, disabled: ro, oninput: (e) => { st.date = e.target.value; } }), st.dateChk));
+  const photoBtn = (label, fn) => (ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: fn }, `📷 ${label}`));
+  const by = (x) => (x ? h('p', { class: 'small muted' }, `Added by ${x.by_name}${x.edited_name ? ` · edited by ${x.edited_name}` : ''}`) : '');
+
+  // Lab results: every test of the slip, grouped; values read from a photo are marked until checked.
+  const labForm = (x, st) => {
+    st = st || { date: x ? x.date : S.meta.today, f: { ...(x ? x.f : {}) }, unsure: new Set(), read: new Set() };
+    const v = st.f;
+    const fromPhoto = async () => {
+      const text = await readPhoto('Lab report', 'Drag across the results (test names and values). Leave out the browser bar at the top.');
+      if (text == null) return;
+      const p = parseLab(text), keys = Object.keys(p.vals);
+      if (!keys.length) return toast('No test names found in that photo. Try again, cropping closer to the results.', true);
+      keys.forEach((k) => { v[k] = p.vals[k]; st.read.add(k); if (p.unsure.has(k)) st.unsure.add(k); else st.unsure.delete(k); });
+      if (p.date) { st.date = p.date; st.dateChk = true; }
+      toast(`Read ${keys.filter((k) => p.vals[k]).length} values. The ones in orange need checking.`);
+      labForm(x, st);
+    };
+    body.replaceChildren(
+      h('div', { class: 'btns' }, back, h('span', { class: 'grow' }), photoBtn('Read lab report', fromPhoto), delBtn(x),
+        ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: () => saveIx(x, 'lab', st.date, v) }, 'Save')),
+      by(x),
+      st.read.size ? h('p', { class: 'small ocrnote' }, 'Filled from the photo. Check every value against the report; orange boxes were hard to read.') : '',
+      h('section', { class: 'otnsec' }, sectionHead('Lab results'), h('div', { class: 'formgrid' }, dateField(st))),
+      ...LAB_PANELS.map(([title, tests]) => h('section', { class: 'otnsec' }, sectionHead(title), h('div', { class: 'labform' },
+        tests.map(([k, l, unit]) => h('label', { class: 'labcell' }, h('span', {}, l, unit ? h('small', {}, ` ${unit}`) : ''),
+          checkMark(h('input', { inputmode: 'decimal', value: v[k] || '', disabled: ro, oninput: (e) => { v[k] = e.target.value; } }), st.unsure.has(k))))),
+        title === 'Others' ? h('label', { class: 'field wide' }, h('span', { class: 'flabel' }, 'Other tests (one per line, e.g. "ABG pH 7.31")'), h('textarea', { rows: 2, disabled: ro, oninput: (e) => { v.other = e.target.value; } }, v.other || '')) : '')),
+      ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'primary', onclick: () => saveIx(x, 'lab', st.date, v) }, 'Save lab results')));
+    top();
+  };
+
+  // Cultures: specimen, result, organism and colony count, then S / I / R for each antibiotic tested.
+  const cultureForm = (x, st) => {
+    st = st || { date: x ? x.date : S.meta.today, f: { result: '', ...(x ? x.f : {}) }, unsure: new Set() };
+    const v = st.f, K = formKit(v, ro);
+    const sens = listOf(v.sens).map((l) => { const [d, r] = l.split(': '); return { d: d || '', r: r || '' }; });
+    const syncSens = () => { v.sens = sens.filter((s) => s.d.trim()).map((s) => `${s.d.trim().replace(/:/g, '')}: ${s.r}`).join('\n'); };
+    const sensBox = h('div', { class: 'sensbox' });
+    const growth = h('div', {});
+    const drawSens = () => sensBox.replaceChildren(...sens.map((s, i) => h('div', { class: 'sensrow' },
+      h('input', { value: s.d, list: 'abx-list', placeholder: 'Antibiotic', disabled: ro, oninput: (e) => { s.d = e.target.value; syncSens(); } }),
+      h('div', { class: 'pickrow' }, ['S', 'I', 'R'].map((r) => h('button', { type: 'button', class: 'tapopt sir' + (s.r === r ? ' on ' + r : ''), disabled: ro, onclick: () => { s.r = s.r === r ? '' : r; syncSens(); drawSens(); } }, r))),
+      ro ? '' : iconBtn(BIN_SVG, 'Remove', () => { sens.splice(i, 1); syncSens(); drawSens(); }, 'pencil bin'))),
+      ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: () => { sens.push({ d: '', r: '' }); drawSens(); sensBox.querySelectorAll('.sensrow input')[sens.length - 1]?.focus(); } }, '+ Add antibiotic'));
+    const showGrowth = () => { growth.hidden = v.result !== 'Growth'; };
+    const fromPhoto = async () => {
+      const text = await readPhoto('Culture report', 'Drag across the report: specimen, organism and the sensitivity table.');
+      if (text == null) return;
+      const p = parseCulture(text);
+      ['result', 'organism', 'count', 'specimen', 'sens'].forEach((k) => { if (p[k]) v[k] = p[k]; });
+      if (p.date) { st.date = p.date; st.dateChk = true; }
+      st.unsure = p.unsure; st.read = true;
+      toast(p.organism || p.result || p.sens ? 'Filled from the photo. Check it against the report.' : 'Could not find the organism or sensitivities in that photo. Please fill them in.', !(p.organism || p.result || p.sens));
+      cultureForm(x, st);
+    };
+    drawSens();
+    growth.append(h('div', { class: 'formgrid' },
+      h('label', { class: 'field' }, h('span', { class: 'flabel' }, 'Organism'), checkMark(h('input', { value: v.organism || '', list: 'org-list', disabled: ro, oninput: (e) => { v.organism = e.target.value; } }), st.read && v.organism)),
+      h('label', { class: 'field' }, h('span', { class: 'flabel' }, 'Colony count'), checkMark(h('input', { value: v.count || '', placeholder: 'e.g. 10^5 CFU/ml', disabled: ro, oninput: (e) => { v.count = e.target.value; } }), st.unsure.has('count')))),
+      h('h4', { class: 'formsub' }, 'Sensitivity'), sensBox);
+    showGrowth();
+    body.replaceChildren(
+      h('datalist', { id: 'abx-list' }, ANTIBIOTICS.map((x) => h('option', { value: x }))), h('datalist', { id: 'org-list' }, ORGANISMS.map(([o]) => h('option', { value: o }))),
+      h('div', { class: 'btns' }, back, h('span', { class: 'grow' }), photoBtn('Read culture report', fromPhoto), delBtn(x),
+        ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: () => { syncSens(); saveIx(x, 'culture', st.date, v); } }, 'Save')),
+      by(x),
+      st.read ? h('p', { class: 'small ocrnote' }, 'Filled from the photo. Check the organism and every S / I / R against the report.') : '',
+      h('section', { class: 'otnsec' }, sectionHead('Culture'),
+        h('div', { class: 'formgrid' }, dateField(st), K.pick('specimen', 'Specimen', SPECIMENS), K.text('site', 'Site / details'), K.pick('result', 'Result', ['Sterile', 'Growth', 'Pending'], showGrowth)),
+        growth, K.area('remarks', 'Remarks', 2)),
+      ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'primary', onclick: () => { syncSens(); saveIx(x, 'culture', st.date, v); } }, 'Save culture')));
+    top();
+  };
+
+  // Imaging and other written reports. Reports differ a lot, so text read from a photo has to be trimmed and confirmed before it can be saved.
+  const reportForm = (x, st) => {
+    st = st || { date: x ? x.date : S.meta.today, f: { ...(x ? x.f : {}) } };
+    const v = st.f, K = formKit(v, ro);
+    const fromPhoto = async () => {
+      const text = await readPhoto('Report', 'Drag across the report text, from the test name down to the impression.');
+      if (text == null) return;
+      const p = parseReport(text);
+      if (!p.findings && !p.impression) return toast('No text found in that photo. Try again with the report flat and in focus.', true);
+      Object.assign(v, { type: p.type || v.type || '', findings: p.findings, impression: p.impression });
+      if (p.date) { st.date = p.date; st.dateChk = true; }
+      st.read = true; st.confirmed = false;
+      reportForm(x, st);
+    };
+    const save = () => {
+      if (st.read && !st.confirmed) return toast('Read through the text and tick "I have checked this text" first.', true);
+      if (!(v.findings || v.impression || '').trim()) return toast('Type the findings or the impression', true);
+      saveIx(x, 'report', st.date, v);
+    };
+    const words = () => ((v.findings || '') + ' ' + (v.impression || '')).split(/\s+/).filter(Boolean).length;
+    const count = h('span', { class: 'small muted' });
+    const recount = () => count.replaceChildren(`${words()} words`);
+    recount();
+    const ta = (k, label, rows) => h('label', { class: 'field wide' }, h('span', { class: 'flabel' }, label),
+      checkMark(h('textarea', { rows, disabled: ro, oninput: (e) => { v[k] = e.target.value; recount(); } }, v[k] || ''), st.read && !st.confirmed));
+    body.replaceChildren(
+      h('datalist', { id: 'rep-list' }, ['USG abdomen', 'USG KUB', 'USG cranium', 'CECT abdomen', 'CECT chest', 'NCCT head', 'MRI', 'X-ray chest', 'X-ray abdomen', 'Contrast enema', 'Genitogram', 'Distal loopogram', 'MCU', 'Upper GI contrast', 'DTPA scan', 'EC scan', '2D Echo'].map((o) => h('option', { value: o }))),
+      h('div', { class: 'btns' }, back, h('span', { class: 'grow' }), photoBtn('Read report', fromPhoto), delBtn(x), ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: save }, 'Save')),
+      by(x),
+      st.read && !ro ? h('div', { class: 'ocrconfirm' },
+        h('b', {}, 'Read from the photo. Is all of this text needed?'),
+        h('p', { class: 'small' }, 'Reports vary a lot. Delete anything you don\'t need (procedure details, repeated lines, stray letters) and correct any misread words, then tick below.'),
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: !!st.confirmed, onchange: (e) => { st.confirmed = e.target.checked; body.querySelectorAll('textarea.check').forEach((t) => t.classList.toggle('check', !st.confirmed)); } }), ' I have checked this text'), ' ', count) : '',
+      h('section', { class: 'otnsec' }, sectionHead('Report'),
+        h('div', { class: 'formgrid' }, dateField(st), K.text('type', 'Investigation', { list: 'rep-list', placeholder: 'e.g. CECT abdomen' })),
+        ta('findings', 'Findings', 8), ta('impression', 'Impression', 4)),
+      ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'primary', onclick: save }, 'Save report')));
+    top();
+  };
+
+  const list = async () => {
+    const items = await api('GET', '/api/ixs/' + encodeURIComponent(a.id)).catch((e) => { toast(e.message, true); return []; });
+    const labs = items.filter((x) => x.kind === 'lab'), cultures = items.filter((x) => x.kind === 'culture'), reports = items.filter((x) => x.kind === 'report');
+    // Lab results as a grid: one column per sample date (newest first), one row per test done.
+    const grid = () => {
+      const panels = LAB_PANELS.map(([t, tests]) => [t, tests.filter(([k]) => labs.some((x) => x.f[k]))]).filter(([, tests]) => tests.length);
+      const others = labs.some((x) => x.f.other);
+      return h('div', { class: 'labgridwrap' }, h('table', { class: 'labgrid' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Test'), labs.map((x) => h('th', {}, h('button', { type: 'button', class: 'linkish', title: 'Open', onclick: () => labForm(x) }, dmy(x.date).slice(0, 5)))))),
+        h('tbody', {}, panels.flatMap(([t, tests]) => [h('tr', { class: 'labpanel' }, h('td', { colspan: labs.length + 1 }, t)),
+          ...tests.map(([k, l]) => h('tr', {}, h('th', {}, l), labs.map((x) => h('td', {}, x.f[k] || ''))))]),
+        others ? h('tr', {}, h('th', {}, 'Other'), labs.map((x) => h('td', { class: 'small' }, x.f.other || ''))) : '')));
+    };
+    const row = (x, main, sub, open) => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `${fmtDate(x.date)} · ${main}`), sub ? h('div', { class: 'small' }, sub) : ''),
+      h('button', { type: 'button', class: 'ghost small', onclick: open }, ro ? 'View' : 'Open'));
+    body.replaceChildren(
+      ro ? '' : h('div', { class: 'btns' },
+        h('button', { type: 'button', class: 'primary small', onclick: () => labForm(null) }, '+ Lab results'),
+        h('button', { type: 'button', class: 'primary small', onclick: () => cultureForm(null) }, '+ Culture'),
+        h('button', { type: 'button', class: 'primary small', onclick: () => reportForm(null) }, '+ Imaging / other report')),
+      h('section', { class: 'otnsec' }, sectionHead('Blood / Serum'), labs.length ? grid() : h('p', { class: 'muted small' }, 'No lab results yet.')),
+      h('section', { class: 'otnsec' }, sectionHead('Cultures'), cultures.length ? h('ul', { class: 'notelist' }, cultures.map((x) =>
+        row(x, `${x.f.specimen || 'Culture'}${x.f.site ? ` (${x.f.site})` : ''}`, cultureLine(x.f), () => cultureForm(x)))) : h('p', { class: 'muted small' }, 'No cultures yet.')),
+      h('section', { class: 'otnsec' }, sectionHead('Imaging and other reports'), reports.length ? h('ul', { class: 'notelist' }, reports.map((x) =>
+        row(x, x.f.type || 'Report', (x.f.impression || x.f.findings || '').split('\n').slice(0, 2).join(' · '), () => reportForm(x)))) : h('p', { class: 'muted small' }, 'No reports yet.')));
+  };
+  list();
 }
