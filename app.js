@@ -486,7 +486,7 @@ async function registerView(main, mode) {
   S.dirty.clear();
 
   const inBed = (bed) => data.admissions.filter((a) => a.bed_on_date === bed && a.discharge_date !== date);
-  drawOtAlerts(alerts, data.admissions, (a) => bedPanel(a.bed_on_date), date, !icuMode);
+  drawOtAlerts(alerts, data.admissions, (a) => bedPanel(a.bed_on_date), date, icuMode ? 'icu' : 'ward');
 
   function drawGrid() {
     const allBeds = sections.flatMap((s) => s.beds);
@@ -657,7 +657,7 @@ const workDay = () => { const d = new Date(); if (d.getHours() < 9) d.setDate(d.
 function drawOtAlerts(box, admissions, open, date, withWork) {
   const day = !date || date === S.meta.today ? workDay() : date;
   const inv = invOn(admissions.filter((a) => !a.discharge_date || a.discharge_date > day), day);
-  withWork = withWork && canWork();
+  withWork = canWork() ? withWork : false;
   if (!inv.length && !withWork) return box.replaceChildren();
   const bell = inv.length ? h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Investigations today', inv, day) },
     h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
@@ -666,11 +666,13 @@ function drawOtAlerts(box, admissions, open, date, withWork) {
     : h('div', { class: 'otbar quiet' }, h('span', { 'aria-hidden': 'true' }, '🔔'), h('span', { class: 'muted small' }, 'No investigations today'));
   if (!withWork) return box.replaceChildren(h('div', { class: 'alertbar one' }, bell));
   const count = h('span', { class: 'muted small' }, 'Tap to open');
-  const tile = h('button', { type: 'button', class: 'otbar workbar', onclick: () => worklistPanel(() => drawOtAlerts(box, admissions, open, date, withWork)) },
+  const tile = h('button', { type: 'button', class: 'otbar workbar', onclick: () => worklistPanel(() => drawOtAlerts(box, admissions, open, date, withWork), withWork === 'icu') },
     h('span', { 'aria-hidden': 'true' }, '📝'), h('b', {}, 'Worklist'), count);
+  // The ICU Register's tile is the one ICU worklist; the Ward Register's is your own JR or SR list.
+  const mine = withWork === 'icu' ? 'icu' : myWorkList();
   api('GET', '/api/work').then((w) => {
-    const pend = w.filter((x) => !x.done && x.list === myWorkList()), pri = pend.filter((x) => x.priority).length;
-    count.replaceChildren(pend.length ? `${pend.length} pending on ${myWorkList().toUpperCase()}${pri ? ` · ` : ''}` : `Nothing pending on ${myWorkList().toUpperCase()}`, pri ? h('b', { class: 'prio' }, `${pri} priority`) : '');
+    const pend = w.filter((x) => !x.done && x.list === mine), pri = pend.filter((x) => x.priority).length;
+    count.replaceChildren(pend.length ? `${pend.length} pending on ${mine.toUpperCase()}${pri ? ` · ` : ''}` : `Nothing pending on ${mine.toUpperCase()}`, pri ? h('b', { class: 'prio' }, `${pri} priority`) : '');
     tile.classList.toggle('haspri', !!pri);
   }).catch(() => {});
   box.replaceChildren(h('div', { class: 'alertbar' }, bell, tile));
@@ -684,22 +686,24 @@ const myWorkList = () => (S.user && ['admin', 'sr'].includes(S.user.role) ? 'sr'
 // Several tasks at once: one per line in the box (Enter starts a new line; Ctrl+Enter or Add saves them all).
 const workLines = (v) => v.split('\n').map((t) => t.trim()).filter(Boolean);
 const WORK_TABS = [['jr', 'JR Worklist'], ['sr', 'SR Worklist']];
+const workTitle = (k) => (k === 'icu' ? 'ICU Worklist' : (WORK_TABS.find(([x]) => x === k) || [, ''])[1]);
 const workSort = (x, y) => (x.done !== y.done ? (x.done ? 1 : -1) : x.done ? (x.done_at || 0) - (y.done_at || 0)
   : x.priority !== y.priority ? (x.priority ? -1 : 1) : bedRank(x.bed) - bedRank(y.bed) || x.at - y.at);
-async function worklistPanel(onClose) {
+// icu: the single ICU (6C) worklist, with no JR/SR tabs and only ICU patients to pick from.
+async function worklistPanel(onClose, icu) {
   const root = document.getElementById('modal-root');
   const close = () => { root.replaceChildren(); if (onClose) onClose(); };
   const body = h('div', {}, h('p', { class: 'loading' }, 'Loading…'));
   const seg = h('div', { class: 'seg worktabs' });
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
-    h('div', { class: 'modal card panel worklist' }, h('div', { class: 'mhead' }, h('h2', {}, 'Worklist'), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
+    h('div', { class: 'modal card panel worklist' }, h('div', { class: 'mhead' }, h('h2', {}, icu ? 'ICU Worklist' : 'Worklist'), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       seg, body)));
   const reg = await api('GET', '/api/register?date=' + S.meta.today).catch(() => ({ admissions: [] }));
-  const pts = reg.admissions.filter((a) => !a.discharge_date).sort((x, y) => bedRank(x.bed_on_date) - bedRank(y.bed_on_date));
+  const pts = reg.admissions.filter((a) => !a.discharge_date && isIcu(a.bed_on_date) === !!icu).sort((x, y) => bedRank(x.bed_on_date) - bedRank(y.bed_on_date));
   let items = [];
-  const tab = () => S.workTab || myWorkList();
+  const tab = () => (icu ? 'icu' : S.workTab || myWorkList());
   // Add a to-do: a patient in the ward, or "Other" for someone not in the ward (type the bed or name).
-  const who = h('select', {}, h('option', { value: '' }, 'Choose patient'), pts.map((a) => h('option', { value: a.id }, `${a.bed_on_date} · ${a.name}`)), h('option', { value: 'other' }, 'Other (not in ward)…'));
+  const who = h('select', {}, h('option', { value: '' }, 'Choose patient'), pts.map((a) => h('option', { value: a.id }, `${a.bed_on_date} · ${a.name}`)), h('option', { value: 'other' }, icu ? 'Other (not in ICU)…' : 'Other (not in ward)…'));
   const otherIn = h('input', { placeholder: 'Bed / ward and name, e.g. 7C/2 Riya', hidden: true });
   who.onchange = () => { otherIn.hidden = who.value !== 'other'; if (!otherIn.hidden) otherIn.focus(); };
   const text = h('textarea', { rows: 3, placeholder: 'To do, one per line, e.g.\nSend CBC\nCall radiology for USG' });
@@ -718,7 +722,8 @@ async function worklistPanel(onClose) {
   body.replaceChildren(form, table, h('p', { class: 'muted small' }, 'Ticked work stays struck through until 9 am, then clears. Pending work carries over to the next day.'));
   const set = async (w, b) => { try { await api('PUT', '/api/work/' + encodeURIComponent(w.id), b); await load(); } catch (e) { toast(e.message, true); } };
   function draw() {
-    seg.replaceChildren(...WORK_TABS.map(([k, label]) => { const n = items.filter((w) => w.list === k && !w.done).length;
+    seg.hidden = !!icu;
+    if (!icu) seg.replaceChildren(...WORK_TABS.map(([k, label]) => { const n = items.filter((w) => w.list === k && !w.done).length;
       return h('button', { type: 'button', class: k === tab() ? 'on' : '', onclick: () => { S.workTab = k; draw(); } }, label, n ? ` · ${n}` : ''); }));
     const rows = items.filter((w) => w.list === tab()).sort(workSort);
     // One line per to-do: bed, name and the to-do (widest), then the Priority and Done boxes and a bin.
@@ -730,7 +735,7 @@ async function worklistPanel(onClose) {
           : [h('label', { class: 'wbox', title: 'Priority' }, h('input', { type: 'checkbox', checked: w.priority, disabled: !canWork(), onchange: (ev) => set(w, { priority: ev.target.checked }) }), h('span', {}, 'Priority')),
             h('label', { class: 'wbox', title: 'Done' }, h('input', { type: 'checkbox', class: 'tick', disabled: !canWork(), onchange: (ev) => set(w, { done: ev.target.checked }) }), h('span', {}, 'Done')),
             canWork() ? iconBtn(BIN_SVG, 'Delete', () => { if (confirm(`Delete "${w.text}"?`)) api('DELETE', '/api/work/' + encodeURIComponent(w.id)).then(load).catch((e) => toast(e.message, true)); }, 'pencil bin') : ''])))
-      : h('p', { class: 'muted' }, `Nothing on the ${WORK_TABS.find(([k]) => k === tab())[1]} yet.`));
+      : h('p', { class: 'muted' }, `Nothing on the ${workTitle(tab())} yet.`));
   }
   async function load() { items = await api('GET', '/api/work').catch((e) => { toast(e.message, true); return items; }); draw(); }
   await load();
@@ -742,11 +747,14 @@ function workBox(a) {
   const list = h('select', {}, WORK_TABS.map(([k, label]) => h('option', { value: k }, label.replace(' Worklist', ''))));
   const pri = h('input', { type: 'checkbox', title: 'Priority' });
   list.value = S.workTab || myWorkList();
+  // ICU babies go on the one ICU worklist: no JR/SR choice.
+  const icu = isIcu(a.bed_on_date || a.bed);
+  if (icu) list.value = 'icu';
   const draw = (items) => {
     const mine = items.filter((w) => w.admission_id === a.id).sort(workSort);
     // One slim bar: icon, to-do, JR/SR, priority, Add; this bed's items listed small underneath.
     box.replaceChildren(h('div', { class: 'workfield' },
-      canWork() ? h('div', { class: 'wfadd' }, h('span', { class: 'wficon', title: 'Worklist', 'aria-hidden': 'true' }, '📝'), text, list,
+      canWork() ? h('div', { class: 'wfadd' }, h('span', { class: 'wficon', title: 'Worklist', 'aria-hidden': 'true' }, '📝'), text, icu ? h('span', { class: 'small muted' }, 'ICU') : list,
         h('label', { class: 'inline prioopt', title: 'Priority' }, pri, ' Priority'), h('button', { type: 'button', class: 'small', onclick: add }, 'Add'))
         : h('span', { class: 'small muted' }, '📝 Worklist'),
       mine.length ? h('div', { class: 'worklistmini' }, mine.map((w) => h('span', { class: (w.done ? 'done' : '') + (w.priority && !w.done ? ' prio' : '') },
@@ -756,7 +764,8 @@ function workBox(a) {
   const add = async () => {
     const tasks = workLines(text.value);
     if (!tasks.length) return;
-    try { for (const t of tasks) await api('POST', '/api/work', { list: list.value, admission_id: a.id, text: t, priority: pri.checked }); toast(`Added to the ${list.value.toUpperCase()} worklist`); text.value = ''; pri.checked = false; load(); text.focus(); } catch (e) { toast(e.message, true); }
+    const to = icu ? 'icu' : list.value;
+    try { for (const t of tasks) await api('POST', '/api/work', { list: to, admission_id: a.id, text: t, priority: pri.checked }); toast(`Added to the ${to.toUpperCase()} worklist`); text.value = ''; pri.checked = false; load(); text.focus(); } catch (e) { toast(e.message, true); }
   };
   text.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); add(); } };
   load();
@@ -961,9 +970,11 @@ function penBox(cls, label, value, opts) {
   return box;
 }
 // Procedure done (from the scrub team on the OT list, editable here) with the surgery dates and each OT day's team.
+// Procedure done, else the surgery planned on the patient's OT list (marked as planned).
+const procText = (a) => a.procedure_done || (a.planned_surgery ? `${a.planned_surgery} (planned)` : '');
 function procedureBox(a, surgeries, onDates) {
   return penBox('procbox', 'Procedure done', a.procedure_done, {
-    empty: 'Not operated yet',
+    empty: a.planned_surgery ? `Planned on OT list: ${a.planned_surgery}` : 'Not operated yet',
     extra: () => [surgeries.length ? h('small', {}, ' on ' + surgeries.map(fmtDate).join(', ')) : null,
       (a.otprocs || []).map((x) => h('div', { class: 'small muted otprocrow' }, `${otName(x.ot)} · ${fmtDate(x.date)}${x.done ? `: ${x.done}` : ''} · ${x.scrub.join('/')} `,
         canEdit() && x.list_id ? pencilLink(`#otlist/${x.list_id}/${x.entry_id}`, 'Edit on the OT list') : null))],
@@ -1243,9 +1254,9 @@ function patientDetails(a, date) {
       big('Gestation', a.gestation && `${a.gestation} wk`),
       big('Current weight', a.current_weight && `${a.current_weight} g`)),
     a.diagnosis && h('div', { class: 'diagnosis' }, h('span', {}, 'Diagnosis'), h('b', {}, a.diagnosis)),
-    (a.procedure_done || surgeries.length > 0) && h('div', { class: 'surgery' },
+    (procText(a) || surgeries.length > 0) && h('div', { class: 'surgery' },
       h('span', {}, 'Procedure done'),
-      h('b', {}, a.procedure_done || '—'),
+      h('b', {}, procText(a) || '—'),
       surgeries.length ? h('small', {}, 'on ' + surgeries.map(fmtDate).join(', ')) : null),
     a.instructions && h('p', { class: 'instr' }, h('b', {}, 'Short notes: '), a.instructions),
     a.unit_note && h('p', { class: 'instr unitnote' }, h('b', {}, `${a.unit || 'Consultant'} round: `), a.unit_note),
@@ -1488,7 +1499,7 @@ async function patientView(main, id) {
       h('h2', {}, a.name, ' ', h('span', { class: 'muted' }, ageSex(a, end))),
       h('dl', { class: 'facts' },
         fact('Bed', a.bed), fact('UHID', a.ip_no), fact('Unit', a.unit), fact('Admitted', fmtDate(a.admit_date)),
-        fact('Diagnosis', a.diagnosis), fact('Procedure', a.procedure_done), fact('Surgery dates', [a.surgery_date, a.surgery_date2, a.surgery_date3].filter(Boolean).map(fmtDate).join(', ')),
+        fact('Diagnosis', a.diagnosis), fact('Procedure', procText(a)), fact('Surgery dates', [a.surgery_date, a.surgery_date2, a.surgery_date3].filter(Boolean).map(fmtDate).join(', ')),
         fact('Discharged', a.discharge_date && `${fmtDate(a.discharge_date)} (${a.outcome})`),
         a.admit_date && fact('Stay', `${daysBetween(a.admit_date, end) + 1} days`),
         fact('Bed moves', a.moves.map((m) => `${m.from_bed} → ${m.to_bed} on ${fmtDate(m.move_date)}`).join('; ')),
@@ -1560,7 +1571,7 @@ async function statusView(main) {
         h('td', {}, h('span', { class: 'bedno' }, bed)),
         h('td', {}, h('a', { href: '#patient/' + a.id, class: 'pname' }, a.name), h('div', { class: 'muted small' }, ageSex(a, date))),
         h('td', {}, a.unit),
-        h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'muted small' }, a.procedure_done) : null),
+        h('td', {}, a.diagnosis, procText(a) ? h('div', { class: 'muted small' }, procText(a)) : null),
         h('td', {}, [podText(a, date), dayNo(a, date) && `Day ${dayNo(a, date)}`].filter(Boolean).join(' · ')),
         h('td', {}, a.round ? summariseVals(a.round.vals, monitorFor(a), a).split(' · ').filter(Boolean).map((t) => h('div', {}, t)) : h('span', { class: 'muted' }, 'Not filled yet')),
         h('td', {}, a.round ? a.round.remarks || '' : '')), notesRow(a, 7)])))))));
@@ -1607,7 +1618,7 @@ function archiveSearch(box) {
         h('b', { class: 'big' }, a.name), h('div', { class: 'muted small' }, [a.ip_no && `UHID ${a.ip_no}`, ageSex(a, a.discharge_date || S.meta.today), a.unit, a.bed].filter(Boolean).join(' · ')),
         h('dl', { class: 'otfacts' },
           fact('Admitted', a.admit_date && fmtDate(a.admit_date)), fact('Discharged', a.discharge_date && `${fmtDate(a.discharge_date)}${a.outcome ? ` (${a.outcome})` : ''}`),
-          fact('Diagnosis', a.diagnosis), fact('Procedure', a.procedure_done),
+          fact('Diagnosis', a.diagnosis), fact('Procedure', procText(a)),
           fact('Surgery dates', [a.surgery_date, a.surgery_date2, a.surgery_date3].filter(Boolean).map(fmtDate).join(', ')), fact('Short notes', a.instructions)),
         (ar.length || ao.length) ? h('details', {}, h('summary', {}, `OT findings (${ao.length}) and rounds (${ar.length})`),
           ao.map((o) => h('p', { class: 'small' }, h('b', {}, fmtDate(o.at.slice(0, 10)) + ': '), o.text)),
@@ -1662,7 +1673,7 @@ async function printView(main, date, ward) {
             h('td', {}, bed),
             h('td', {}, h('b', {}, a.name), h('br'), ageSex(a, date), a.ip_no ? ` · ${a.ip_no}` : ''),
             h('td', {}, a.unit),
-            h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'muted' }, a.procedure_done) : null),
+            h('td', {}, a.diagnosis, procText(a) ? h('div', { class: 'muted' }, procText(a)) : null),
             h('td', {}, podText(a, date).replace('POD ', '')),
             h('td', {}, a.round ? summariseVals(a.round.vals, monitorFor(a), a) : ''),
             h('td', {}, a.round ? a.round.remarks || '' : '')), notesRow(a, 7)]);
@@ -2360,7 +2371,7 @@ async function censusView(main) {
       h('tbody', {}, pts.map((a) => { const pod = podText(a, date); return h('tr', {},
         h('td', {}, h('b', {}, a.bed_on_date)),
         h('td', {}, h('b', {}, a.name), h('div', {}, ageSex(a, date)), pod ? h('div', {}, pod) : null),
-        h('td', {}, a.diagnosis, a.procedure_done ? h('div', { class: 'occsx' }, a.procedure_done) : null),
+        h('td', {}, a.diagnosis, procText(a) ? h('div', { class: 'occsx' }, procText(a)) : null),
         h('td', { class: 'blank' })); })))) : null;
     sheet.replaceChildren(
       h('h2', {}, 'Bed Occupancy'),
@@ -2399,7 +2410,7 @@ function occupancyPanel(title, pts, icuPts, date, isUnit) {
     h('thead', {}, h('tr', {}, ['Bed', 'Name', 'UHID', 'Age / Sex', !isUnit && 'Consultant', 'Diagnosis', 'Surgery', 'POD', 'Day'].filter(Boolean).map((t) => h('th', {}, t)))),
     h('tbody', {}, rows.map((a) => h('tr', { class: 'clickable', onclick: () => { close(); location.hash = 'patient/' + a.id; } },
       h('td', {}, h('span', { class: 'bedno' }, a.bed_on_date)), h('td', {}, h('b', {}, a.name)), h('td', {}, a.ip_no),
-      h('td', {}, ageSex(a, date)), !isUnit && h('td', {}, a.unit), h('td', {}, a.diagnosis), h('td', {}, a.procedure_done),
+      h('td', {}, ageSex(a, date)), !isUnit && h('td', {}, a.unit), h('td', {}, a.diagnosis), h('td', {}, procText(a)),
       h('td', {}, podText(a, date).replace('POD ', '')), h('td', {}, dayNo(a, date))))))) :
     h('p', { class: 'muted' }, icuTable ? 'No ICU babies.' : 'No patients.');
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (e) => e.target === e.currentTarget && close() },
@@ -2453,7 +2464,7 @@ async function notesView(main, unit) {
         h('div', { class: 'head' },
           h('span', { class: 'bedno' }, a.bed_on_date),
           h('div', { class: 'who' }, h('a', { href: '#patient/' + a.id, class: 'pname' }, a.name),
-            h('span', { class: 'muted' }, [a.diagnosis, a.procedure_done].filter(Boolean).join(' · '))),
+            h('span', { class: 'muted' }, [a.diagnosis, procText(a)].filter(Boolean).join(' · '))),
           h('div', { class: 'badges' }, stayBadges(a, date), emergency.has(a.bed_on_date) && h('span', { class: 'badge out' }, 'Emergency bed'))),
         box,
         a.prev_unit_note ? h('p', { class: 'prev' }, 'Yesterday: ' + a.prev_unit_note) : null);

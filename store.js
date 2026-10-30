@@ -369,14 +369,14 @@ const Store = (() => {
     const adms = all('admission').filter((a) => (!a.admit_date || a.admit_date <= date) && (!a.discharge_date || a.discharge_date >= date))
       .sort((a, b) => ((a.admit_date || '') < (b.admit_date || '') ? -1 : (a.admit_date || '') > (b.admit_date || '') ? 1 : 0));
     const moves = all('move');
-    const ot = otByAdmission(), procs = otProcs(), inv = invByAdmission();
+    const ot = otByAdmission(), procs = otProcs(), inv = invByAdmission(), planned = plannedByAdmission();
     return {
       date,
       admissions: adms.map((a) => {
         const r = get(`round:${a.id}:${date}`), p = get(`round:${a.id}:${prev}`);
         const n = get(`note:${a.id}:${date}`), pn = get(`note:${a.id}:${prev}`);
         return {
-          ...a, bed_on_date: bedOnDate(a, date, moves), ot: ot[a.id] || [], otprocs: procs[a.id] || [], inv: inv[a.id] || [],
+          ...a, bed_on_date: bedOnDate(a, date, moves), ot: ot[a.id] || [], otprocs: procs[a.id] || [], planned_surgery: planned[a.id] || '', inv: inv[a.id] || [],
           round: r ? { vals: r.vals, remarks: r.remarks, filled_by: userName(r.filled_by), filled_at: r.filled_at } : null,
           prev_round: p ? { vals: p.vals, remarks: p.remarks } : null,
           unit_note: n ? n.note : '', unit_note_by: n ? userName(n.updated_by) : '', prev_unit_note: pn ? pn.note : '',
@@ -452,6 +452,12 @@ const Store = (() => {
     const a = getAdmission(p.id);
     const f = admissionFields({ ...a, ...body });
     put(a.id, 'admission', { ...strip(a), ...f, updated_at: stamp() });
+    // Procedure done is one thing: a change here also goes to the scrub-team pop-up of the latest operation.
+    if (body.procedure_done != null && (f.procedure_done || '') !== (a.procedure_done || '')) {
+      const ops = scrubbedEntries(a.id), last = ops[ops.length - 1];
+      const v = ops.length > 1 ? (f.procedure_done || '').split(';').pop().trim() : (f.procedure_done || '');
+      if (last && v && v !== (last.done || '')) { put(last.id, 'otentry', { ...strip(last), done: str(v, 300), updated_by: currentUser.id, updated_at: stamp() }); touchOtList(last.list_id, `noted the procedure done for ${last.name}`); }
+    }
     audit('edit patient', `${f.name} (${a.bed})`);
     linkOtEntries(a.id);
     return { ok: true };
@@ -647,6 +653,21 @@ const Store = (() => {
     for (const k in out) out[k].sort((x, y) => (x.date < y.date ? -1 : 1));
     return out;
   }
+  // Per admitted patient: the surgery planned on their latest OT list (shown when no procedure done is noted yet).
+  function plannedByAdmission() {
+    const out = {}, at = {};
+    for (const e of all('otentry')) {
+      if (e.cancelled || e.case_cancelled || !e.admission_id || !e.surgery) continue;
+      const l = get(e.list_id);
+      if (l && !(at[e.admission_id] >= l.date)) { at[e.admission_id] = l.date; out[e.admission_id] = e.surgery; }
+    }
+    return out;
+  }
+  // The patient's OT entries that have a scrub team, oldest first.
+  function scrubbedEntries(admId) {
+    return all('otentry').filter((e) => e.admission_id === admId && !e.cancelled && !e.case_cancelled && (e.scrub || []).length && get(e.list_id))
+      .sort((x, y) => (get(x.list_id).date < get(y.list_id).date ? -1 : 1));
+  }
   function otByAdmission() {
     const out = {};
     for (const o of all('ot').sort((x, y) => (x.at < y.at ? -1 : 1))) {
@@ -708,7 +729,9 @@ const Store = (() => {
   });
   // Worklist (JR and SR): the day's to-dos per patient. The work day runs 9 am to 9 am; at 9 am ticked items are dropped
   // (deleted, not kept anywhere) and pending ones carry over.
-  const WORK_LISTS = ['jr', 'sr'];
+  const WORK_LISTS = ['jr', 'sr', 'icu'];
+  // ICU (6C) patients have one ICU worklist of their own; they never show on the JR or SR list (Nidhi, 2026-10-30).
+  const workListFor = (list, a) => (a ? (getIcuBeds().includes(a.bed) ? 'icu' : list === 'icu' ? 'jr' : list) : list);
   // Residents, the admin and the view-only (Rounds) role use the worklist; consultants don't see it (Nidhi, 2026-10-27).
   const WORKERS = ['admin', 'sr', 'jr', 'viewer'];
   const workDayStart = () => { const d = new Date(); if (d.getHours() < 9) d.setDate(d.getDate() - 1); d.setHours(9, 0, 0, 0); return d.getTime(); };
@@ -718,16 +741,17 @@ const Store = (() => {
     pruneWork();
     return all('work').map((w) => {
       const a = w.admission_id ? get(w.admission_id) : null;
-      return { ...w, bed: a ? a.bed : w.bed || '', name: a ? a.name : w.name || '', discharged: !!(a && a.discharge_date) };
+      return { ...w, list: workListFor(w.list, a), bed: a ? a.bed : w.bed || '', name: a ? a.name : w.name || '', discharged: !!(a && a.discharge_date) };
     });
   });
   route('POST', '/api/work', WORKERS, ({ body }) => {
-    const list = WORK_LISTS.includes(body.list) ? body.list : 'jr';
+    let list = WORK_LISTS.includes(body.list) ? body.list : 'jr';
     const text = str(body.text, 300);
     if (!text) throw new HttpError(400, 'Type what is to be done');
     let admission_id = null, bed = '', name = '';
     if (body.admission_id) admission_id = getAdmission(body.admission_id).id;
     else { bed = str(body.bed, 40); name = str(body.name, 120); if (!bed && !name) throw new HttpError(400, 'Pick a patient, or type a bed or name'); }
+    if (admission_id) list = workListFor(list, get(admission_id));
     const id = 'work:' + uuid();
     put(id, 'work', { list, admission_id, bed, name, text, priority: !!body.priority, done: false, done_at: null, by: currentUser.id, at: Date.now() });
     return { id };
@@ -785,7 +809,7 @@ const Store = (() => {
       .map((r) => ({ date: r.date, vals: r.vals, remarks: r.remarks, filled_at: r.filled_at, filled_by: userName(r.filled_by) }));
     const notes = all('note').filter((n) => n.admission_id === a.id).map((n) => ({ date: n.date, note: n.note }));
     const moves = all('move').filter((m) => m.admission_id === a.id).sort((x, y) => (x.move_date < y.move_date ? -1 : x.move_date > y.move_date ? 1 : x.at - y.at));
-    return { ...a, rounds, notes, moves, ot: otByAdmission()[a.id] || [], otprocs: otProcs()[a.id] || [] };
+    return { ...a, rounds, notes, moves, ot: otByAdmission()[a.id] || [], otprocs: otProcs()[a.id] || [], planned_surgery: plannedByAdmission()[a.id] || '' };
   });
 
   route('GET', '/api/patients', ANY, ({ query }) => {
@@ -1243,7 +1267,13 @@ const Store = (() => {
     // Only a scrub team counts as operated: the procedure done then goes to the register, Rounds and the Logbook.
     if (!e.cancelled && l && l.date <= today()) {
       const a = (e.admission_id && get(e.admission_id)) || (e.uhid && all('admission').find((x) => !x.discharge_date && (x.ip_no || '').toLowerCase() === e.uhid.toLowerCase()));
-      if (a && scrub.length) { noteProcedure(a, done, e.done || ''); surgery = surgeryFromOtList(get(a.id), l.date); }
+      if (a && scrub.length) {
+        const ops = scrubbedEntries(a.id), latest = !ops.length || ops[ops.length - 1].id === e.id;
+        // The pop-up and Rounds show the same Procedure done: one operation replaces it, a later one is added after the earlier.
+        if (latest && ops.length <= 1 && done) put(a.id, 'admission', { ...strip(get(a.id)), procedure_done: done, updated_at: stamp() });
+        else noteProcedure(get(a.id), done, e.done || '');
+        surgery = surgeryFromOtList(get(a.id), l.date);
+      }
       // Team cleared: that day is no longer a surgery date.
       else if (a && !scrub.length && (e.scrub || []).length) {
         const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'], cur = get(a.id);
