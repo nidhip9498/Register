@@ -2914,11 +2914,11 @@ function icuTiles(a, onSaved) {
     tile('', 'Clinical Details', () => clinicalPopup(a, onSaved), filled),
     tile('', 'Investigations', later('Investigations')),
     tile('🔪', 'OT Notes', () => otNotesPopup(a)),
-    tile('', 'Progress Notes', later('Progress Notes')));
+    tile('', 'Progress Notes', () => progressPopup(a, onSaved)));
 }
 // Discharge Summary: a large icon under the worklist in the ICU card's corner (what goes in it is still to be decided).
 function dischargeSummaryBtn(a) {
-  return h('button', { type: 'button', class: 'dsbtn', onclick: () => toast("Discharge Summary: tell me what you want here and I'll add it") },
+  return h('button', { type: 'button', class: 'dsbtn', onclick: () => dischargeSummaryPopup(a) },
     h('span', { class: 'dsicon', 'aria-hidden': 'true' }, '📄'), h('b', {}, 'Discharge Summary'));
 }
 // Age from the date of birth, counted afresh every day: days for the first month, then months and days, then years.
@@ -2951,6 +2951,74 @@ function formKit(v, readOnly) {
   return { text, area, pick };
 }
 const sectionHead = (t) => h('h3', { class: 'formsec' }, t);
+// SpO2 with Room air / O2 support; O2 support asks how; Intubated asks for the ventilator settings. Shared by Clinical Details and Progress Notes.
+const VENT = ['FiO2', 'PIP', 'Vt', 'Leak', 'RR', 'PEEP', 'Ti', 'Trigger', 'MVe'];
+function spo2Field(v, K, ro) {
+  const o2Box = h('div', { class: 'subfields' }), ventBox = h('div', { class: 'subfields' });
+  const syncO2 = () => { o2Box.hidden = v.o2 !== 'O2 support'; ventBox.hidden = o2Box.hidden || v.o2_mode !== 'Intubated'; };
+  o2Box.append(K.pick('o2_mode', 'O2 support', ['O2 by hood', 'O2 by nasal prongs', 'CPAP', 'Intubated'], syncO2));
+  ventBox.append(K.pick('vent_mode', 'Ventilator mode', ['PC-SIMV', 'PC-AC', 'HFOV']), h('div', { class: 'formgrid' }, VENT.map((x) => K.text('v_' + x.toLowerCase(), x))));
+  syncO2();
+  return h('div', { class: 'field wide' }, h('span', { class: 'flabel' }, 'SpO2'), h('div', { class: 'inline2' },
+    h('input', { inputmode: 'numeric', placeholder: '%', value: v.spo2 || '', disabled: ro, oninput: (e) => { v.spo2 = e.target.value; } }), h('span', {}, '% on'),
+    K.pick('o2', '', ['Room air', 'O2 support'], syncO2).lastElementChild), o2Box, ventBox);
+}
+// "96% on CPAP", or on a ventilator with its settings, for printing.
+function spo2Text(v) {
+  if (!v.spo2 && !v.o2) return '';
+  const on = v.o2 === 'O2 support' ? (v.o2_mode === 'Intubated' ? 'ventilator' : v.o2_mode || 'O2 support') : v.o2 ? 'room air' : '';
+  let t = [v.spo2 ? `${v.spo2}%` : '', on && `on ${on}`].filter(Boolean).join(' ');
+  if (v.o2 === 'O2 support' && v.o2_mode === 'Intubated') {
+    const set = VENT.map((x) => v['v_' + x.toLowerCase()] ? `${x} ${v['v_' + x.toLowerCase()]}` : '').filter(Boolean).join(', ');
+    t += [v.vent_mode, set].filter(Boolean).length ? ` (${[v.vent_mode, set].filter(Boolean).join(': ')})` : '';
+  }
+  return t;
+}
+// A printed page in the department's style: hospital header, a title, then the given parts; the saver's name and designation sign it.
+const HOSPITAL_HEAD = (title) => h('div', { class: 'ophead' },
+  h('div', { class: 'ophi' }, 'अखिल भारतीय आयुर्विज्ञान संस्थान, नई दिल्ली - 110029'),
+  h('div', { class: 'open' }, 'ALL INDIA INSTITUTE OF MEDICAL SCIENCES, NEW DELHI - 110029'),
+  h('div', { class: 'opdept' }, 'DEPARTMENT OF PAEDIATRIC SURGERY', h('br'), title));
+const signBlock = (signed) => h('div', { class: 'opsign' }, h('div', {}, signed && signed.name ? [h('b', {}, signed.name), h('br'), signed.designation || '', h('br'), 'Department of Paediatric Surgery'] : 'Signature'));
+const mySignature = () => ({ name: S.user.name, designation: { admin: 'Senior Resident', sr: 'Senior Resident', jr: 'Junior Resident', consultant: 'Consultant' }[S.user.role] || '' });
+function printSheet(title, parts, signed) {
+  const sheet = h('div', { id: 'sheet-root', class: 'docsheet' }, HOSPITAL_HEAD(title), ...parts, signed === false ? '' : signBlock(signed));
+  document.getElementById('sheet-root')?.remove();
+  document.body.append(sheet);
+  document.body.classList.add('print-sheet');
+  const st = h('style', {}, '@page { size: A4 portrait; margin: 10mm 12mm; }');
+  document.head.append(st);
+  window.print();
+  st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();
+}
+// Label / value rows, two to a row; empty items are left out.
+function docGrid(items) {
+  items = items.filter(([, x]) => x);
+  const rows = [];
+  for (let i = 0; i < items.length; i += 2) rows.push(h('tr', {}, ...items.slice(i, i + 2).flatMap(([l, x]) => [h('th', {}, l), h('td', {}, x)]), items[i + 1] ? '' : h('td', { colspan: 2 })));
+  return rows.length ? h('table', { class: 'docgrid' }, h('colgroup', {}, ['18%', '32%', '18%', '32%'].map((w) => h('col', { style: `width:${w}` }))), h('tbody', {}, rows)) : '';
+}
+// A titled block of free text (history, examination); left out when empty.
+const docBlock = (label, text) => (text ? h('div', { class: 'docblock' }, h('b', {}, label + ': '), h('span', {}, text)) : '');
+const docHead = (t) => h('div', { class: 'dochead' }, t);
+function printClinical(a, v, top) {
+  const yn = [['pallor', 'Pallor'], ['icterus', 'Icterus'], ['jaundice', 'Jaundice'], ['cyanosis', 'Cyanosis'], ['clubbing', 'Clubbing'], ['edema', 'Edema'], ['lymph', 'Lymphadenopathy']];
+  const ga = v.ga_w ? `${v.ga_w}${v.ga_d ? '+' + v.ga_d : ''} weeks` : '';
+  printSheet('CLINICAL DETAILS', [
+    docGrid([['Name', top.name], ['Age / Sex', [ageFromBirth(top.dob) || a.age, a.sex].filter(Boolean).join(' / ')], ['UHID', top.ip_no], ['CR No.', v.cr_no],
+      ['Date / time of birth', [top.dob ? fmtDate(top.dob) : '', v.birth_time].filter(Boolean).join(' ')], ['Bed', a.bed_on_date || a.bed], ['Birth weight', top.birth_weight && `${top.birth_weight} g`], ['Gestational age', ga],
+      ["Father's name", v.father], ['Phone', (v.phones || '').split('\n').join(', ')], ['Address', v.address]]),
+    docHead('History'),
+    docBlock('Chief complaints', v.cc), docBlock('HOPI', v.hopi), docBlock('Antenatal history', v.antenatal), docBlock('Vaccination status', v.vaccination),
+    docBlock('Transport history', v.transport), docBlock('Family history', v.family), docBlock('Treatment history', v.treatment),
+    docHead('Examination'),
+    docGrid([['General condition', v.gc], ['Anterior fontanelle', v.af], ['CFT', v.cft], ['Peripheries', v.periph], ['Temp', v.temp], ['Activity', v.activity], ['Cry', v.cry],
+      ['Heart rate', v.hr], ['SpO2', spo2Text(v)], ['Weight on admission', v.adm_weight && `${v.adm_weight} g`], ...yn.map(([k, l]) => [l, v[k]])]),
+    docBlock('Head to toe examination', v.head_to_toe),
+    docBlock('Per abdomen', v.pa), docBlock('Respiratory system', v.rs), docBlock('CNS', v.cns), docBlock('CVS', v.cvs),
+  ], mySignature());
+}
+
 
 function clinicalPopup(a, onSaved) {
   const root = document.getElementById('modal-root');
@@ -2972,14 +3040,6 @@ function clinicalPopup(a, onSaved) {
   const drawPhones = () => phoneBox.replaceChildren(...phones.map((p, i) => h('input', { type: 'tel', value: p, placeholder: i ? 'Another number' : 'Phone number', disabled: ro, oninput: (e) => { phones[i] = e.target.value; } })),
     ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: () => { phones.push(''); drawPhones(); phoneBox.lastElementChild.previousElementSibling.focus(); } }, '+ Add another number'));
   drawPhones();
-  // Oxygen: Room air or O2 support; O2 support asks how; Intubated asks for the ventilator settings.
-  const o2Box = h('div', { class: 'subfields' }), ventBox = h('div', { class: 'subfields' });
-  const vent = ['FiO2', 'PIP', 'Vt', 'Leak', 'RR', 'PEEP', 'Ti', 'Trigger', 'MVe'];
-  const syncO2 = () => { o2Box.hidden = v.o2 !== 'O2 support'; ventBox.hidden = o2Box.hidden || v.o2_mode !== 'Intubated'; };
-  o2Box.append(K.pick('o2_mode', 'O2 support', ['O2 by hood', 'O2 by nasal prongs', 'CPAP', 'Intubated'], syncO2));
-  ventBox.append(K.pick('vent_mode', 'Ventilator mode', ['PC-SIMV', 'PC-AC', 'HFOV']),
-    h('div', { class: 'formgrid' }, vent.map((x) => K.text('v_' + x.toLowerCase(), x))));
-  syncO2();
   const yesNo = [['pallor', 'Pallor'], ['icterus', 'Icterus'], ['jaundice', 'Jaundice'], ['cyanosis', 'Cyanosis'], ['clubbing', 'Clubbing'], ['edema', 'Edema'], ['lymph', 'Lymphadenopathy']];
   const dobIn = T.text('dob', 'Date of birth', { type: 'date', max: S.meta.today, oninput: (e) => { top.dob = e.target.value; showAge(); } });
   const save = async () => {
@@ -2992,12 +3052,15 @@ function clinicalPopup(a, onSaved) {
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
     h('div', { class: 'modal card panel wide clinical' },
       h('div', { class: 'mhead' }, h('h2', {}, `Clinical Details · ${a.bed_on_date || a.bed}`), h('div', { class: 'btns' },
-        h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'), ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: save }, 'Save'))),
+        h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => { v.phones = phones.map((x) => x.trim()).filter(Boolean).join('\n'); printClinical(a, v, top); } }, 'Print'),
+        ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: save }, 'Save'))),
       h('div', { class: 'formgrid' },
         T.text('name', 'Name'),
         h('div', { class: 'field' }, h('span', { class: 'flabel' }, 'Date and time of birth'), h('div', { class: 'inline2' }, dobIn.lastElementChild, h('input', { type: 'time', value: v.birth_time || '', disabled: ro, oninput: (e) => { v.birth_time = e.target.value; } })), age),
         T.text('ip_no', 'UHID'),
         K.text('cr_no', 'CR No.'),
+        K.text('father', "Father's name"),
         T.text('birth_weight', 'Birth weight (g)', { inputmode: 'numeric' }),
         h('div', { class: 'field' }, h('span', { class: 'flabel' }, 'Gestational age'), h('div', { class: 'inline2' },
           h('input', { inputmode: 'numeric', placeholder: 'Weeks', value: v.ga_w || '', disabled: ro, oninput: (e) => { v.ga_w = e.target.value; } }), h('span', {}, '+'),
@@ -3016,9 +3079,7 @@ function clinicalPopup(a, onSaved) {
         K.pick('cft', 'CFT', ['< 3 sec', '> 3 sec']),
         K.pick('periph', 'Peripheries', ['Warm', 'Cold']),
         K.text('temp', 'Temp'), K.text('activity', 'Activity'), K.text('cry', 'Cry'), K.text('hr', 'Heart rate', { inputmode: 'numeric' }),
-        h('div', { class: 'field wide' }, h('span', { class: 'flabel' }, 'SpO2'), h('div', { class: 'inline2' },
-          h('input', { inputmode: 'numeric', placeholder: '%', value: v.spo2 || '', disabled: ro, oninput: (e) => { v.spo2 = e.target.value; } }), h('span', {}, '% on'),
-          K.pick('o2', '', ['Room air', 'O2 support'], syncO2).lastElementChild), o2Box, ventBox),
+        spo2Field(v, K, ro),
         K.text('adm_weight', 'Weight on admission (g)', { inputmode: 'numeric' })),
       h('div', { class: 'formgrid yn' }, yesNo.map(([k, l]) => K.pick(k, l, ['Yes', 'No']))),
       K.area('head_to_toe', 'Head to toe examination', 3),
@@ -3144,6 +3205,248 @@ function printOtNote(f, signed) {
   document.body.append(sheet);
   document.body.classList.add('print-sheet');
   const st = h('style', {}, '@page { size: A4 portrait; margin: 10mm 12mm; }');
+  document.head.append(st);
+  window.print();
+  st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();
+}
+
+// ---------- ICU Progress Notes (Nidhi, 2026-10-30) ----------
+// Medicines run across days: day 1 is the start date, so antibiotics show "Day 5" on the fifth day.
+const medDay = (m, date) => daysBetween(m.start, date) + 1;
+const medOn = (m, date) => m.start <= date && (!m.stop || m.stop >= date);
+const medLine = (m) => [m.drug, m.dose, m.route, m.freq].filter(Boolean).join(' ');
+function medsBox(a, date, ro) {
+  const box = h('div', {});
+  let meds = [];
+  const blank = () => ({ drug: '', dose: '', route: '', freq: '', start: date, stop: '', antibiotic: false });
+  const editor = (m, onDone) => {
+    const v = { ...m };
+    const inp = (k, ph, attrs = {}) => h('input', { value: v[k] || '', placeholder: ph, oninput: (e) => { v[k] = e.target.value; }, ...attrs });
+    const save = async () => {
+      try {
+        if (m.id) await api('PUT', '/api/med/' + encodeURIComponent(m.id), v); else await api('POST', '/api/meds/' + encodeURIComponent(a.id), v);
+        load();
+      } catch (e) { toast(e.message, true); }
+    };
+    return h('div', { class: 'medform' },
+      inp('drug', 'Medicine, e.g. Inj Meropenem'), inp('dose', 'Dose'), inp('route', 'Route'), inp('freq', 'Frequency, e.g. q8h'),
+      h('label', { class: 'inline small' }, 'Started ', inp('start', '', { type: 'date' })), h('label', { class: 'inline small' }, 'Stopped ', inp('stop', '', { type: 'date' })),
+      h('label', { class: 'inline small' }, h('input', { type: 'checkbox', checked: v.antibiotic, onchange: (e) => { v.antibiotic = e.target.checked; } }), ' Antibiotic'),
+      h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: onDone }, 'Cancel'), h('button', { type: 'button', class: 'primary small', onclick: save }, 'Save medicine')));
+  };
+  const draw = (editing) => {
+    const on = meds.filter((m) => medOn(m, date)), off = meds.filter((m) => !medOn(m, date));
+    const row = (m) => editing === m.id ? h('li', {}, editor(m, () => draw())) : h('li', { class: medOn(m, date) ? '' : 'stopped' },
+      h('span', { class: 'grow' }, h('b', {}, medLine(m)), m.antibiotic ? h('span', { class: 'abx' }, 'Antibiotic') : '',
+        h('span', { class: 'small muted' }, medOn(m, date) ? ` · Day ${medDay(m, date)} (from ${fmtDate(m.start)})` : m.start > date ? ` · starts ${fmtDate(m.start)}` : ` · stopped ${fmtDate(m.stop)}`)),
+      ro ? '' : iconBtn(PENCIL_SVG, 'Edit', () => draw(m.id)),
+      ro ? '' : iconBtn(BIN_SVG, 'Delete', () => { if (confirm(`Delete ${m.drug}?`)) api('DELETE', '/api/med/' + encodeURIComponent(m.id)).then(load).catch((e) => toast(e.message, true)); }, 'pencil bin'));
+    box.replaceChildren(
+      on.length || off.length ? h('ul', { class: 'medlist' }, [...on, ...off].map(row)) : h('p', { class: 'muted small' }, 'No medicines yet.'),
+      ro ? '' : editing === 'new' ? editor(blank(), () => draw()) : h('button', { type: 'button', class: 'ghost small', onclick: () => draw('new') }, '+ Add medicine'));
+  };
+  const load = async () => { meds = await api('GET', '/api/meds/' + encodeURIComponent(a.id)).catch(() => []); box.meds = meds; draw(); };
+  box.reload = load;
+  load();
+  return box;
+}
+async function progressPopup(a, onSaved) {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  const body = h('div', { class: 'otnbody' }, h('p', { class: 'loading' }, 'Loading…'));
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
+    h('div', { class: 'modal card panel wide otnotes' }, h('div', { class: 'mhead' }, h('h2', {}, `Progress Notes · ${a.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), body)));
+  const today = S.meta.today;
+  const prefill = () => ({ name: a.name || '', age_sex: [ageFromBirth(a.dob) || a.age || '', a.sex].filter(Boolean).join(' / '), uhid: a.ip_no || '',
+    weight: a.weight_date === today ? a.current_weight || '' : '' });
+  const list = async () => {
+    const notes = await api('GET', '/api/pnotes/' + encodeURIComponent(a.id)).catch((e) => { toast(e.message, true); return []; });
+    const todays = notes.find((n) => n.date === today);
+    body.replaceChildren(
+      canEdit() ? h('div', { class: 'btns' }, h('button', { type: 'button', class: 'primary', onclick: () => (todays ? form(todays, todays.date, todays.f) : form(null, today, prefill())) }, todays ? "Open today's note" : "+ Today's progress note")) : '',
+      notes.length ? h('ul', { class: 'notelist' }, notes.map((n) => h('li', {},
+        h('div', { class: 'grow' }, h('b', {}, fmtDay(n.date)), h('div', { class: 'small muted' }, `by ${n.by_name}${n.edited_name ? ` · edited by ${n.edited_name}` : ''}`)),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => form(n, n.date, n.f) }, canEdit() ? 'Open' : 'View'),
+        h('button', { type: 'button', class: 'ghost small', onclick: async () => printProgress(n.f, n.date, await api('GET', '/api/meds/' + encodeURIComponent(a.id)).catch(() => []), n.signed) }, 'Print'))))
+        : h('p', { class: 'muted' }, 'No progress notes yet.'));
+  };
+  const form = (n, date, start) => {
+    const v = { ...start }, ro = !canEdit(), K = formKit(v, ro);
+    // Urine output: ml over hours, worked out per kg per hour from today's weight.
+    const rate = h('b', { class: 'uorate' });
+    const calc = () => {
+      const ml = parseFloat(v.uo_ml), hrs = parseFloat(v.uo_hrs), kg = parseFloat(v.weight) / 1000;
+      v.uo_rate = ml >= 0 && hrs > 0 && kg > 0 ? (ml / kg / hrs).toFixed(1) : '';
+      rate.replaceChildren(v.uo_rate ? `${v.uo_rate} ml/kg/hr` : 'Type ml, hours and today\'s weight');
+    };
+    const num = (k, ph) => h('input', { inputmode: 'decimal', placeholder: ph, value: v[k] || '', disabled: ro, oninput: (e) => { v[k] = e.target.value; calc(); } });
+    const meds = medsBox(a, date, ro);
+    calc();
+    const save = async (andPrint) => {
+      try {
+        if (n) await api('PUT', '/api/pnote/' + encodeURIComponent(n.id), { date, f: v }); else n = { id: (await api('POST', '/api/pnotes/' + encodeURIComponent(a.id), { date, f: v })).id };
+        // Today's weight also goes on the card's "Today's wt" tile.
+        if (date === today && v.weight && v.weight !== a.current_weight) { await api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { current_weight: v.weight, weight_date: today }); a.current_weight = v.weight; a.weight_date = today; if (onSaved) onSaved(); }
+        toast('Progress note saved'); if (andPrint) printProgress(v, date, meds.meds || [], mySignature()); list();
+      } catch (e) { toast(e.message, true); }
+    };
+    body.replaceChildren(
+      h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: list }, '‹ All progress notes'), h('span', { class: 'grow' }),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => printProgress(v, date, meds.meds || [], (n && n.signed) || mySignature()) }, 'Print'),
+        ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: () => save(false) }, 'Save')),
+      h('section', { class: 'otnsec' }, sectionHead(fmtDay(date)),
+        h('div', { class: 'formgrid' }, K.text('name', 'Name'), K.text('age_sex', 'Age / Sex'), K.text('uhid', 'UHID'),
+          h('label', { class: 'field' }, h('span', { class: 'flabel' }, "Today's weight (g)"), num('weight', 'g')))),
+      h('section', { class: 'otnsec' }, sectionHead('Subjective'),
+        h('div', { class: 'formgrid' }, K.area('complaints', 'Complaints', 2), K.text('oral', 'Oral intake'), K.text('stools', 'Stools'),
+          h('div', { class: 'field wide' }, h('span', { class: 'flabel' }, 'Urine output'), h('div', { class: 'inline2' }, num('uo_ml', 'ml'), h('span', {}, 'ml in'), num('uo_hrs', 'hours'), h('span', {}, 'hours ='), rate)))),
+      h('section', { class: 'otnsec' }, sectionHead('Examination'),
+        h('div', { class: 'formgrid' },
+          K.pick('gc', 'General condition', ['Fair', 'Sick', 'Poor']), K.pick('crt', 'CRT', ['< 3 sec', '> 3 sec']), K.pick('activity', 'Activity', ['Good', 'Weak']),
+          K.pick('cry', 'Cry', ['Good', 'Shrill']), K.pick('periph', 'Peripheries', ['Warm', 'Cold']), K.text('hr', 'HR', { inputmode: 'numeric' }), K.text('temp', 'Temp'),
+          spo2Field(v, K, ro)),
+        h('h4', { class: 'formsub' }, 'Systemic examination'),
+        h('div', { class: 'formgrid' }, K.area('pa', 'Per abdomen', 2), K.area('cvs', 'CVS', 2), K.area('cns', 'CNS', 2), K.area('rs', 'RS', 2))),
+      h('section', { class: 'otnsec' }, sectionHead('Plan'), K.area('plan', '', 5)),
+      h('section', { class: 'otnsec' }, sectionHead('Medications'), meds),
+      ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'ghost', onclick: () => save(true) }, 'Save and print'), h('button', { type: 'button', class: 'primary', onclick: () => save(false) }, 'Save')));
+    body.parentElement.scrollTop = 0;
+  };
+  list();
+}
+function printProgress(v, date, meds, signed) {
+  const on = meds.filter((m) => medOn(m, date));
+  const uo = [v.uo_ml && `${v.uo_ml} ml${v.uo_hrs ? ` in ${v.uo_hrs} h` : ''}`, v.uo_rate && `${v.uo_rate} ml/kg/hr`].filter(Boolean).join(' = ');
+  printSheet('PROGRESS NOTE', [
+    docGrid([['Name', v.name], ['Age / Sex', v.age_sex], ['UHID', v.uhid], ['Date', fmtDate(date)], ["Today's weight", v.weight && `${v.weight} g`]]),
+    docBlock('Complaints', v.complaints),
+    docGrid([['Oral intake', v.oral], ['Stools', v.stools], ['Urine output', uo]]),
+    docHead('Examination'),
+    docGrid([['General condition', v.gc], ['CRT', v.crt], ['Activity', v.activity], ['Cry', v.cry], ['Peripheries', v.periph], ['HR', v.hr], ['SpO2', spo2Text(v)], ['Temp', v.temp]]),
+    docBlock('Per abdomen', v.pa), docBlock('CVS', v.cvs), docBlock('CNS', v.cns), docBlock('RS', v.rs),
+    v.plan ? [docHead('Plan'), h('div', { class: 'docblock pre' }, v.plan)] : '',
+    on.length ? [docHead('Medications'), h('table', { class: 'docmeds' }, h('thead', {}, h('tr', {}, ['Medicine', 'Dose', 'Route', 'Frequency', 'Started', 'Day'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, on.map((m) => h('tr', {}, h('td', {}, m.drug, m.antibiotic ? ' (antibiotic)' : ''), h('td', {}, m.dose), h('td', {}, m.route), h('td', {}, m.freq), h('td', {}, fmtDate(m.start)), h('td', {}, h('b', {}, `Day ${medDay(m, date)}`))))))] : '',
+  ], signed);
+}
+
+// ---------- Discharge Summary (Nidhi's Word format, 2026-10-30) ----------
+// Filled in from Clinical Details, the OT notes and the register; every field can be edited before printing. The course is left for the SR to write.
+const dmy = (d) => (d ? d.split('-').reverse().join('/') : '');
+function dsumHistory(a, c) {
+  const p1 = [c.cc && `Chief complaints: ${c.cc}`, c.hopi].filter(Boolean).join('\n');
+  const born = a.dob ? `Born on ${dmy(a.dob)}${c.birth_time ? ' at ' + c.birth_time : ''}` : '';
+  const ga = c.ga_w ? `gestational age ${c.ga_w}${c.ga_d ? '+' + c.ga_d : ''} weeks` : '';
+  const bw = a.birth_weight ? `birth weight ${a.birth_weight} g` : '';
+  const p2 = [[born, ga, bw].filter(Boolean).join(', '), c.antenatal && `Antenatal history: ${c.antenatal}`, c.vaccination && `Immunization: ${c.vaccination}`,
+    c.transport && `Transport: ${c.transport}`, c.family && `Family history: ${c.family}`, c.treatment && `Treatment history: ${c.treatment}`].filter(Boolean).join('\n');
+  const yn = [['pallor', 'Pallor'], ['icterus', 'Icterus'], ['jaundice', 'Jaundice'], ['cyanosis', 'Cyanosis'], ['clubbing', 'Clubbing'], ['edema', 'Edema'], ['lymph', 'Lymphadenopathy']];
+  const present = yn.filter(([k]) => c[k] === 'Yes').map(([, l]) => l), absent = yn.filter(([k]) => c[k] === 'No').map(([, l]) => l.toLowerCase());
+  const oe = [c.gc && `O/E: GC ${c.gc.toLowerCase()}.`, c.af && `Anterior fontanelle - ${c.af.toLowerCase()}.`, c.cft && `Capillary refill time ${c.cft}.`,
+    c.periph && `Peripheries ${c.periph.toLowerCase()}.`, [c.temp && `Temp ${c.temp}`, c.activity && `activity ${c.activity}`, c.cry && `cry ${c.cry}`].filter(Boolean).join(', '),
+    (c.hr || c.spo2) && `Vitals - ${[c.hr && `Heart rate - ${c.hr}/min`, spo2Text(c) && `SpO2 - ${spo2Text(c)}`].filter(Boolean).join('; ')}.`,
+    c.adm_weight && `Weight on admission ${c.adm_weight} g.`, present.length && `${present.join(', ')} present.`, absent.length && `No ${absent.join(', ')}.`,
+    c.head_to_toe, c.pa && `Per abdomen: ${c.pa}`, c.rs && `Respiratory system: ${c.rs}`, c.cvs && `CVS: ${c.cvs}`, c.cns && `CNS: ${c.cns}`].filter(Boolean).join('\n');
+  return [p1, p2, oe].filter(Boolean).join('\n\n');
+}
+function dsumPrefill(a, otnotes) {
+  const c = a.clinical || {};
+  const notes = [...otnotes].sort((x, y) => ((x.f.op_date || '') < (y.f.op_date || '') ? -1 : 1));
+  const last = notes[notes.length - 1];
+  const doo = notes.length ? notes.map((n) => dmy(n.f.op_date)).filter(Boolean) : [a.surgery_date, a.surgery_date2, a.surgery_date3].filter(Boolean).map(dmy);
+  const dod = a.discharge_date || S.meta.today;
+  return {
+    name: a.name || '', age: ageFromBirth(a.dob, dod) || a.age || '', sex: a.sex === 'M' ? 'Male' : a.sex === 'F' ? 'Female' : a.sex || '', father: c.father || '',
+    dob: [dmy(a.dob), c.birth_time].filter(Boolean).join(' '), adm_wt: c.adm_weight ? `${c.adm_weight} g` : '', address: c.address || '', doa: dmy(a.admit_date),
+    dis_wt: a.current_weight ? `${a.current_weight} g` : '', doo: doo.join(', '), cr_no: c.cr_no || '', phone: (c.phones || '').split('\n').join(', '), dod: dmy(dod), uhid: a.ip_no || '',
+    diagnosis: (last && last.f.post_dx) || a.diagnosis || '', history: dsumHistory(a, c),
+    procedure: notes.length ? notes.map((n) => n.f.op_executed || n.f.op_proposed).filter(Boolean).join('\n') : procText(a),
+    findings: notes.length ? notes.map((n) => n.f.findings).filter(Boolean).join('\n\n') : a.ot_findings || '',
+    course: '', advice: '', adm_sr: '', managing_sr: '', consultant: rosterName(a.unit || '', {}), followup: '', inv: '',
+  };
+}
+async function dischargeSummaryPopup(a) {
+  const root = document.getElementById('modal-root');
+  const close = () => root.replaceChildren();
+  const body = h('div', { class: 'otnbody' }, h('p', { class: 'loading' }, 'Loading…'));
+  root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
+    h('div', { class: 'modal card panel wide otnotes' }, h('div', { class: 'mhead' }, h('h2', {}, `Discharge Summary · ${a.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))), body)));
+  const [full, otnotes, saved] = await Promise.all([api('GET', '/api/admissions/' + encodeURIComponent(a.id)).catch(() => a),
+    api('GET', '/api/otnotes/' + encodeURIComponent(a.id)).catch(() => []), api('GET', '/api/dsum/' + encodeURIComponent(a.id)).catch(() => null)]);
+  a = { ...a, ...full, bed_on_date: a.bed_on_date };
+  const courseLabel = isIcu(a.bed_on_date || a.bed) ? 'ICU Course' : 'Ward Course';
+  const draw = (start, signed) => {
+    const v = { ...start }, ro = !canEdit(), K = formKit(v, ro);
+    // Investigations: one row each (test, date, report). Linking them to the Investigations tile comes later.
+    const inv = listOf(v.inv).map((l) => { const [t = '', d = '', r = ''] = l.split(' | '); return { t, d, r }; });
+    const invBox = h('div', { class: 'invrows' });
+    const syncInv = () => { v.inv = inv.filter((x) => x.t || x.d || x.r).map((x) => [x.t, x.d, x.r].map((s) => s.replace(/\s*\|\s*/g, '/').replace(/\n/g, ' ')).join(' | ')).join('\n'); };
+    const drawInv = () => invBox.replaceChildren(...inv.map((x) => h('div', { class: 'invrow' },
+      ...['t', 'd', 'r'].map((k, i) => h('input', { value: x[k], placeholder: ['Investigation', 'Date', 'Report'][i], disabled: ro, oninput: (e) => { x[k] = e.target.value; syncInv(); } })))),
+      ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: () => { inv.push({ t: '', d: '', r: '' }); drawInv(); } }, '+ Add investigation'));
+    drawInv();
+    const save = async (andPrint) => {
+      syncInv();
+      try { await api('PUT', '/api/dsum/' + encodeURIComponent(a.id), { f: v }); toast('Discharge summary saved'); if (andPrint) printDischarge(v, mySignature(), courseLabel); } catch (e) { toast(e.message, true); }
+    };
+    body.replaceChildren(
+      h('div', { class: 'btns' },
+        ro ? '' : h('button', { type: 'button', class: 'ghost small', title: 'Fill again from Clinical Details and OT notes (keeps the course, advice and names typed here)', onclick: () => {
+          if (!confirm('Fill the details again from Clinical Details and the OT notes? The course, advice, SR names and follow up you typed stay.')) return;
+          const keep = ['course', 'advice', 'adm_sr', 'managing_sr', 'followup', 'inv', 'father'];
+          draw({ ...dsumPrefill(a, otnotes), ...Object.fromEntries(keep.filter((k) => v[k]).map((k) => [k, v[k]])) }, signed);
+        } }, 'Fill again from records'),
+        h('span', { class: 'grow' }),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => { syncInv(); printDischarge(v, signed || mySignature(), courseLabel); } }, 'Print'),
+        ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: () => save(false) }, 'Save')),
+      saved && saved.f ? h('p', { class: 'small muted' }, `Last saved by ${saved.by_name}`) : h('p', { class: 'small muted' }, 'Filled in from Clinical Details and the OT notes. Check and edit, then Save.'),
+      h('section', { class: 'otnsec' }, sectionHead('Patient'),
+        h('div', { class: 'formgrid' }, K.text('name', 'Name'), K.text('age', 'Age'), K.text('sex', 'Sex'), K.text('father', "Father's name"), K.text('dob', 'DOB'),
+          K.text('adm_wt', 'Wt at adm'), K.text('dis_wt', 'Wt at dis'), K.text('doa', 'DOA'), K.text('doo', 'DOO'), K.text('dod', 'DOD'), K.text('cr_no', 'CR No.'), K.text('uhid', 'UHID No.'),
+          K.text('phone', 'Telephone'), K.area('address', 'Address', 2))),
+      h('section', { class: 'otnsec' }, sectionHead('Summary'),
+        h('div', { class: 'formgrid' }, K.area('diagnosis', 'Diagnosis', 2), K.area('history', 'History & Examination', 12), K.area('procedure', 'Procedure', 2),
+          K.area('findings', 'Intra op findings', 5), K.area('course', courseLabel, 12, { placeholder: 'To be written by the SR' }),
+          K.area('advice', 'Advice on discharge (one per line; printed as a numbered list)', 8))),
+      h('section', { class: 'otnsec' }, sectionHead('Team and follow up'),
+        h('div', { class: 'formgrid' }, K.text('adm_sr', 'Admission SR'), K.text('managing_sr', 'Managing SR'), K.text('consultant', 'Consultant'), K.area('followup', 'Follow up visit', 2))),
+      h('section', { class: 'otnsec' }, sectionHead('Investigations'), invBox),
+      ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'ghost', onclick: () => save(true) }, 'Save and print'), h('button', { type: 'button', class: 'primary', onclick: () => save(false) }, 'Save')));
+    body.parentElement.scrollTop = 0;
+  };
+  const had = saved && saved.f;
+  draw(had ? saved.f : dsumPrefill(a, otnotes), had ? saved.signed : null);
+}
+// Printed exactly in the department's Word layout: Cambria heading, a 6-column patient table, then one row per section, the team, date and signature, and the investigations.
+function printDischarge(v, signed, courseLabel) {
+  const val = (k) => v[k] || '';
+  const L = (t) => h('th', {}, t);
+  const advice = listOf(val('advice'));
+  const inv = listOf(val('inv')).map((l) => l.split(' | '));
+  const wide = (label, node, cls) => h('tr', {}, L(label), h('td', { colspan: 5, class: cls || '' }, node));
+  const sheet = h('div', { id: 'sheet-root', class: 'dsum' },
+    h('div', { class: 'dshead' }, h('div', {}, 'DEPARTMENT OF PEDIATRIC SURGERY'), h('div', {}, 'ALL INDIA INSTITUTE OF MEDICAL SCIENCES, ANSARI NAGAR, NEW DELHI'), h('div', { class: 'u' }, 'DISCHARGE SUMMARY')),
+    h('table', {}, h('colgroup', {}, ['18%', '24%', '9%', '14%', '11%', '24%'].map((w) => h('col', { style: `width:${w}` }))), h('tbody', {},
+      h('tr', {}, L('Name'), h('td', {}, val('name')), L('Age'), h('td', {}, val('age')), L('Sex'), h('td', {}, val('sex'))),
+      h('tr', {}, L("Father's name"), h('td', {}, val('father')), L('DOB'), h('td', {}, val('dob')), L('Wt at adm'), h('td', {}, val('adm_wt'))),
+      h('tr', {}, L('Address'), h('td', { rowspan: 2 }, val('address')), L('DOA'), h('td', {}, val('doa')), L('Wt at dis'), h('td', {}, val('dis_wt'))),
+      h('tr', {}, h('th', {}, ''), L('DOO'), h('td', {}, val('doo')), L('CR No.'), h('td', {}, val('cr_no'))),
+      h('tr', {}, L('Telephone'), h('td', {}, val('phone')), L('DOD'), h('td', {}, val('dod')), L('UHID No.'), h('td', {}, val('uhid'))),
+      wide('Diagnosis', val('diagnosis'), 'b'),
+      wide('History & Examination', val('history')),
+      wide('PROCEDURE:', val('procedure'), 'b'),
+      wide('INTRA OP FINDINGS', val('findings')),
+      wide(courseLabel, val('course')),
+      wide('ADVICE ON DISCHARGE', advice.length ? h('ol', {}, advice.map((x) => h('li', {}, x.replace(/^\d+[.)]\s*/, '')))) : ''),
+      h('tr', {}, L('ADMISSION SR'), h('td', {}, val('adm_sr')), h('th', { colspan: 2 }, 'MANAGING SR'), h('td', { colspan: 2 }, val('managing_sr'))),
+      h('tr', {}, L('CONSULTANT'), h('td', {}, val('consultant')), h('th', { colspan: 2 }, 'FOLLOW UP VISIT'), h('td', { colspan: 2 }, val('followup'))))),
+    h('div', { class: 'dsfoot' }, h('div', {}, h('b', {}, 'Date: '), val('dod')), signBlock(signed)),
+    inv.length ? [h('div', { class: 'dsinvh' }, 'INVESTIGATIONS'), h('table', { class: 'dsinv' }, h('colgroup', {}, ['30%', '18%', '52%'].map((w) => h('col', { style: `width:${w}` }))),
+      h('tbody', {}, h('tr', {}, L('Investigations'), L('Date'), L('Report')), inv.map(([t, d, r]) => h('tr', {}, h('td', {}, t || ''), h('td', {}, d || ''), h('td', {}, r || '')))))] : '');
+  document.getElementById('sheet-root')?.remove();
+  document.body.append(sheet);
+  document.body.classList.add('print-sheet');
+  const st = h('style', {}, '@page { size: A4 portrait; margin: 20mm 20mm; }');
   document.head.append(st);
   window.print();
   st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();

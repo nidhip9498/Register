@@ -440,7 +440,7 @@ const Store = (() => {
       put(nid, 'note', mine ? { ...strip(mine), note: [mine.note, n.note].filter((x, i, l) => x && l.indexOf(x) === i).join(' | ') } : { ...strip(n), admission_id: keep.id });
       put(n.id, 'note', null);
     }
-    for (const t of ['ot', 'inv', 'move', 'work', 'otnote']) for (const r of all(t).filter((x) => x.admission_id === other.id)) put(r.id, t, { ...strip(r), admission_id: keep.id });
+    for (const t of ['ot', 'inv', 'move', 'work', 'otnote', 'pnote', 'med']) for (const r of all(t).filter((x) => x.admission_id === other.id)) put(r.id, t, { ...strip(r), admission_id: keep.id });
     for (const e of all('otentry').filter((x) => x.admission_id === other.id)) put(e.id, 'otentry', { ...strip(e), admission_id: keep.id });
     // Details: fill what the kept entry is missing; short notes from both are kept.
     const next = { ...strip(keep) };
@@ -754,6 +754,40 @@ const Store = (() => {
     return { ok: true };
   });
   route('DELETE', '/api/otnote/:id', EDITORS, ({ params: p }) => { getOtNote(p.id); put(p.id, 'otnote', null); return { ok: true }; });
+  // Progress notes (ICU): one per visit, signed by whoever saves; medications are a running list per patient with start/stop dates.
+  const getPNote = (id) => { const n = get(id); if (!n || !id.startsWith('pnote:')) throw new HttpError(404, 'Progress note not found'); return n; };
+  route('GET', '/api/pnotes/:id', ANY, ({ params: p }) => all('pnote').filter((n) => n.admission_id === p.id)
+    .sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : x.at < y.at ? 1 : -1)).map((n) => ({ ...n, by_name: userName(n.by), edited_name: n.edited_by ? userName(n.edited_by) : '' })));
+  route('POST', '/api/pnotes/:id', EDITORS, ({ body, params: p }) => {
+    const a = getAdmission(p.id), id = 'pnote:' + uuid();
+    put(id, 'pnote', { admission_id: a.id, date: isDate(body.date) ? body.date : today(), f: cleanFields(body.f, 4000), by: currentUser.id, at: stamp(), signed: signer() });
+    return { id };
+  });
+  route('PUT', '/api/pnote/:id', EDITORS, ({ body, params: p }) => {
+    const n = getPNote(p.id);
+    put(n.id, 'pnote', { ...strip(n), date: isDate(body.date) ? body.date : n.date, f: cleanFields(body.f, 4000), edited_by: currentUser.id, edited_at: stamp(), signed: signer() });
+    return { ok: true };
+  });
+  route('DELETE', '/api/pnote/:id', EDITORS, ({ params: p }) => { getPNote(p.id); put(p.id, 'pnote', null); return { ok: true }; });
+  const medFields = (b) => {
+    const f = { drug: str(b.drug, 120), dose: str(b.dose, 60), route: str(b.route, 30), freq: str(b.freq, 40), start: isDate(b.start) ? b.start : today(),
+      stop: isDate(b.stop) ? b.stop : null, antibiotic: !!b.antibiotic };
+    if (!f.drug) throw new HttpError(400, 'Type the medicine');
+    return f;
+  };
+  const getMed = (id) => { const m = get(id); if (!m || !id.startsWith('med:')) throw new HttpError(404, 'Medicine not found'); return m; };
+  route('GET', '/api/meds/:id', ANY, ({ params: p }) => all('med').filter((m) => m.admission_id === p.id).sort((x, y) => (x.start < y.start ? -1 : x.start > y.start ? 1 : x.at < y.at ? -1 : 1)));
+  route('POST', '/api/meds/:id', EDITORS, ({ body, params: p }) => { const a = getAdmission(p.id), id = 'med:' + uuid(); put(id, 'med', { admission_id: a.id, ...medFields(body), by: currentUser.id, at: stamp() }); return { id }; });
+  route('PUT', '/api/med/:id', EDITORS, ({ body, params: p }) => { const m = getMed(p.id); put(m.id, 'med', { ...strip(m), ...medFields({ ...m, ...body }), edited_by: currentUser.id }); return { ok: true }; });
+  route('DELETE', '/api/med/:id', EDITORS, ({ params: p }) => { getMed(p.id); put(p.id, 'med', null); return { ok: true }; });
+  // Discharge summary: one per patient, edited until printed; whoever saves it signs it.
+  route('GET', '/api/dsum/:id', ANY, ({ params: p }) => { const a = getAdmission(p.id); const d = get('dsum:' + a.id); return d ? { ...d, by_name: userName(d.by) } : null; });
+  route('PUT', '/api/dsum/:id', EDITORS, ({ body, params: p }) => {
+    const a = getAdmission(p.id), id = 'dsum:' + a.id, d = get(id);
+    put(id, 'dsum', { ...(d ? strip(d) : {}), admission_id: a.id, f: cleanFields(body.f, 12000), by: currentUser.id, at: stamp(), signed: signer() });
+    audit('discharge summary', a.name);
+    return { ok: true };
+  });
   // Worklist (JR and SR): the day's to-dos per patient. The work day runs 9 am to 9 am; at 9 am ticked items are dropped
   // (deleted, not kept anywhere) and pending ones carry over.
   const WORK_LISTS = ['jr', 'sr', 'icu'];
@@ -926,7 +960,7 @@ const Store = (() => {
       for (const r of [...R.values()]) {
         if (!r.data) continue;
         if (r.type === 'admission') { put(r.id, 'admission', null); out.removed++; }
-        else if (['round', 'note', 'ot', 'move', 'inv', 'otnote'].includes(r.type)) put(r.id, r.type, null);
+        else if (['round', 'note', 'ot', 'move', 'inv', 'otnote', 'pnote', 'med', 'dsum'].includes(r.type)) put(r.id, r.type, null);
       }
     }
     for (const p of list) {
@@ -1486,7 +1520,7 @@ const Store = (() => {
     const cutoff = shiftDate(today(), -365);
     const old = all('admission').filter((a) => a.discharge_date && a.discharge_date < cutoff);
     const ids = new Set(old.map((a) => a.id));
-    const related = [...all('round'), ...all('note'), ...all('ot'), ...all('move'), ...all('inv'), ...all('otnote')].filter((r) => ids.has(r.admission_id)).map((r) => r.id);
+    const related = [...all('round'), ...all('note'), ...all('ot'), ...all('move'), ...all('inv'), ...all('otnote'), ...all('pnote'), ...all('med'), ...all('dsum')].filter((r) => ids.has(r.admission_id)).map((r) => r.id);
     return { cutoff, patients: old.length, ids: [...ids, ...related] };
   });
 
