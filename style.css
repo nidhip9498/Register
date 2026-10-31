@@ -925,3 +925,5 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
   .modal.otnotes .mhead h2, .modal.clinical .mhead h2 { font-size: 1.15rem; }
   .otnbody { padding: .2rem 0 .6rem; }
 }
+.ocrpick { max-width: 22rem; display: flex; flex-direction: column; gap: .6rem; }
+.ocrpick button.primary, .ocrpick button.ghost:not(.small) { padding: .8rem 1rem; font-size: 1.05rem; font-weight: 700; }

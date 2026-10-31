@@ -3660,13 +3660,22 @@ async function ocrEngine() {
   ocrWorker = await window.Tesseract.createWorker('eng', 1, { workerPath: base + 'worker.min.js', corePath: base, langPath: base, logger: (m) => ocrProgress && ocrProgress(m) });
   return ocrWorker;
 }
-// Choose or take a photo, drag across the part to read, straighten it if needed, then read it. Resolves with the text, or null if cancelled.
+// Take or choose a photo, drag across the part to read, straighten it if needed, then read it. Resolves with the text, or null if cancelled.
+// Two buttons of our own, because some Android phones open only the gallery for a plain file box (Nidhi, 2026-10-31).
 function readPhoto(title, hint) {
   return new Promise((resolve) => {
-    const input = h('input', { type: 'file', accept: 'image/*', style: 'display:none' });
-    input.onchange = () => { const f = input.files[0]; input.remove(); if (f) cropAndRead(f, title, hint, resolve); else resolve(null); };
-    document.body.append(input);
-    input.click();
+    const layer = h('div', { class: 'ocrlayer' });
+    const pick = (camera) => {
+      const input = h('input', { type: 'file', accept: 'image/*', style: 'display:none', ...(camera ? { capture: 'environment' } : {}) });
+      input.onchange = () => { const f = input.files[0]; input.remove(); if (f) { layer.remove(); cropAndRead(f, title, hint, resolve); } };
+      document.body.append(input);
+      input.click();
+    };
+    layer.append(h('div', { class: 'ocrbox card ocrpick' }, h('h2', {}, title),
+      h('button', { type: 'button', class: 'primary', onclick: () => pick(true) }, '📷 Take photo'),
+      h('button', { type: 'button', class: 'ghost', onclick: () => pick(false) }, '🖼 Choose from gallery'),
+      h('button', { type: 'button', class: 'ghost small', onclick: () => { layer.remove(); resolve(null); } }, 'Cancel')));
+    document.body.append(layer);
   });
 }
 function cropAndRead(file, title, hint, resolve) {
