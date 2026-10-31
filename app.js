@@ -498,7 +498,7 @@ async function registerView(main, mode) {
       clickStat('Discharged today', here.filter((a) => a.discharge_date === date), date, true),
       (() => {
         const rows = invFrom(here.filter((a) => a.discharge_date !== date), date);
-        const el = stat('Upcoming investigations', rows.length); el.classList.add('clickable'); el.title = 'Show all booked investigations';
+        const el = stat('Scheduled investigations', rows.length); el.classList.add('clickable'); el.title = 'Show all booked investigations';
         el.onclick = () => upcomingPanel(rows, date); return el;
       })());
 
@@ -659,7 +659,7 @@ function drawOtAlerts(box, admissions, open, date, withWork) {
   const inv = invOn(admissions.filter((a) => !a.discharge_date || a.discharge_date > day), day);
   withWork = canWork() ? withWork : false;
   if (!inv.length && !withWork) return box.replaceChildren();
-  const bell = inv.length ? h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Investigations today', inv, day) },
+  const bell = inv.length ? h('button', { type: 'button', class: 'otbar invbar', onclick: () => invPanel('Scheduled investigations today', inv, day) },
     h('span', { class: 'bell', 'aria-hidden': 'true' }, '🔔'),
     h('b', {}, `${inv.length} investigation${inv.length === 1 ? '' : 's'} today`),
     h('span', { class: 'muted small' }, 'Tap to view'))
@@ -832,7 +832,7 @@ const invFrom = (adms, day) => adms.flatMap((a) => (a.inv || []).filter((v) => v
 // Upcoming investigations, date by date, each day split by ward.
 function upcomingPanel(rows, today) {
   const days = [...new Set(rows.map((r) => r.v.date))].sort();
-  listModal(`Upcoming investigations · ${rows.length}`,
+  listModal(`Scheduled investigations · ${rows.length}`,
     rows.length ? days.map((d) => h('section', { class: 'invday' },
       h('h3', { class: 'invdate' }, d === today ? 'Today · ' : d === addDays(today, 1) ? 'Tomorrow · ' : '', fmtDay(d)),
       wardCols(rows.filter((r) => r.v.date === d), invLine))) : h('p', {}, 'No investigations booked.'));
@@ -1013,7 +1013,7 @@ function invBox(a, date, onChanged) {
   };
   const inv = a.inv || [], next = inv.find((v) => v.date >= date);
   const when2 = (d) => (d === date ? 'Today' : d === addDays(date, 1) ? 'Tomorrow' : fmtDate(d));
-  return foldBox('inv:' + a.id, 'inv', 'Investigations', next ? `${when2(next.date)}: ${next.text}${inv.filter((v) => v.date >= date).length > 1 ? ` +${inv.filter((v) => v.date >= date).length - 1}` : ''}` : '', [
+  return foldBox('inv:' + a.id, 'inv', 'Scheduled investigations', next ? `${when2(next.date)}: ${next.text}${inv.filter((v) => v.date >= date).length > 1 ? ` +${inv.filter((v) => v.date >= date).length - 1}` : ''}` : '', [
     inv.length ? h('ul', { class: 'invlist' }, inv.map((v) => h('li', { class: v.date < date ? 'past' : v.date === date ? 'today' : '' },
       h('b', {}, v.date === date ? 'Today' : v.date === addDays(date, 1) ? 'Tomorrow' : fmtDate(v.date)), ` · ${v.text}`,
       canEdit() && h('button', { type: 'button', class: 'link small del', onclick: async () => {
@@ -1076,7 +1076,11 @@ function patientCard(a, date, refresh) {
   add(
     h('div', { class: 'rhead' },
       h('div', { class: 'rmain' },
-        h('div', { class: 'rtitle' }, h('span', { class: 'bedno' }, a.bed_on_date), h('a', { href: '#patient/' + id, class: 'rname' }, a.name)),
+        h('div', { class: 'rtitle' }, h('span', { class: 'bedno' }, a.bed_on_date), h('a', { href: '#patient/' + id, class: 'rname' }, a.name),
+          // Ward Rounds: Investigations and the Discharge Summary sit beside the name (Nidhi, 2026-10-31); ICU has them in its tiles.
+          icu ? '' : h('span', { class: 'namebtns' },
+            h('button', { type: 'button', class: 'icutile slim', onclick: () => investigationsPopup(a) }, 'Investigations'),
+            h('button', { type: 'button', class: 'dsmini', title: 'Discharge Summary', 'aria-label': 'Discharge Summary', onclick: () => dischargeSummaryPopup(a) }, '📄'))),
         h('div', { class: 'muted small' }, [a.ip_no && `UHID ${a.ip_no}`, dayNo(a, date) && `Day ${dayNo(a, date)} of admission`,
           icu && a.birth_weight && `BW ${a.birth_weight} g`, icu && a.gestation && `GA ${a.gestation} wk`, icu && a.current_weight && `Wt ${a.current_weight} g`,
           !icu && a.weight && `Wt ${a.weight} kg`].filter(Boolean).join(' · ')),
@@ -3377,6 +3381,16 @@ function dsumHistory(a, c) {
     c.head_to_toe, c.pa && `Per abdomen: ${c.pa}`, c.rs && `Respiratory system: ${c.rs}`, c.cvs && `CVS: ${c.cvs}`, c.cns && `CNS: ${c.cns}`].filter(Boolean).join('\n');
   return [p1, p2, oe].filter(Boolean).join('\n\n');
 }
+// Procedure done on each OT day with the scrub team, from the OT lists; else the OT notes; else Procedure done in Rounds.
+function dsumProcedure(a, notes) {
+  const ops = (a.otprocs || []).filter((x) => x.done || x.surgery || (x.scrub || []).length);
+  if (ops.length) return ops.map((x) => {
+    const team = (x.scrub || []).map((i) => rosterName(i, {})).filter(Boolean);
+    return `${x.done || x.surgery || a.procedure_done || ''} (${dmy(x.date)})${team.length ? `\nScrub team: ${team.join(', ')}` : ''}`;
+  }).join('\n');
+  if (notes.length) return notes.map((n) => [n.f.op_executed || n.f.op_proposed, n.f.op_date && `(${dmy(n.f.op_date)})`].filter(Boolean).join(' ')).filter(Boolean).join('\n');
+  return procText(a);
+}
 function dsumPrefill(a, otnotes) {
   const c = a.clinical || {};
   const notes = [...otnotes].sort((x, y) => ((x.f.op_date || '') < (y.f.op_date || '') ? -1 : 1));
@@ -3388,8 +3402,8 @@ function dsumPrefill(a, otnotes) {
     dob: [dmy(a.dob), c.birth_time].filter(Boolean).join(' '), adm_wt: c.adm_weight ? `${c.adm_weight} g` : '', address: c.address || '', doa: dmy(a.admit_date),
     dis_wt: a.current_weight ? `${a.current_weight} g` : '', doo: doo.join(', '), cr_no: c.cr_no || '', phone: (c.phones || '').split('\n').join(', '), dod: dmy(dod), uhid: a.ip_no || '',
     diagnosis: (last && last.f.post_dx) || a.diagnosis || '', history: dsumHistory(a, c),
-    procedure: notes.length ? notes.map((n) => n.f.op_executed || n.f.op_proposed).filter(Boolean).join('\n') : procText(a),
-    findings: notes.length ? notes.map((n) => n.f.findings).filter(Boolean).join('\n\n') : a.ot_findings || '',
+    procedure: dsumProcedure(a, notes),
+    findings: [...new Set([...notes.map((n) => n.f.findings), a.ot_findings].map((x) => (x || '').trim()).filter(Boolean))].join('\n\n'),
     course: '', advice: '', adm_sr: '', managing_sr: '', consultant: rosterName(a.unit || '', {}), followup: '', inv: '',
   };
 }
@@ -3404,9 +3418,22 @@ async function dischargeSummaryPopup(a) {
     api('GET', '/api/ixs/' + encodeURIComponent(a.id)).catch(() => [])]);
   const ixText = () => ixRows(ixs).map((r) => r.map((x) => x.replace(/\s*\|\s*/g, '/')).join(' | ')).join('\n');
   a = { ...a, ...full, bed_on_date: a.bed_on_date };
-  const courseLabel = isIcu(a.bed_on_date || a.bed) ? 'ICU Course' : 'Ward Course';
-  const draw = (start, signed) => {
+  const icu = isIcu(a.bed_on_date || a.bed), courseLabel = icu ? 'ICU Course' : 'Ward Course';
+  const draw = (start, signed, marked = new Set()) => {
     const v = { ...start }, ro = !canEdit(), K = formKit(v, ro);
+    // 📷 Face sheet: name, father's name, CR No., UHID, date of birth and age; boxes it fills turn orange until checked.
+    const faceSheet = async () => {
+      syncInv();
+      const text = await readPhoto('Face sheet', 'Drag across the top box of the face sheet (CR No. down to the UHID).');
+      if (text == null) return;
+      const got = parseFaceSheet(text), map = { name: 'name', father: 'father', cr_no: 'cr_no', ip_no: 'uhid' };
+      const keys = Object.keys(map).filter((k) => got[k]);
+      keys.forEach((k) => { v[map[k]] = got[k]; marked.add(map[k]); });
+      if (got.dob) { v.dob = dmy(got.dob); v.age = ageFromBirth(got.dob, v.dod ? v.dod.split('/').reverse().join('-') : S.meta.today); marked.add('dob'); marked.add('age'); }
+      if (!marked.size) return toast('Could not read the face sheet. Try again, cropping to the top box.', true);
+      toast('Filled from the face sheet. Check the orange boxes.');
+      draw(v, signed, marked);
+    };
     // Investigations: one row each (test, date, report), filled from the Investigations tile and editable here.
     const inv = listOf(v.inv).map((l) => { const [t = '', d = '', r = ''] = l.split(' | '); return { t, d, r }; });
     const invBox = h('div', { class: 'invrows' });
@@ -3421,7 +3448,7 @@ async function dischargeSummaryPopup(a) {
     drawInv();
     const save = async (andPrint) => {
       syncInv();
-      try { await api('PUT', '/api/dsum/' + encodeURIComponent(a.id), { f: v }); toast('Discharge summary saved'); if (andPrint) printDischarge(v, mySignature(), courseLabel); } catch (e) { toast(e.message, true); }
+      try { await api('PUT', '/api/dsum/' + encodeURIComponent(a.id), { f: v }); toast('Discharge summary saved'); if (andPrint) printDischarge(v, mySignature(), courseLabel, icu); } catch (e) { toast(e.message, true); }
     };
     body.replaceChildren(
       h('div', { class: 'btns' },
@@ -3431,12 +3458,13 @@ async function dischargeSummaryPopup(a) {
           draw({ ...dsumPrefill(a, otnotes), ...Object.fromEntries(keep.filter((k) => v[k]).map((k) => [k, v[k]])) }, signed);
         } }, 'Fill again from records'),
         h('span', { class: 'grow' }),
-        h('button', { type: 'button', class: 'ghost small', onclick: () => { syncInv(); printDischarge(v, signed || mySignature(), courseLabel); } }, 'Print'),
+        ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: faceSheet }, '📷 Read face sheet'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => { syncInv(); printDischarge(v, signed || mySignature(), courseLabel, icu); } }, 'Print'),
         ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: () => save(false) }, 'Save')),
       saved && saved.f ? h('p', { class: 'small muted' }, `Last saved by ${saved.by_name}`) : h('p', { class: 'small muted' }, 'Filled in from Clinical Details and the OT notes. Check and edit, then Save.'),
       h('section', { class: 'otnsec' }, sectionHead('Patient'),
         h('div', { class: 'formgrid' }, K.text('name', 'Name'), K.text('age', 'Age'), K.text('sex', 'Sex'), K.text('father', "Father's name"), K.text('dob', 'DOB'),
-          K.text('adm_wt', 'Wt at adm'), K.text('dis_wt', 'Wt at dis'), K.text('doa', 'DOA'), K.text('doo', 'DOO'), K.text('dod', 'DOD'), K.text('cr_no', 'CR No.'), K.text('uhid', 'UHID No.'),
+          icu ? K.text('adm_wt', 'Wt at adm') : '', icu ? K.text('dis_wt', 'Wt at dis') : '', K.text('doa', 'DOA'), K.text('doo', 'DOO'), K.text('dod', 'DOD'), K.text('cr_no', 'CR No.'), K.text('uhid', 'UHID No.'),
           K.text('phone', 'Telephone'), K.area('address', 'Address', 2))),
       h('section', { class: 'otnsec' }, sectionHead('Summary'),
         h('div', { class: 'formgrid' }, K.area('diagnosis', 'Diagnosis', 2), K.area('history', 'History & Examination', 12), K.area('procedure', 'Procedure', 2),
@@ -3446,13 +3474,16 @@ async function dischargeSummaryPopup(a) {
         h('div', { class: 'formgrid' }, K.text('adm_sr', 'Admission SR'), K.text('managing_sr', 'Managing SR'), K.text('consultant', 'Consultant'), K.area('followup', 'Follow up visit', 2))),
       h('section', { class: 'otnsec' }, sectionHead('Investigations'), invBox),
       ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'ghost', onclick: () => save(true) }, 'Save and print'), h('button', { type: 'button', class: 'primary', onclick: () => save(false) }, 'Save')));
+    const labelOf = { name: 'Name', father: "Father's name", cr_no: 'CR No.', uhid: 'UHID No.', dob: 'DOB', age: 'Age' };
+    marked.forEach((k) => { const f = [...body.querySelectorAll('.field')].find((x) => x.querySelector('.flabel')?.textContent === labelOf[k]); const inp = f && f.querySelector('input'); if (inp) checkMark(inp, true); });
     body.parentElement.scrollTop = 0;
   };
   const had = saved && saved.f;
   draw(had ? saved.f : { ...dsumPrefill(a, otnotes), inv: ixText() }, had ? saved.signed : null);
 }
 // Printed exactly in the department's Word layout: Cambria heading, a 6-column patient table, then one row per section, the team, date and signature, and the investigations.
-function printDischarge(v, signed, courseLabel) {
+// The ward version (6A/6B) has no weights (Nidhi, 2026-10-31).
+function printDischarge(v, signed, courseLabel, icu = true) {
   const val = (k) => v[k] || '';
   const L = (t) => h('th', {}, t);
   const advice = listOf(val('advice'));
@@ -3462,8 +3493,10 @@ function printDischarge(v, signed, courseLabel) {
     h('div', { class: 'dshead' }, h('div', {}, 'DEPARTMENT OF PEDIATRIC SURGERY'), h('div', {}, 'ALL INDIA INSTITUTE OF MEDICAL SCIENCES, ANSARI NAGAR, NEW DELHI'), h('div', { class: 'u' }, 'DISCHARGE SUMMARY')),
     h('table', {}, h('colgroup', {}, ['18%', '24%', '9%', '14%', '11%', '24%'].map((w) => h('col', { style: `width:${w}` }))), h('tbody', {},
       h('tr', {}, L('Name'), h('td', {}, val('name')), L('Age'), h('td', {}, val('age')), L('Sex'), h('td', {}, val('sex'))),
-      h('tr', {}, L("Father's name"), h('td', {}, val('father')), L('DOB'), h('td', {}, val('dob')), L('Wt at adm'), h('td', {}, val('adm_wt'))),
-      h('tr', {}, L('Address'), h('td', { rowspan: 2 }, val('address')), L('DOA'), h('td', {}, val('doa')), L('Wt at dis'), h('td', {}, val('dis_wt'))),
+      icu ? h('tr', {}, L("Father's name"), h('td', {}, val('father')), L('DOB'), h('td', {}, val('dob')), L('Wt at adm'), h('td', {}, val('adm_wt')))
+        : h('tr', {}, L("Father's name"), h('td', {}, val('father')), L('DOB'), h('td', { colspan: 3 }, val('dob'))),
+      icu ? h('tr', {}, L('Address'), h('td', { rowspan: 2 }, val('address')), L('DOA'), h('td', {}, val('doa')), L('Wt at dis'), h('td', {}, val('dis_wt')))
+        : h('tr', {}, L('Address'), h('td', { rowspan: 2 }, val('address')), L('DOA'), h('td', { colspan: 3 }, val('doa'))),
       h('tr', {}, h('th', {}, ''), L('DOO'), h('td', {}, val('doo')), L('CR No.'), h('td', {}, val('cr_no'))),
       h('tr', {}, L('Telephone'), h('td', {}, val('phone')), L('DOD'), h('td', {}, val('dod')), L('UHID No.'), h('td', {}, val('uhid'))),
       wide('Diagnosis', val('diagnosis'), 'b'),
@@ -3757,11 +3790,14 @@ const cultureLine = (f) => {
   return [[f.organism, f.count].filter(Boolean).join(' '), by('S').length ? `Sensitive: ${by('S').join(', ')}` : '', by('I').length ? `Intermediate: ${by('I').join(', ')}` : '',
     by('R').length ? `Resistant: ${by('R').join(', ')}` : '', f.remarks].filter(Boolean).join('. ');
 };
+const SOURCES = ['AIIMS', 'Private'];
+const srcTag = (f) => (f.source === 'Private' ? 'Pvt' : 'AIIMS');
+const ixTitle = (x, name) => `${name} (${srcTag(x.f)}) (${dmy(x.date)})`;
 // Rows for the discharge summary's investigations page: test, date, result.
 function ixRows(ixs) {
-  return [...ixs].sort((x, y) => (x.date < y.date ? -1 : 1)).map((x) => x.kind === 'lab' ? ['Blood / Serum', dmy(x.date), labLine(x.f)]
-    : x.kind === 'culture' ? [`${x.f.specimen || ''} culture`.trim(), dmy(x.date), cultureLine(x.f)]
-      : [x.f.type || 'Report', dmy(x.date), (x.f.impression || x.f.findings || '').replace(/\n+/g, '; ')]).filter(([, , r]) => r);
+  return [...ixs].sort((x, y) => (x.date < y.date ? -1 : 1)).map((x) => x.kind === 'lab' ? [`Blood / Serum (${srcTag(x.f)})`, dmy(x.date), labLine(x.f)]
+    : x.kind === 'culture' ? [`${`${x.f.specimen || ''} culture`.trim()} (${srcTag(x.f)})`, dmy(x.date), cultureLine(x.f)]
+      : [`${x.f.type || 'Report'} (${srcTag(x.f)})`, dmy(x.date), (x.f.impression || x.f.findings || '').replace(/\n+/g, '; ')]).filter(([, , r]) => r);
 }
 
 async function investigationsPopup(a) {
@@ -3773,26 +3809,31 @@ async function investigationsPopup(a) {
   const ro = !canEdit();
   const top = () => { body.parentElement.scrollTop = 0; };
   const back = h('button', { type: 'button', class: 'ghost small', onclick: () => list() }, '‹ All investigations');
+  // Saving returns to the tab the entry belongs to.
+  const tabOf = { lab: 'lab', culture: 'culture', report: 'report' };
   const saveIx = async (x, kind, date, f) => {
     try {
       if (x) await api('PUT', '/api/ix/' + encodeURIComponent(x.id), { date, f }); else await api('POST', '/api/ixs/' + encodeURIComponent(a.id), { kind, date, f });
-      toast('Saved'); list();
+      toast('Saved'); list(tabOf[kind] || (x && x.kind));
     } catch (e) { toast(e.message, true); }
   };
   const delBtn = (x) => (x && !ro ? h('button', { type: 'button', class: 'ghost small danger', onclick: () => { if (confirm('Delete this entry?')) api('DELETE', '/api/ix/' + encodeURIComponent(x.id)).then(() => { toast('Deleted'); list(); }).catch((e) => toast(e.message, true)); } }, 'Delete') : '');
+  const sourceField = (v) => formKit(v, ro).pick('source', 'Done at', SOURCES);
+  const fromAiims = (text, v) => { if (/aiims|all india institute|ehospital/i.test(text)) v.source = 'AIIMS'; };
   const dateField = (st) => h('label', { class: 'field' }, h('span', { class: 'flabel' }, 'Date'), checkMark(h('input', { type: 'date', value: st.date, max: S.meta.today, disabled: ro, oninput: (e) => { st.date = e.target.value; } }), st.dateChk));
   const photoBtn = (label, fn) => (ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: fn }, `📷 ${label}`));
   const by = (x) => (x ? h('p', { class: 'small muted' }, `Added by ${x.by_name}${x.edited_name ? ` · edited by ${x.edited_name}` : ''}`) : '');
 
   // Lab results: every test of the slip, grouped; values read from a photo are marked until checked.
   const labForm = (x, st) => {
-    st = st || { date: x ? x.date : S.meta.today, f: { ...(x ? x.f : {}) }, unsure: new Set(), read: new Set() };
+    st = st || { date: x ? x.date : S.meta.today, f: { source: 'AIIMS', ...(x ? x.f : {}) }, unsure: new Set(), read: new Set() };
     const v = st.f;
     const fromPhoto = async () => {
       const text = await readPhoto('Lab report', 'Drag across the results (test names and values). Leave out the browser bar at the top.');
       if (text == null) return;
       const p = parseLab(text), keys = Object.keys(p.vals);
       if (!keys.length) return toast('No test names found in that photo. Try again, cropping closer to the results.', true);
+      fromAiims(text, v);
       keys.forEach((k) => { v[k] = p.vals[k]; st.read.add(k); if (p.unsure.has(k)) st.unsure.add(k); else st.unsure.delete(k); });
       if (p.date) { st.date = p.date; st.dateChk = true; }
       toast(`Read ${keys.filter((k) => p.vals[k]).length} values. The ones in orange need checking.`);
@@ -3803,7 +3844,7 @@ async function investigationsPopup(a) {
         ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: () => saveIx(x, 'lab', st.date, v) }, 'Save')),
       by(x),
       st.read.size ? h('p', { class: 'small ocrnote' }, 'Filled from the photo. Check every value against the report; orange boxes were hard to read.') : '',
-      h('section', { class: 'otnsec' }, sectionHead('Lab results'), h('div', { class: 'formgrid' }, dateField(st))),
+      h('section', { class: 'otnsec' }, sectionHead('Lab results'), h('div', { class: 'formgrid' }, dateField(st), sourceField(v))),
       ...LAB_PANELS.map(([title, tests]) => h('section', { class: 'otnsec' }, sectionHead(title), h('div', { class: 'labform' },
         tests.map(([k, l, unit]) => h('label', { class: 'labcell' }, h('span', {}, l, unit ? h('small', {}, ` ${unit}`) : ''),
           checkMark(h('input', { inputmode: 'decimal', value: v[k] || '', disabled: ro, oninput: (e) => { v[k] = e.target.value; } }), st.unsure.has(k))))),
@@ -3814,7 +3855,7 @@ async function investigationsPopup(a) {
 
   // Cultures: specimen, result, organism and colony count, then S / I / R for each antibiotic tested.
   const cultureForm = (x, st) => {
-    st = st || { date: x ? x.date : S.meta.today, f: { result: '', ...(x ? x.f : {}) }, unsure: new Set() };
+    st = st || { date: x ? x.date : S.meta.today, f: { result: '', source: 'AIIMS', ...(x ? x.f : {}) }, unsure: new Set() };
     const v = st.f, K = formKit(v, ro);
     const sens = listOf(v.sens).map((l) => { const [d, r] = l.split(': '); return { d: d || '', r: r || '' }; });
     const syncSens = () => { v.sens = sens.filter((s) => s.d.trim()).map((s) => `${s.d.trim().replace(/:/g, '')}: ${s.r}`).join('\n'); };
@@ -3830,6 +3871,7 @@ async function investigationsPopup(a) {
       const text = await readPhoto('Culture report', 'Drag across the report: specimen, organism and the sensitivity table.');
       if (text == null) return;
       const p = parseCulture(text);
+      fromAiims(text, v);
       ['result', 'organism', 'count', 'specimen', 'sens'].forEach((k) => { if (p[k]) v[k] = p[k]; });
       if (p.date) { st.date = p.date; st.dateChk = true; }
       st.unsure = p.unsure; st.read = true;
@@ -3849,7 +3891,7 @@ async function investigationsPopup(a) {
       by(x),
       st.read ? h('p', { class: 'small ocrnote' }, 'Filled from the photo. Check the organism and every S / I / R against the report.') : '',
       h('section', { class: 'otnsec' }, sectionHead('Culture'),
-        h('div', { class: 'formgrid' }, dateField(st), K.pick('specimen', 'Specimen', SPECIMENS), K.text('site', 'Site / details'), K.pick('result', 'Result', ['Sterile', 'Growth', 'Pending'], showGrowth)),
+        h('div', { class: 'formgrid' }, dateField(st), sourceField(v), K.pick('specimen', 'Specimen', SPECIMENS), K.text('site', 'Site / details'), K.pick('result', 'Result', ['Sterile', 'Growth', 'Pending'], showGrowth)),
         growth, K.area('remarks', 'Remarks', 2)),
       ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'primary', onclick: () => { syncSens(); saveIx(x, 'culture', st.date, v); } }, 'Save culture')));
     top();
@@ -3857,7 +3899,7 @@ async function investigationsPopup(a) {
 
   // Imaging and other written reports. Reports differ a lot, so text read from a photo has to be trimmed and confirmed before it can be saved.
   const reportForm = (x, st) => {
-    st = st || { date: x ? x.date : S.meta.today, f: { ...(x ? x.f : {}) } };
+    st = st || { date: x ? x.date : S.meta.today, f: { source: 'AIIMS', ...(x ? x.f : {}) } };
     const v = st.f, K = formKit(v, ro);
     const fromPhoto = async () => {
       const text = await readPhoto('Report', 'Drag across the report text, from the test name down to the impression.');
@@ -3865,6 +3907,7 @@ async function investigationsPopup(a) {
       const p = parseReport(text);
       if (!p.findings && !p.impression) return toast('No text found in that photo. Try again with the report flat and in focus.', true);
       Object.assign(v, { type: p.type || v.type || '', findings: p.findings, impression: p.impression });
+      fromAiims(text, v);
       if (p.date) { st.date = p.date; st.dateChk = true; }
       st.read = true; st.confirmed = false;
       reportForm(x, st);
@@ -3889,13 +3932,15 @@ async function investigationsPopup(a) {
         h('p', { class: 'small' }, 'Reports vary a lot. Delete anything you don\'t need (procedure details, repeated lines, stray letters) and correct any misread words, then tick below.'),
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: !!st.confirmed, onchange: (e) => { st.confirmed = e.target.checked; body.querySelectorAll('textarea.check').forEach((t) => t.classList.toggle('check', !st.confirmed)); } }), ' I have checked this text'), ' ', count) : '',
       h('section', { class: 'otnsec' }, sectionHead('Report'),
-        h('div', { class: 'formgrid' }, dateField(st), K.text('type', 'Investigation', { list: 'rep-list', placeholder: 'e.g. CECT abdomen' })),
+        h('div', { class: 'formgrid' }, dateField(st), K.text('type', 'Investigation', { list: 'rep-list', placeholder: 'e.g. CECT Abdomen & Pelvis' }), sourceField(v)),
         ta('findings', 'Findings', 8), ta('impression', 'Impression', 4)),
       ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'primary', onclick: save }, 'Save report')));
     top();
   };
 
-  const list = async () => {
+  let tab = 'lab';
+  const list = async (t) => {
+    if (t) tab = t;
     const items = await api('GET', '/api/ixs/' + encodeURIComponent(a.id)).catch((e) => { toast(e.message, true); return []; });
     const labs = items.filter((x) => x.kind === 'lab'), cultures = items.filter((x) => x.kind === 'culture'), reports = items.filter((x) => x.kind === 'report');
     // Lab results as a grid: one column per sample date (newest first), one row per test done.
@@ -3903,25 +3948,25 @@ async function investigationsPopup(a) {
       const panels = LAB_PANELS.map(([t, tests]) => [t, tests.filter(([k]) => labs.some((x) => x.f[k]))]).filter(([, tests]) => tests.length);
       const others = labs.some((x) => x.f.other);
       return h('div', { class: 'labgridwrap' }, h('table', { class: 'labgrid' },
-        h('thead', {}, h('tr', {}, h('th', {}, 'Test'), labs.map((x) => h('th', {}, h('button', { type: 'button', class: 'linkish', title: 'Open', onclick: () => labForm(x) }, dmy(x.date).slice(0, 5)))))),
+        h('thead', {}, h('tr', {}, h('th', {}, 'Test'), labs.map((x) => h('th', {}, h('button', { type: 'button', class: 'linkish', title: 'Open', onclick: () => labForm(x) }, dmy(x.date).slice(0, 5)),
+          x.f.source === 'Private' ? h('small', { class: 'pvt' }, ' Pvt') : '')))),
         h('tbody', {}, panels.flatMap(([t, tests]) => [h('tr', { class: 'labpanel' }, h('td', { colspan: labs.length + 1 }, t)),
           ...tests.map(([k, l]) => h('tr', {}, h('th', {}, l), labs.map((x) => h('td', {}, x.f[k] || ''))))]),
         others ? h('tr', {}, h('th', {}, 'Other'), labs.map((x) => h('td', { class: 'small' }, x.f.other || ''))) : '')));
     };
-    const row = (x, main, sub, open) => h('li', {}, h('div', { class: 'grow' }, h('b', {}, `${fmtDate(x.date)} · ${main}`), sub ? h('div', { class: 'small' }, sub) : ''),
+    const row = (main, sub, open) => h('li', {}, h('div', { class: 'grow' }, h('b', {}, main), sub ? h('div', { class: 'small' }, sub) : ''),
       h('button', { type: 'button', class: 'ghost small', onclick: open }, ro ? 'View' : 'Open'));
-    // One slim row of add buttons; a section shows only once it has something in it.
+    const tabs = [['lab', 'Blood / Serum', labs.length], ['culture', 'Cultures', cultures.length], ['report', 'Imaging & others', reports.length]];
+    const content = tab === 'lab' ? (labs.length ? grid() : h('p', { class: 'muted small ixempty' }, 'No lab results yet.'))
+      : tab === 'culture' ? (cultures.length ? h('ul', { class: 'notelist' }, cultures.map((x) =>
+        row(ixTitle(x, `${x.f.specimen || ''} culture${x.f.site ? ` (${x.f.site})` : ''}`.trim()), cultureLine(x.f), () => cultureForm(x)))) : h('p', { class: 'muted small ixempty' }, 'No cultures yet.'))
+        : (reports.length ? h('ul', { class: 'notelist' }, reports.map((x) =>
+          row(ixTitle(x, x.f.type || 'Report'), (x.f.impression || x.f.findings || '').split('\n').slice(0, 2).join(' · '), () => reportForm(x)))) : h('p', { class: 'muted small ixempty' }, 'No reports yet.'));
     body.replaceChildren(
-      ro ? '' : h('div', { class: 'ixadd' },
-        h('button', { type: 'button', class: 'ghost small', onclick: () => labForm(null) }, '+ Lab'),
-        h('button', { type: 'button', class: 'ghost small', onclick: () => cultureForm(null) }, '+ Culture'),
-        h('button', { type: 'button', class: 'ghost small', onclick: () => reportForm(null) }, '+ Report')),
-      items.length ? '' : h('p', { class: 'muted small ixempty' }, 'Nothing added yet.'),
-      labs.length ? h('section', { class: 'ixsec' }, sectionHead('Blood / Serum'), grid()) : '',
-      cultures.length ? h('section', { class: 'ixsec' }, sectionHead('Cultures'), h('ul', { class: 'notelist' }, cultures.map((x) =>
-        row(x, `${x.f.specimen || 'Culture'}${x.f.site ? ` (${x.f.site})` : ''}`, cultureLine(x.f), () => cultureForm(x))))) : '',
-      reports.length ? h('section', { class: 'ixsec' }, sectionHead('Imaging and other reports'), h('ul', { class: 'notelist' }, reports.map((x) =>
-        row(x, x.f.type || 'Report', (x.f.impression || x.f.findings || '').split('\n').slice(0, 2).join(' · '), () => reportForm(x))))) : '');
+      h('div', { class: 'ixtabs' },
+        h('div', { class: 'tabrow' }, tabs.map(([k, l, n]) => h('button', { type: 'button', class: 'ixtab' + (tab === k ? ' on' : ''), onclick: () => list(k) }, l, n ? h('small', {}, ` ${n}`) : ''))),
+        ro ? '' : h('button', { type: 'button', class: 'primary small ixaddbtn', onclick: () => (tab === 'lab' ? labForm(null) : tab === 'culture' ? cultureForm(null) : reportForm(null)) }, '+ Add investigation')),
+      content);
   };
   list();
 }

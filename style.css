@@ -927,3 +927,15 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 }
 .ocrpick { max-width: 22rem; display: flex; flex-direction: column; gap: .6rem; }
 .ocrpick button.primary, .ocrpick button.ghost:not(.small) { padding: .8rem 1rem; font-size: 1.05rem; font-weight: 700; }
+/* v114: Ward Rounds — Investigations and Discharge Summary beside the name; Investigations in tabs. */
+.rtitle { flex-wrap: wrap; }
+.namebtns { display: inline-flex; align-items: center; gap: .4rem; margin-left: .6rem; vertical-align: middle; }
+.icutile.slim { padding: .3rem .8rem; min-height: 0; font-size: .9rem; width: auto; flex: none; }
+.dsmini { font-size: 1.5rem; line-height: 1; background: none; border: 0; padding: .1rem .2rem; cursor: pointer; }
+.ixtabs { display: flex; align-items: flex-end; gap: .5rem; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin: .3rem 0 .6rem; }
+.ixtabs .tabrow { display: flex; gap: .2rem; flex: 1; flex-wrap: wrap; }
+.ixtab { background: none; border: 0; border-bottom: 3px solid transparent; padding: .45rem .7rem; font-weight: 700; color: var(--muted); cursor: pointer; font-size: .95rem; }
+.ixtab.on { color: var(--accent); border-bottom-color: var(--accent); }
+.ixtab small { font-weight: 600; opacity: .8; }
+.ixaddbtn { margin: 0 0 .35rem auto; }
+.labgrid .pvt { color: #b45309; font-weight: 700; }
