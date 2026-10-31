@@ -3381,12 +3381,12 @@ function dsumHistory(a, c) {
     c.head_to_toe, c.pa && `Per abdomen: ${c.pa}`, c.rs && `Respiratory system: ${c.rs}`, c.cvs && `CVS: ${c.cvs}`, c.cns && `CNS: ${c.cns}`].filter(Boolean).join('\n');
   return [p1, p2, oe].filter(Boolean).join('\n\n');
 }
-// Procedure done on each OT day with the scrub team, from the OT lists; else the OT notes; else Procedure done in Rounds.
+// Procedure done on each OT day with the scrub team's initials, "Laparoscopic Left AH pyeloplasty (VJ/KI/MN)", from the OT lists; else the OT notes; else Procedure done in Rounds.
 function dsumProcedure(a, notes) {
   const ops = (a.otprocs || []).filter((x) => x.done || x.surgery || (x.scrub || []).length);
   if (ops.length) return ops.map((x) => {
-    const team = (x.scrub || []).map((i) => rosterName(i, {})).filter(Boolean);
-    return `${x.done || x.surgery || a.procedure_done || ''} (${dmy(x.date)})${team.length ? `\nScrub team: ${team.join(', ')}` : ''}`;
+    const team = (x.scrub || []).filter(Boolean);
+    return `${x.done || x.surgery || a.procedure_done || ''}${team.length ? ` (${team.join('/')})` : ''}`;
   }).join('\n');
   if (notes.length) return notes.map((n) => [n.f.op_executed || n.f.op_proposed, n.f.op_date && `(${dmy(n.f.op_date)})`].filter(Boolean).join(' ')).filter(Boolean).join('\n');
   return procText(a);
@@ -3418,7 +3418,7 @@ async function dischargeSummaryPopup(a) {
     api('GET', '/api/ixs/' + encodeURIComponent(a.id)).catch(() => [])]);
   const ixText = () => ixRows(ixs).map((r) => r.map((x) => x.replace(/\s*\|\s*/g, '/')).join(' | ')).join('\n');
   a = { ...a, ...full, bed_on_date: a.bed_on_date };
-  const icu = isIcu(a.bed_on_date || a.bed), courseLabel = icu ? 'ICU Course' : 'Ward Course';
+  const icu = isIcu(a.bed_on_date || a.bed), courseLabel = icu ? 'ICU Course' : 'Post op course';
   const draw = (start, signed, marked = new Set()) => {
     const v = { ...start }, ro = !canEdit(), K = formKit(v, ro);
     // 📷 Face sheet: name, father's name, CR No., UHID, date of birth and age; boxes it fills turn orange until checked.
@@ -3468,10 +3468,10 @@ async function dischargeSummaryPopup(a) {
           K.text('phone', 'Telephone'), K.area('address', 'Address', 2))),
       h('section', { class: 'otnsec' }, sectionHead('Summary'),
         h('div', { class: 'formgrid' }, K.area('diagnosis', 'Diagnosis', 2), K.area('history', 'History & Examination', 12), K.area('procedure', 'Procedure', 2),
-          K.area('findings', 'Intra op findings', 5), K.area('course', courseLabel, 12, { placeholder: 'To be written by the SR' }),
-          K.area('advice', 'Advice on discharge (one per line; printed as a numbered list)', 8))),
+          K.area('findings', icu ? 'Intra op findings' : 'Operative findings', 5), K.area('course', courseLabel, 12, { placeholder: 'To be written by the SR' }),
+          K.area('advice', `Advice on discharge (one per line; printed as a ${icu ? 'numbered' : 'dashed'} list)`, 8))),
       h('section', { class: 'otnsec' }, sectionHead('Team and follow up'),
-        h('div', { class: 'formgrid' }, K.text('adm_sr', 'Admission SR'), K.text('managing_sr', 'Managing SR'), K.text('consultant', 'Consultant'), K.area('followup', 'Follow up visit', 2))),
+        h('div', { class: 'formgrid' }, K.text('adm_sr', 'Admission SR'), icu ? K.text('managing_sr', 'Managing SR') : '', K.text('consultant', 'Consultant'), icu ? K.area('followup', 'Follow up visit', 2) : '')),
       h('section', { class: 'otnsec' }, sectionHead('Investigations'), invBox),
       ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'ghost', onclick: () => save(true) }, 'Save and print'), h('button', { type: 'button', class: 'primary', onclick: () => save(false) }, 'Save')));
     const labelOf = { name: 'Name', father: "Father's name", cr_no: 'CR No.', uhid: 'UHID No.', dob: 'DOB', age: 'Age' };
@@ -3484,13 +3484,14 @@ async function dischargeSummaryPopup(a) {
 // Printed exactly in the department's Word layout: Cambria heading, a 6-column patient table, then one row per section, the team, date and signature, and the investigations.
 // The ward version (6A/6B) has no weights (Nidhi, 2026-10-31).
 function printDischarge(v, signed, courseLabel, icu = true) {
+  if (!icu) return printDischargeWard(v, signed);
   const val = (k) => v[k] || '';
   const L = (t) => h('th', {}, t);
   const advice = listOf(val('advice'));
   const inv = listOf(val('inv')).map((l) => l.split(' | '));
   const wide = (label, node, cls) => h('tr', {}, L(label), h('td', { colspan: 5, class: cls || '' }, node));
   const sheet = h('div', { id: 'sheet-root', class: 'dsum' },
-    h('div', { class: 'dshead' }, h('div', {}, 'DEPARTMENT OF PEDIATRIC SURGERY'), h('div', {}, 'ALL INDIA INSTITUTE OF MEDICAL SCIENCES, ANSARI NAGAR, NEW DELHI'), h('div', { class: 'u' }, 'DISCHARGE SUMMARY')),
+    h('div', { class: 'dshead' }, h('div', { class: 'hi' }, 'अखिल भारतीय आयुर्विज्ञान संस्थान, नई दिल्ली - 110029'), h('div', {}, 'DEPARTMENT OF PEDIATRIC SURGERY'), h('div', {}, 'ALL INDIA INSTITUTE OF MEDICAL SCIENCES, ANSARI NAGAR, NEW DELHI'), h('div', { class: 'u' }, 'DISCHARGE SUMMARY')),
     h('table', {}, h('colgroup', {}, ['18%', '24%', '9%', '14%', '11%', '24%'].map((w) => h('col', { style: `width:${w}` }))), h('tbody', {},
       h('tr', {}, L('Name'), h('td', {}, val('name')), L('Age'), h('td', {}, val('age')), L('Sex'), h('td', {}, val('sex'))),
       icu ? h('tr', {}, L("Father's name"), h('td', {}, val('father')), L('DOB'), h('td', {}, val('dob')), L('Wt at adm'), h('td', {}, val('adm_wt')))
@@ -3969,4 +3970,60 @@ async function investigationsPopup(a) {
       content);
   };
   list();
+}
+
+// Ward (6A/6B) discharge summary, laid out like the department's ward summary (Nidhi's PUJO example, 2026-10-31):
+// Hindi and English heading; Name/Age/Sex, Father's name/DOA/CR No., Address/DOO/UHID, DOD/Telephone; Diagnosis, History & Examination,
+// Surgery (procedure with the scrub team's initials), Operative findings, Post op course, Advice (dashed list), Admission SR, Consultant;
+// date and signature; then the blood results as a grid (dates across) and the other investigations as rows.
+const DS_SHORT = { 'TLC (WBC)': 'TLC', Platelets: 'Plt', Hematocrit: 'Hct', 'Total protein': 'TP', 'Total cholesterol': 'Cholesterol' };
+function dsumLabGrid(rows) {
+  const cols = rows.map(([t, d, r]) => {
+    const vals = {};
+    for (const part of r.split(/,\s*/)) { const m = part.match(/^(.*\S)\s+(\S+)$/); if (m) vals[m[1]] = m[2]; }
+    return { d: /\(Pvt\)/.test(t) ? `${d} (Pvt)` : d, vals };
+  });
+  const names = [...new Set(cols.flatMap((c) => Object.keys(c.vals)))];
+  const pair = (a, b, label) => { if (names.includes(a) && names.includes(b)) { names.splice(names.indexOf(a), 1, label); names.splice(names.indexOf(b), 1); cols.forEach((c) => { c.vals[label] = c.vals[a] || c.vals[b] ? [c.vals[a] || '-', c.vals[b] || '-'].join('/') : ''; }); } };
+  pair('Sodium', 'Potassium', 'Na/K'); pair('Urea', 'Creatinine', 'BU/Se Cr');
+  const w = Math.max(10, Math.floor(70 / Math.max(1, cols.length)));
+  return h('table', { class: 'dslab' }, h('colgroup', {}, h('col', { style: 'width:30%' }), cols.map(() => h('col', { style: `width:${w}%` }))),
+    h('tbody', {}, h('tr', {}, h('th', {}, 'DATE'), cols.map((c) => h('th', {}, c.d))),
+      names.map((n) => h('tr', {}, h('th', {}, DS_SHORT[n] || n), cols.map((c) => h('td', {}, c.vals[n] || ''))))));
+}
+function printDischargeWard(v, signed) {
+  const val = (k) => v[k] || '';
+  const L = (t) => h('th', {}, t);
+  const advice = listOf(val('advice'));
+  const inv = listOf(val('inv')).map((l) => l.split(' | '));
+  const labs = inv.filter(([t]) => /^Blood \/ Serum/.test(t || '')), other = inv.filter(([t]) => !/^Blood \/ Serum/.test(t || ''));
+  const wide = (label, node, cls) => h('tr', {}, L(label), h('td', { colspan: 5, class: cls || '' }, node));
+  const sheet = h('div', { id: 'sheet-root', class: 'dsum' },
+    h('div', { class: 'dshead' }, h('div', { class: 'hi' }, 'अखिल भारतीय आयुर्विज्ञान संस्थान, नई दिल्ली - 110029'), h('div', {}, 'DEPARTMENT OF PEDIATRIC SURGERY'),
+      h('div', {}, 'ALL INDIA INSTITUTE OF MEDICAL SCIENCES'), h('div', {}, 'NEW DELHI-110029'), h('div', { class: 'u' }, 'DISCHARGE SUMMARY')),
+    h('table', {}, h('colgroup', {}, ['19%', '27%', '9%', '14%', '15%', '16%'].map((w) => h('col', { style: `width:${w}` }))), h('tbody', {},
+      h('tr', {}, L('NAME'), h('td', {}, val('name')), L('AGE'), h('td', {}, val('age')), L('SEX'), h('td', {}, val('sex'))),
+      h('tr', {}, L("FATHER'S NAME"), h('td', {}, val('father')), L('DOA'), h('td', {}, val('doa')), L('CR No.'), h('td', {}, val('cr_no'))),
+      h('tr', {}, L('ADDRESS'), h('td', { rowspan: 2 }, val('address')), L('DOO'), h('td', {}, val('doo')), L('UHID No.'), h('td', {}, val('uhid'))),
+      h('tr', {}, h('th', {}, ''), L('DOD'), h('td', {}, val('dod')), L('TELEPHONE'), h('td', {}, val('phone'))),
+      wide('DIAGNOSIS:', val('diagnosis'), 'b'),
+      wide('HISTORY & EXAMINATION:', val('history')),
+      wide('SURGERY', val('procedure')),
+      wide('OPERATIVE FINDINGS', listOf(val('findings')).length > 1 ? h('ul', { class: 'dash' }, listOf(val('findings')).map((x) => h('li', {}, x.replace(/^[-•*]\s*/, '')))) : val('findings')),
+      wide('POST OP COURSE', val('course')),
+      wide('ADVICE ON DISCHARGE:', advice.length ? h('ul', { class: 'dash' }, advice.map((x) => h('li', {}, x.replace(/^(\d+[.)]|[-•*])\s*/, '')))) : ''),
+      wide('ADMISSION SR', val('adm_sr')),
+      wide('CONSULTANT', val('consultant')))),
+    h('div', { class: 'dsfoot' }, h('div', {}, h('b', {}, 'DATE: '), val('dod')), signBlock(signed)),
+    inv.length ? [h('div', { class: 'dsinvh' }, 'INVESTIGATIONS'),
+      labs.length ? dsumLabGrid(labs) : '',
+      other.length ? h('table', { class: 'dsinv' }, h('colgroup', {}, ['30%', '18%', '52%'].map((w) => h('col', { style: `width:${w}` }))),
+        h('tbody', {}, h('tr', {}, L('INVESTIGATION'), L('DATE/NO'), L('REPORT')), other.map(([t, d, r]) => h('tr', {}, h('td', {}, t || ''), h('td', {}, d || ''), h('td', {}, r || ''))))) : ''] : '');
+  document.getElementById('sheet-root')?.remove();
+  document.body.append(sheet);
+  document.body.classList.add('print-sheet');
+  const st = h('style', {}, '@page { size: A4 portrait; margin: 18mm 18mm; }');
+  document.head.append(st);
+  window.print();
+  st.remove(); document.body.classList.remove('print-sheet'); sheet.remove();
 }

@@ -939,3 +939,12 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .ixtab small { font-weight: 600; opacity: .8; }
 .ixaddbtn { margin: 0 0 .35rem auto; }
 .labgrid .pvt { color: #b45309; font-weight: 700; }
+/* v115: discharge summary heading in Hindi too; ward version's dashed lists and blood grid. */
+@media print, screen {
+  #sheet-root.dsum .dshead .hi { font-family: 'Noto Sans Devanagari', 'Nirmala UI', Mangal, sans-serif; }
+  #sheet-root.dsum ul.dash { list-style: none; margin: 0; padding-left: 0; white-space: normal; }
+  #sheet-root.dsum ul.dash li::before { content: '- '; }
+  #sheet-root.dsum ul.dash li { padding-left: 12px; text-indent: -12px; }
+  #sheet-root.dsum table.dslab { margin-bottom: 10px; }
+  #sheet-root.dsum table.dslab td { text-align: center; }
+}
