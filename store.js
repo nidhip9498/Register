@@ -656,7 +656,10 @@ const Store = (() => {
     for (const e of all('otentry')) {
       if (e.cancelled || e.case_cancelled || !e.admission_id || !(e.scrub || []).length) continue;
       const l = get(e.list_id);
-      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || e.surgery || '', surgery: e.surgery || '', kind: l.kind || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id });
+      // scrub_by: who saved the scrub team, with their role (the discharge summary's Managing SR when no SR is in the team).
+      const by = e.updated_by ? get(e.updated_by) : null;
+      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || e.surgery || '', surgery: e.surgery || '', kind: l.kind || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id,
+        scrub_by: by ? by.name : '', scrub_by_role: by ? by.role : '' });
     }
     for (const k in out) out[k].sort((x, y) => (x.date < y.date ? -1 : 1));
     return out;
@@ -887,7 +890,8 @@ const Store = (() => {
       .map((r) => ({ date: r.date, vals: r.vals, remarks: r.remarks, filled_at: r.filled_at, filled_by: userName(r.filled_by) }));
     const notes = all('note').filter((n) => n.admission_id === a.id).map((n) => ({ date: n.date, note: n.note }));
     const moves = all('move').filter((m) => m.admission_id === a.id).sort((x, y) => (x.move_date < y.move_date ? -1 : x.move_date > y.move_date ? 1 : x.at - y.at));
-    return { ...a, rounds, notes, moves, ot: otByAdmission()[a.id] || [], otprocs: otProcs()[a.id] || [], planned_surgery: plannedByAdmission()[a.id] || '' };
+    // admitted_by: who admitted the patient (the discharge summary's Admission SR).
+    return { ...a, rounds, notes, moves, ot: otByAdmission()[a.id] || [], otprocs: otProcs()[a.id] || [], planned_surgery: plannedByAdmission()[a.id] || '', admitted_by: userName(a.created_by) };
   });
 
   route('GET', '/api/patients', ANY, ({ query }) => {

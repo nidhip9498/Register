@@ -3391,6 +3391,21 @@ function dsumProcedure(a, notes) {
   if (notes.length) return notes.map((n) => [n.f.op_executed || n.f.op_proposed, n.f.op_date && `(${dmy(n.f.op_date)})`].filter(Boolean).join(' ')).filter(Boolean).join('\n');
   return procText(a);
 }
+const drName = (n) => (!n ? '' : /^dr\.?\s/i.test(n) ? n : 'Dr ' + n);
+// Managing SR: the senior resident in the latest scrub team; else whoever saved that team, if an SR.
+function managingSr(a) {
+  const ops = a.otprocs || [], people = (S.meta && S.meta.people) || [];
+  for (const op of [...ops].reverse()) {
+    const sr = (op.scrub || []).map((i) => people.find((q) => q.initials === i)).find((q) => q && ['sr', 'admin'].includes(q.role));
+    if (sr) return drName(sr.name);
+    if (op.scrub_by && ['sr', 'admin'].includes(op.scrub_by_role)) return drName(op.scrub_by);
+  }
+  return '';
+}
+// Advice on discharge: the usual lines, filled in for every summary and edited per patient (Nidhi, 2026-10-31).
+const ADVICE_TEMPLATE = ['Laminate discharge summary', 'Local hygiene, daily bath as advised', 'Full ad lib feeds',
+  'Syp PCM (250/5) __ ml PO TDS for 3 days, then SOS', 'Review in Peds Casualty in case of emergency i.e. fever, vomiting, abdominal distension, wound discharge, bleeding, etc.',
+  'Review in Paed Surgery OPD, MCH Block on __ at 9 am with prior appointment'].join('\n');
 function dsumPrefill(a, otnotes) {
   const c = a.clinical || {};
   const notes = [...otnotes].sort((x, y) => ((x.f.op_date || '') < (y.f.op_date || '') ? -1 : 1));
@@ -3404,7 +3419,7 @@ function dsumPrefill(a, otnotes) {
     diagnosis: (last && last.f.post_dx) || a.diagnosis || '', history: dsumHistory(a, c),
     procedure: dsumProcedure(a, notes),
     findings: [...new Set([...notes.map((n) => n.f.findings), a.ot_findings].map((x) => (x || '').trim()).filter(Boolean))].join('\n\n'),
-    course: '', advice: '', adm_sr: '', managing_sr: '', consultant: rosterName(a.unit || '', {}), followup: '', inv: '',
+    course: '', advice: ADVICE_TEMPLATE, adm_sr: drName(a.admitted_by), managing_sr: managingSr(a), consultant: rosterName(a.unit || '', {}), followup: '', inv: '',
   };
 }
 async function dischargeSummaryPopup(a) {
@@ -3421,6 +3436,11 @@ async function dischargeSummaryPopup(a) {
   const icu = isIcu(a.bed_on_date || a.bed), courseLabel = icu ? 'ICU Course' : 'Post op course';
   const draw = (start, signed, marked = new Set()) => {
     const v = { ...start }, ro = !canEdit(), K = formKit(v, ro);
+    // Signed by the SR handing out the print: their name and designation, editable.
+    const me = mySignature();
+    if (!v.sign_name) v.sign_name = drName((signed && signed.name) || me.name);
+    if (!v.sign_desig) v.sign_desig = (signed && signed.designation) || me.designation;
+    const sig = () => ({ name: v.sign_name, designation: v.sign_desig });
     // 📷 Face sheet: name, father's name, CR No., UHID, date of birth and age; boxes it fills turn orange until checked.
     const faceSheet = async () => {
       syncInv();
@@ -3448,18 +3468,18 @@ async function dischargeSummaryPopup(a) {
     drawInv();
     const save = async (andPrint) => {
       syncInv();
-      try { await api('PUT', '/api/dsum/' + encodeURIComponent(a.id), { f: v }); toast('Discharge summary saved'); if (andPrint) printDischarge(v, mySignature(), courseLabel, icu); } catch (e) { toast(e.message, true); }
+      try { await api('PUT', '/api/dsum/' + encodeURIComponent(a.id), { f: v }); toast('Discharge summary saved'); if (andPrint) printDischarge(v, sig(), courseLabel, icu); } catch (e) { toast(e.message, true); }
     };
     body.replaceChildren(
       h('div', { class: 'btns' },
         ro ? '' : h('button', { type: 'button', class: 'ghost small', title: 'Fill again from Clinical Details and OT notes (keeps the course, advice and names typed here)', onclick: () => {
           if (!confirm('Fill the details again from Clinical Details and the OT notes? The course, advice, SR names and follow up you typed stay.')) return;
-          const keep = ['course', 'advice', 'adm_sr', 'managing_sr', 'followup', 'inv', 'father'];
+          const keep = ['course', 'advice', 'adm_sr', 'managing_sr', 'followup', 'inv', 'father', 'sign_name', 'sign_desig'];
           draw({ ...dsumPrefill(a, otnotes), ...Object.fromEntries(keep.filter((k) => v[k]).map((k) => [k, v[k]])) }, signed);
         } }, 'Fill again from records'),
         h('span', { class: 'grow' }),
         ro ? '' : h('button', { type: 'button', class: 'ghost small', onclick: faceSheet }, '📷 Read face sheet'),
-        h('button', { type: 'button', class: 'ghost small', onclick: () => { syncInv(); printDischarge(v, signed || mySignature(), courseLabel, icu); } }, 'Print'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => { syncInv(); printDischarge(v, sig(), courseLabel, icu); } }, 'Print'),
         ro ? '' : h('button', { type: 'button', class: 'primary small', onclick: () => save(false) }, 'Save')),
       saved && saved.f ? h('p', { class: 'small muted' }, `Last saved by ${saved.by_name}`) : h('p', { class: 'small muted' }, 'Filled in from Clinical Details and the OT notes. Check and edit, then Save.'),
       h('section', { class: 'otnsec' }, sectionHead('Patient'),
@@ -3469,9 +3489,14 @@ async function dischargeSummaryPopup(a) {
       h('section', { class: 'otnsec' }, sectionHead('Summary'),
         h('div', { class: 'formgrid' }, K.area('diagnosis', 'Diagnosis', 2), K.area('history', 'History & Examination', 12), K.area('procedure', 'Procedure', 2),
           K.area('findings', icu ? 'Intra op findings' : 'Operative findings', 5), K.area('course', courseLabel, 12, { placeholder: 'To be written by the SR' }),
-          K.area('advice', `Advice on discharge (one per line; printed as a ${icu ? 'numbered' : 'dashed'} list)`, 8))),
+          K.area('advice', `Advice on discharge (one per line; printed as a ${icu ? 'numbered' : 'dashed'} list)`, 8),
+          ro ? '' : h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: () => {
+            if ((v.advice || '').trim() && !confirm('Replace the advice with the template?')) return;
+            v.advice = ADVICE_TEMPLATE; draw(v, signed, marked);
+          } }, 'Use advice template')))),
       h('section', { class: 'otnsec' }, sectionHead('Team and follow up'),
-        h('div', { class: 'formgrid' }, K.text('adm_sr', 'Admission SR'), icu ? K.text('managing_sr', 'Managing SR') : '', K.text('consultant', 'Consultant'), icu ? K.area('followup', 'Follow up visit', 2) : '')),
+        h('div', { class: 'formgrid' }, K.text('adm_sr', 'Admission SR'), K.text('managing_sr', 'Managing SR'), K.text('consultant', 'Consultant'), icu ? K.area('followup', 'Follow up visit', 2) : '',
+          K.text('sign_name', 'Signed by (name)'), K.text('sign_desig', 'Designation'))),
       h('section', { class: 'otnsec' }, sectionHead('Investigations'), invBox),
       ro ? '' : h('div', { class: 'btns end' }, h('button', { type: 'button', class: 'ghost', onclick: () => save(true) }, 'Save and print'), h('button', { type: 'button', class: 'primary', onclick: () => save(false) }, 'Save')));
     const labelOf = { name: 'Name', father: "Father's name", cr_no: 'CR No.', uhid: 'UHID No.', dob: 'DOB', age: 'Age' };
@@ -4013,6 +4038,7 @@ function printDischargeWard(v, signed) {
       wide('POST OP COURSE', val('course')),
       wide('ADVICE ON DISCHARGE:', advice.length ? h('ul', { class: 'dash' }, advice.map((x) => h('li', {}, x.replace(/^(\d+[.)]|[-•*])\s*/, '')))) : ''),
       wide('ADMISSION SR', val('adm_sr')),
+      wide('MANAGING SR', val('managing_sr')),
       wide('CONSULTANT', val('consultant')))),
     h('div', { class: 'dsfoot' }, h('div', {}, h('b', {}, 'DATE: '), val('dod')), signBlock(signed)),
     inv.length ? [h('div', { class: 'dsinvh' }, 'INVESTIGATIONS'),

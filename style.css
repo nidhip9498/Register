@@ -948,3 +948,5 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
   #sheet-root.dsum table.dslab { margin-bottom: 10px; }
   #sheet-root.dsum table.dslab td { text-align: center; }
 }
+/* v116: room to sign above the name on discharge summaries */
+#sheet-root.dsum .opsign > div { margin-top: 22mm; }
