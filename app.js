@@ -1077,10 +1077,9 @@ function patientCard(a, date, refresh) {
     h('div', { class: 'rhead' },
       h('div', { class: 'rmain' },
         h('div', { class: 'rtitle' }, h('span', { class: 'bedno' }, a.bed_on_date), h('a', { href: '#patient/' + id, class: 'rname' }, a.name),
-          // Ward Rounds: Investigations and the Discharge Summary sit beside the name (Nidhi, 2026-10-31); ICU has them in its tiles.
+          // Ward Rounds: Investigations beside the name (Nidhi, 2026-10-31; she took the Discharge Summary icon off again); ICU has it in its tiles.
           icu ? '' : h('span', { class: 'namebtns' },
-            h('button', { type: 'button', class: 'icutile slim', onclick: () => investigationsPopup(a) }, 'Investigations'),
-            h('button', { type: 'button', class: 'dsmini', title: 'Discharge Summary', 'aria-label': 'Discharge Summary', onclick: () => dischargeSummaryPopup(a) }, '📄'))),
+            h('button', { type: 'button', class: 'icutile slim', onclick: () => investigationsPopup(a) }, 'Investigations'))),
         h('div', { class: 'muted small' }, [a.ip_no && `UHID ${a.ip_no}`, dayNo(a, date) && `Day ${dayNo(a, date)} of admission`,
           icu && a.birth_weight && `BW ${a.birth_weight} g`, icu && a.gestation && `GA ${a.gestation} wk`, icu && a.current_weight && `Wt ${a.current_weight} g`,
           !icu && a.weight && `Wt ${a.weight} kg`].filter(Boolean).join(' · ')),
@@ -3731,7 +3730,7 @@ function readPhoto(title, hint) {
       input.click();
     };
     layer.append(h('div', { class: 'ocrbox card ocrpick' }, h('h2', {}, title),
-      h('button', { type: 'button', class: 'primary', onclick: () => pick(true) }, '📷 Take photo'),
+      h('button', { type: 'button', class: 'primary takephoto', onclick: () => pick(true) }, h('span', { class: 'big' }, '📷'), 'Take photo'),
       h('button', { type: 'button', class: 'ghost', onclick: () => pick(false) }, '🖼 Choose from gallery'),
       h('button', { type: 'button', class: 'ghost small', onclick: () => { layer.remove(); resolve(null); } }, 'Cancel')));
     document.body.append(layer);

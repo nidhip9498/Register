@@ -1,6 +1,6 @@
 // Keeps the app's own files on the device so it opens with no signal.
 // Patient data is not stored here; it lives in the app's local database.
-const VERSION = 'ward-register-v116';
+const VERSION = 'ward-register-v117';
 // The photo reader (about 7 MB) has its own store that survives app updates; it is fetched only the first time a photo is read.
 const OCR = 'ocr-1';
 const FILES = ['./', 'index.html', 'app.js', 'store.js', 'sync.js', 'style.css', 'icon.svg', 'apple-touch-icon.png', 'manifest.webmanifest'];
