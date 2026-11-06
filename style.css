@@ -954,3 +954,12 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .ocrpick button.takephoto { display: flex; flex-direction: column; align-items: center; gap: .3rem; padding: 1.6rem 1rem; font-size: 1.35rem; font-weight: 800;
   box-shadow: 0 0 0 4px var(--accent-soft), 0 6px 16px rgb(0 0 0 / .18); border-radius: 14px; }
 .ocrpick button.takephoto .big { font-size: 2.6rem; line-height: 1; }
+/* Fever = Yes: Temp and No. of spikes under it */
+.feversub { display: flex; gap: 8px; margin-top: 6px; }
+.feversub[hidden] { display: none; }
+.feversub .field { flex: 1; min-width: 0; }
+.feversub input { width: 100%; }
+.otprocrow .teamedit { margin-left: 6px; padding: 2px 8px; }
+.fields.checks .feverfield { grid-column: span 2; }
+.feverfield .yn { max-width: 140px; }
+.feversub .flabel { white-space: nowrap; }

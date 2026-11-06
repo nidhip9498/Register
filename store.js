@@ -246,6 +246,7 @@ const Store = (() => {
       surgery_date: isDate(body.surgery_date) ? body.surgery_date : null,
       surgery_date2: isDate(body.surgery_date2) ? body.surgery_date2 : null,
       surgery_date3: isDate(body.surgery_date3) ? body.surgery_date3 : null,
+      surgery_manual: !!body.surgery_manual, // surgery dates typed in by hand: the scrub-team repair leaves them
       unit: str(body.unit, 60), admit_date: isDate(body.admit_date) ? body.admit_date : null, // may be left blank
       monitor: Array.isArray(body.monitor) ? body.monitor.map((k) => str(k, 40)).filter(Boolean) : defaultMonitor(body.bed),
       fields_set: !!body.fields_set,
@@ -1331,6 +1332,35 @@ const Store = (() => {
     }
     return n;
   }
+  // POD comes from scrub teams. If a surgery date went missing (a device saved the patient with an older copy, or the
+  // OT entry was linked to the patient later), put back every day this patient had a scrub team, up to three.
+  // A patient whose surgery dates were typed in by hand (surgery_manual) is left as typed.
+  route('POST', '/api/surgerydates/repair', EDITORS, () => {
+    let fixed = 0;
+    const t = today(), keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
+    for (const a0 of all('admission')) {
+      if (a0.discharge_date) continue;
+      linkOtEntries(a0.id);
+      const a = get(a0.id);
+      if (!a || a.surgery_manual) continue;
+      const u = (a.ip_no || '').toLowerCase(), have = keys.map((k) => a[k]).filter(Boolean);
+      const days = new Set();
+      for (const e of all('otentry')) {
+        if (e.cancelled || e.case_cancelled || !(e.scrub || []).length) continue;
+        const l = get(e.list_id);
+        if (!l || !l.date || l.date > t) continue;
+        const mine = e.admission_id === a.id || (!e.admission_id && u && (e.uhid || '').toLowerCase() === u && (!a.admit_date || l.date >= a.admit_date));
+        if (mine) days.add(l.date);
+      }
+      const missing = [...days].filter((d) => !have.includes(d));
+      if (!missing.length || have.length >= 3) continue;
+      const sorted = [...new Set([...have, ...missing])].sort().slice(-3);
+      put(a.id, 'admission', { ...strip(a), ...Object.fromEntries(keys.map((k, i) => [k, sorted[i] || null])), updated_at: stamp() });
+      audit('surgery date from scrub team', `${a.name} ${missing.join(', ')}`);
+      fixed++;
+    }
+    return { fixed };
+  });
   route('POST', '/api/otentries/dedupe', EDITORS, () => {
     let n = 0;
     for (const e of all('otentry')) if (!e.cancelled && !e.case_cancelled && (e.scrub || []).length && get(e.id)) n += dropDuplicateEntries(get(e.id));

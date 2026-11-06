@@ -74,7 +74,12 @@ function ageText(a, date) {
   return a.age || '';
 }
 const ageSex = (a, date) => [ageText(a, date), a.sex].filter(Boolean).join(' / ');
-const fieldLabel = (k) => { const p = paramMap()[k]; return p ? p.label : k.replace(/^x:/, ''); };
+// Fever = Yes opens two more boxes: highest temperature and the number of spikes (Nidhi, 2026-11-06).
+const FEVER_SUB = [['temp', 'Temp', '°F'], ['spikes', 'No. of spikes', '']];
+const isFever = (p) => p && p.type === 'yesno' && /fever/i.test(p.label || '');
+// "w_fever_temp" -> the fever field it belongs to and which sub-box it is.
+const feverSubOf = (k) => { const m = /^(.*)_(temp|spikes)$/.exec(k || ''); if (!m) return null; const p = paramMap()[m[1]]; const sub = FEVER_SUB.find(([s]) => s === m[2]); return isFever(p) && sub ? { parent: m[1], label: sub[1], unit: sub[2] } : null; };
+const fieldLabel = (k) => { const p = paramMap()[k]; if (p) return p.label; const f = feverSubOf(k); return f ? f.label : k.replace(/^x:/, ''); };
 
 // The round fields shown for a patient: the Ward SR's choice, or else the standard ward / ICU list.
 function monitorFor(a) {
@@ -111,6 +116,8 @@ function extrasOf(a) {
     .map((e) => ({ ...e, key: 'x:' + e.label }));
 }
 const unitOf = (k, a) => {
+  const fs = feverSubOf(k);
+  if (fs) return fs.unit;
   const p = paramMap()[k];
   if (p) return p.type === 'number' ? p.unit : '';
   const e = a && extrasOf(a).find((x) => x.key === k);
@@ -119,7 +126,9 @@ const unitOf = (k, a) => {
 
 // "Fever: No · Urine output: 480 ml · Right stent output: 30 ml"
 function summariseVals(vals, monitorKeys, a) {
-  const keys = [...new Set([...(monitorKeys || []), ...(a ? extrasOf(a).map((e) => e.key) : []), ...Object.keys(vals || {})])];
+  const base = [...new Set([...(monitorKeys || []), ...(a ? extrasOf(a).map((e) => e.key) : []), ...Object.keys(vals || {})])];
+  const subs = base.filter((k) => feverSubOf(k));
+  const keys = base.filter((k) => !subs.includes(k)).flatMap((k) => [k, ...subs.filter((x) => feverSubOf(x).parent === k)]).concat(subs.filter((x) => !base.includes(feverSubOf(x).parent)));
   return keys.filter((k) => vals && vals[k]).map((k) => {
     const unit = unitOf(k, a);
     return `${fieldLabel(k)}: ${vals[k]}${unit ? ' ' + unit : ''}`;
@@ -228,6 +237,7 @@ async function remoteUpdate() {
   if (!S.user) { if (S.setupNeeded) await refreshState(); return; }
   if (busy) { updatesWaiting = true; drawSyncChip(Sync.status()); return; }
   updatesWaiting = false;
+  podCheckedAt = 0;
   S.meta = await api('GET', '/api/meta');
   render();
 }
@@ -273,7 +283,15 @@ function render() {
   const main = h('main', {});
   app.append(main);
   if (keep) { main.style.minHeight = height + 'px'; window.scrollTo(0, keep); }
-  Promise.resolve(view(route, arg, main)).catch(() => {}).then(() => { if (keep) { window.scrollTo(0, keep); main.style.minHeight = ''; } });
+  Promise.resolve(repairPod()).then(() => view(route, arg, main)).catch(() => {}).then(() => { if (keep) { window.scrollTo(0, keep); main.style.minHeight = ''; } });
+}
+// Put back any surgery date that went missing although the patient has a scrub team (POD then shows). At most every 10 s,
+// and again whenever changes arrive from other devices.
+let podCheckedAt = 0;
+async function repairPod() {
+  if (!canEdit() || Date.now() - podCheckedAt < 10e3) return;
+  podCheckedAt = Date.now();
+  try { await api('POST', '/api/surgerydates/repair'); } catch (e) { /* older data or offline: nothing to do */ }
 }
 function view(route, arg, main) {
   if (route === 'patients') return statusView(main);
@@ -977,15 +995,33 @@ function procedureBox(a, surgeries, onDates) {
     empty: a.planned_surgery ? `Planned on OT list: ${a.planned_surgery}` : 'Not operated yet',
     extra: () => [surgeries.length ? h('small', {}, ' on ' + surgeries.map(fmtDate).join(', ')) : null,
       (a.otprocs || []).map((x) => h('div', { class: 'small muted otprocrow' }, `${otName(x.ot)} · ${fmtDate(x.date)}${x.done ? `: ${x.done}` : ''} · ${x.scrub.join('/')} `,
+        canEdit() && x.list_id ? h('button', { type: 'button', class: 'ghost small teamedit', title: 'Edit the scrub team', onclick: () => editScrubFromRounds(x, onDates) }, 'Edit team') : null,
         canEdit() && x.list_id ? pencilLink(`#otlist/${x.list_id}/${x.entry_id}`, 'Edit on the OT list') : null))],
-    // ICU babies admitted before the app often had surgery already: their surgery dates can be typed in here.
-    editExtra: isIcu(a.bed_on_date || a.bed) ? () => {
-      const ins = ['surgery_date', 'surgery_date2', 'surgery_date3'].map((k) => h('input', { type: 'date', value: a[k] || '', max: S.meta.today }));
+    // Surgery dates can be corrected here, for ward and ICU, on any day after the operation (Nidhi, 2026-11-06).
+    // ICU babies admitted before the app often had surgery already: their dates are typed in here too.
+    editExtra: () => {
+      const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
+      const ins = keys.map((k) => h('input', { type: 'date', value: a[k] || '', max: S.meta.today }));
       return { nodes: h('div', { class: 'sxdates' }, h('small', { class: 'muted block' }, 'Date of surgery (POD counts from it). Add a 2nd or 3rd if operated again.'), h('div', { class: 'sxdaterow' }, ins)),
-        values: () => { const d = [...new Set(ins.map((i) => i.value).filter(Boolean))].sort(); return { surgery_date: d[0] || null, surgery_date2: d[1] || null, surgery_date3: d[2] || null }; } };
-    } : null,
+        values: () => {
+          const d = [...new Set(ins.map((i) => i.value).filter(Boolean))].sort();
+          const out = { surgery_date: d[0] || null, surgery_date2: d[1] || null, surgery_date3: d[2] || null };
+          // Typed by hand: keep them as typed (the scrub-team check won't add dates back).
+          if (keys.some((k) => (out[k] || null) !== (a[k] || null))) out.surgery_manual = true;
+          return out;
+        } };
+    },
     save: (v, dates) => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { procedure_done: v, ...(dates || {}) }).then(() => { a.procedure_done = v; Object.assign(a, dates || {}); if (dates && onDates) onDates(); }),
   });
+}
+// Rounds: change the scrub team of an earlier operation without going to the OT list.
+async function editScrubFromRounds(x, done) {
+  try {
+    const l = await api('GET', '/api/otlists/' + encodeURIComponent(x.list_id));
+    const e = (l.entries || []).find((y) => y.id === x.entry_id);
+    if (!e) return toast('That OT list entry was not found', true);
+    scrubPopup(e, done || render, l.date);
+  } catch (err) { toast(err.message, true); }
 }
 // OT Findings: what was found at operation, below OT Overs.
 function findingsBox(a) {
@@ -1052,16 +1088,26 @@ function patientCard(a, date, refresh) {
   };
   const markDirty = () => { S.dirty.add(id); setStatus(); updateCalc(); };
 
-  const box = (p) => h(p.type === 'yesno' ? 'div' : 'label', { class: 'field' },
+  // Fever: Yes shows Temp and No. of spikes under it; No or blank hides them (and they are not saved).
+  const feverBoxes = (p) => {
+    const wrap = h('div', { class: 'feversub' }, FEVER_SUB.map(([s, label, unit]) => h('label', { class: 'field' },
+      h('span', { class: 'flabel' }, label, unit ? h('small', {}, ` (${unit})`) : null),
+      h('input', { 'data-key': `${p.key}_${s}`, inputmode: 'decimal', value: vals[`${p.key}_${s}`] || '', placeholder: unit || '', oninput: markDirty }))));
+    wrap.hidden = vals[p.key] !== 'Yes';
+    return wrap;
+  };
+  const box = (p) => { const fever = isFever(p), sub = fever ? feverBoxes(p) : null; return h(p.type === 'yesno' ? 'div' : 'label', { class: 'field' + (fever ? ' feverfield' : '') },
     h('span', { class: 'flabel' }, p.label, p.unit ? h('small', {}, ` (${p.unit})`) : null),
-    fieldFor(p, vals[p.key], markDirty),
+    fieldFor(p, vals[p.key], fever ? () => { const v = card.querySelector(`[data-key="${p.key}"]`); sub.hidden = !v || v.value !== 'Yes'; markDirty(); } : markDirty),
+    sub,
     p.key === 'w_uo_kg' ? calc : null,
-    prev[p.key] ? h('small', { class: 'prev' }, `Yesterday: ${prev[p.key]}`) : null);
+    prev[p.key] ? h('small', { class: 'prev' }, `Yesterday: ${prev[p.key]}`) : null); };
   const remarks = h('textarea', { rows: 2, placeholder: 'Other findings / remarks', oninput: markDirty }, (a.round && a.round.remarks) || '');
 
   const save = async () => {
     const out = {};
     card.querySelectorAll('[data-key]').forEach((el) => (out[el.dataset.key] = el.value));
+    for (const k of Object.keys(out)) { const f = feverSubOf(k); if (f && out[f.parent] !== 'Yes') delete out[k]; }
     try {
       await api('PUT', `/api/rounds/${id}/${date}`, { vals: out, remarks: remarks.value });
       S.dirty.delete(id);
@@ -1850,7 +1896,7 @@ function scrubPopup(e, done, listDate) {
       h('label', { class: 'field donefield' }, h('span', { class: 'flabel' }, 'Procedure done'), doneIn),
       scrubPicker(e.scrub, async (team) => {
         // A team saved after the OT day (e.g. two days later) is confirmed first: it sets that day as the surgery date.
-        if (team.length && listDate && listDate < S.meta.today && !confirm(`This OT list was on ${fmtDay(listDate)}. Save the scrub team for that day? ${fmtDate(listDate)} becomes the surgery date (POD 0).`)) return;
+        if (team.length && !(e.scrub || []).length && listDate && listDate < S.meta.today && !confirm(`This OT list was on ${fmtDay(listDate)}. Save the scrub team for that day? ${fmtDate(listDate)} becomes the surgery date (POD 0).`)) return;
         try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team, done: doneIn.value.trim() }); close(); toast((res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved') + (res.removed ? ` · ${res.removed} duplicate posting removed` : '')); done(); } catch (x) { toast(x.message, true); }
       }),
       caseCancelForm(e, () => { close(); done(); }))));
