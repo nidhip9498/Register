@@ -692,9 +692,11 @@ const Store = (() => {
   // Posts in the small hours (before 6 AM) count for the previous day's list. The dates stay editable.
   function otDay() { const now = new Date(); return now.getHours() < 6 ? ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)) : today(); }
   // This patient's (not cancelled) entry on any OT list of that day.
+  // UHIDs compared without spaces, dashes or case ("1090 92279" = "109092279").
+  const sameUhid = (x, y) => { const n = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, ''); return !!n(x) && n(x) === n(y); };
   function otEntryOn(a, day) {
     const lists = new Set(all('otlist').filter((l) => l.date === day).map((l) => l.id));
-    return all('otentry').find((e) => !e.cancelled && !e.case_cancelled && lists.has(e.list_id) && (e.admission_id === a.id || (a.ip_no && (e.uhid || '').toLowerCase() === a.ip_no.toLowerCase())));
+    return all('otentry').find((e) => !e.cancelled && !e.case_cancelled && lists.has(e.list_id) && (e.admission_id === a.id || sameUhid(e.uhid, a.ip_no)));
   }
   // any: count the day even if the patient was not on an OT list (OT findings posted from Rounds).
   function surgeryFromOtList(a, day = otDay(), any = false) {
@@ -1073,10 +1075,17 @@ const Store = (() => {
   const isDayCare = (bed) => /^mch\s*2\s*\/\s*par$/i.test((bed || '').trim());
   function linkOtEntries(admId) {
     const a = get(admId);
-    if (!a || a.discharge_date || !a.ip_no) return;
-    const from = a.admit_date || today(), u = a.ip_no.toLowerCase();
+    if (!a || a.discharge_date) return;
+    // No admission date (imported patients): entries from the last 60 days count.
+    const from = a.admit_date || shiftDate(today(), -60);
+    const first = (n) => String(n || '').toLowerCase().replace(/^(baby of|b\/o|mr\.?|miss|master)\s+/, '').trim().split(/\s+/)[0] || '';
     for (const e of all('otentry')) {
-      if (e.cancelled || e.admission_id || (e.uhid || '').toLowerCase() !== u) continue;
+      // Not linked yet, or linked to an admission that is gone or already discharged (a duplicate that was merged, an old stay).
+      const other = e.admission_id && e.admission_id !== a.id ? get(e.admission_id) : null;
+      const free = !e.admission_id || (e.admission_id !== a.id && (!other || other.discharge_date));
+      // Same UHID; or, with no UHID typed on the OT list, the same bed and first name.
+      const match = a.ip_no && e.uhid ? sameUhid(e.uhid, a.ip_no) : (!e.uhid && e.bed && (e.bed || '').trim().toLowerCase() === (a.bed || '').toLowerCase() && first(e.name) && first(e.name) === first(a.name));
+      if (e.cancelled || !free || !match) continue;
       const l = get(e.list_id);
       if (!l || l.date < from) continue;
       put(e.id, 'otentry', { ...strip(e), admission_id: a.id, bed: a.bed, ...(isDayCare(e.bed) ? { from_daycare: true } : {}) });
@@ -1349,7 +1358,7 @@ const Store = (() => {
         if (e.cancelled || e.case_cancelled || !(e.scrub || []).length) continue;
         const l = get(e.list_id);
         if (!l || !l.date || l.date > t) continue;
-        const mine = e.admission_id === a.id || (!e.admission_id && u && (e.uhid || '').toLowerCase() === u && (!a.admit_date || l.date >= a.admit_date));
+        const mine = e.admission_id === a.id || (!e.admission_id && u && sameUhid(e.uhid, a.ip_no) && (!a.admit_date || l.date >= a.admit_date));
         if (mine) days.add(l.date);
       }
       const missing = [...days].filter((d) => !have.includes(d));
@@ -1378,7 +1387,9 @@ const Store = (() => {
     if (e.case_cancelled && scrub.length) throw new HttpError(400, 'This case was marked cancelled. Undo that first.');
     // Only a scrub team counts as operated: the procedure done then goes to the register, Rounds and the Logbook.
     if (!e.cancelled && l && l.date <= today()) {
-      const a = (e.admission_id && get(e.admission_id)) || (e.uhid && all('admission').find((x) => !x.discharge_date && (x.ip_no || '').toLowerCase() === e.uhid.toLowerCase()));
+      const linked = e.admission_id && get(e.admission_id);
+      const a = (linked && !linked.discharge_date ? linked : null) || (e.uhid && all('admission').find((x) => !x.discharge_date && sameUhid(x.ip_no, e.uhid))) || linked;
+      if (a && !a.discharge_date && e.admission_id !== a.id) put(e.id, 'otentry', { ...strip(get(e.id)), admission_id: a.id, bed: a.bed });
       if (a && scrub.length) {
         const ops = scrubbedEntries(a.id), latest = !ops.length || ops[ops.length - 1].id === e.id;
         // The pop-up and Rounds show the same Procedure done: one operation replaces it, a later one is added after the earlier.
