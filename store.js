@@ -246,6 +246,7 @@ const Store = (() => {
       surgery_date: isDate(body.surgery_date) ? body.surgery_date : null,
       surgery_date2: isDate(body.surgery_date2) ? body.surgery_date2 : null,
       surgery_date3: isDate(body.surgery_date3) ? body.surgery_date3 : null,
+      cr_no: str(body.cr_no || (body.clinical && body.clinical.cr_no) || '', 30), // CR No. from the face sheet (also kept in ICU Clinical Details)
       surgery_manual: !!body.surgery_manual, // surgery dates typed in by hand: the scrub-team repair leaves them
       unit: str(body.unit, 60), admit_date: isDate(body.admit_date) ? body.admit_date : null, // may be left blank
       monitor: Array.isArray(body.monitor) ? body.monitor.map((k) => str(k, 40)).filter(Boolean) : defaultMonitor(body.bed),
@@ -1059,7 +1060,7 @@ const Store = (() => {
     for (const a of all('admission')) {
       if ((a.ip_no || '').toLowerCase() !== u) continue;
       const on = a.discharge_date || today();
-      found.push({ at: on, adm: a, src: { uhid: a.ip_no, name: a.name, age: a.age, sex: a.sex, diagnosis: a.diagnosis, surgery: a.procedure_done, consultant: a.unit, age_on: a.admit_date || (a.updated_at || '').slice(0, 10) || on, dob: a.dob } });
+      found.push({ at: on, adm: a, src: { uhid: a.ip_no, name: a.name, age: a.age, sex: a.sex, diagnosis: a.diagnosis, surgery: a.procedure_done, consultant: a.unit, age_on: a.admit_date || (a.updated_at || '').slice(0, 10) || on, dob: a.dob, cr_no: a.cr_no || (a.clinical && a.clinical.cr_no) || '' } });
     }
     if (!found.length) return null;
     found.sort((x, y) => (x.at < y.at ? 1 : -1));
@@ -1069,6 +1070,10 @@ const Store = (() => {
       uhid: s.uhid, name: s.name || '', sex: s.sex || '', diagnosis: s.diagnosis || '', surgery: s.surgery || '', consultant: s.consultant || '',
       age: (s.dob && ageFromDob(s.dob, date)) || ageOn(s.age, s.age_on, date),
       bed: current ? current.bed : '', admission_id: current ? current.id : '', blood: s.blood || '', special: s.special || '',
+      dob: (found.map((f) => f.src.dob).find(Boolean)) || '', cr_no: (found.map((f) => f.src.cr_no).find(Boolean)) || '',
+      // Earlier stays of this child (same UHID), oldest first: the admit pop-up shows "Admission no. N".
+      admissions: found.filter((f) => f.adm).map((f) => ({ id: f.adm.id, admit_date: f.adm.admit_date || '', discharge_date: f.adm.discharge_date || '', outcome: f.adm.outcome || '', bed: f.adm.bed }))
+        .sort((x, y) => (x.admit_date < y.admit_date ? -1 : 1)),
     };
   }
   // A child already on a coming OT list who is then admitted (same UHID) gets linked to the admission, so the list shows the bed.
@@ -1528,6 +1533,16 @@ const Store = (() => {
     return out;
   });
 
+  // Logbook outcome: from the admission (Discharged / Death / Transferred / LAMA / Referred), "Admitted" while still in a bed.
+  // Day care (MCH2/PAR) with no admission counts as Discharged; once admitted to a ward, that stay's outcome counts (Nidhi, 2026-11-10).
+  function logOutcome(a, e) {
+    if (a) {
+      if (!a.discharge_date) return getIcuBeds().includes(a.bed) ? 'Admitted in ICU' : 'Admitted in ward';
+      return { Expired: 'Death', 'Transferred to other unit': 'Transferred' }[a.outcome] || a.outcome || 'Discharged';
+    }
+    if (e && isDayCare(e.bed)) return 'Discharged';
+    return '';
+  }
   route('GET', '/api/otlog', ANY, ({ query }) => {
     const who = str(query.who, 60).toLowerCase();
     if (!who) return [];
@@ -1540,14 +1555,16 @@ const Store = (() => {
       const l = i >= 0 && get(e.list_id);
       if (!l) continue;
       const a = e.admission_id && get(e.admission_id);
-      rows.push({ id: e.id, list_id: l.id, admission_id: a ? a.id : '', date: l.date, ot: l.ot, name: e.name, uhid: e.uhid, age: e.age, dob: a && a.dob, sex: e.sex, diagnosis: e.diagnosis, surgery: e.done || e.surgery, role: i + 1, team: e.scrub });
+      rows.push({ id: e.id, list_id: l.id, admission_id: a ? a.id : '', date: l.date, ot: l.ot, name: e.name, uhid: e.uhid, age: e.age, dob: a && a.dob, sex: e.sex, diagnosis: e.diagnosis, surgery: e.done || e.surgery, role: i + 1, team: e.scrub,
+        cr_no: (a && (a.cr_no || (a.clinical && a.clinical.cr_no))) || e.cr_no || '', outcome: logOutcome(a, e) });
     }
     // …and any posted with findings from Rounds earlier.
     for (const o of all('ot')) {
       const i = (o.scrub || []).findIndex((x) => x.toLowerCase() === who);
       const a = i >= 0 && get(o.admission_id);
       if (!a) continue;
-      rows.push({ id: o.id, admission_id: a.id, date: o.day || o.at.slice(0, 10), name: a.name, uhid: a.ip_no, age: a.age, dob: a.dob, sex: a.sex, diagnosis: a.diagnosis, surgery: o.surgery || a.procedure_done, role: i + 1, team: o.scrub });
+      rows.push({ id: o.id, admission_id: a.id, date: o.day || o.at.slice(0, 10), name: a.name, uhid: a.ip_no, age: a.age, dob: a.dob, sex: a.sex, diagnosis: a.diagnosis, surgery: o.surgery || a.procedure_done, role: i + 1, team: o.scrub,
+        cr_no: a.cr_no || (a.clinical && a.clinical.cr_no) || '', outcome: logOutcome(a, null) });
     }
     return rows.sort((x, y) => (x.date < y.date ? 1 : x.date > y.date ? -1 : 0));
   });

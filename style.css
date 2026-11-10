@@ -963,3 +963,14 @@ button.linkish { background: none; border: 0; padding: 0; color: var(--accent); 
 .fields.checks .feverfield { grid-column: span 2; }
 .feverfield .yn { max-width: 140px; }
 .feversub .flabel { white-space: nowrap; }
+/* Admit pop-up: age and admission number in the top right; face sheet button */
+.mhead .agecorner { margin-left: auto; margin-right: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; text-align: right; }
+.agecorner > div { background: var(--accent-soft, rgba(31,111,120,.12)); border-radius: 8px; padding: 4px 10px; display: flex; flex-direction: column; line-height: 1.15; }
+.agecorner > div span { font-size: .72rem; color: var(--muted, #6b7280); }
+.agecorner > div b { font-size: 1rem; }
+.agecorner small { flex-basis: 100%; }
+.facesheetrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+input.ocrfilled { border-color: #d97706; background: rgba(217,119,6,.08); }
+table.otlog td.outcome.bad { color: #b91c1c; font-weight: 600; }
+table.otlog td.outcome.open { color: var(--accent, #1f6f78); }
+table.otlog td:nth-child(5) { white-space: nowrap; }

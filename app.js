@@ -69,8 +69,31 @@ const paramMap = () => Object.fromEntries(S.meta.params.map((p) => [p.key, p]));
 const isIcu = (bed) => !!bed && (S.meta.icuBeds || []).includes(bed);
 
 // ICU babies: age in days from the date of birth, so it moves on by itself every day.
+// Age from the date of birth on that day: "12 days" under a month, else years, months and days ("1y 6m 4d") (Nidhi, 2026-11-10).
+function ageYMD(dob, date) {
+  if (!dob) return '';
+  const d = daysBetween(dob, date || S.meta.today);
+  if (d < 0) return '';
+  if (d < 31) return `${d} day${d === 1 ? '' : 's'}`;
+  const b = new Date(dob + 'T12:00:00'), t = new Date((date || S.meta.today) + 'T12:00:00');
+  let m = (t.getFullYear() - b.getFullYear()) * 12 + t.getMonth() - b.getMonth();
+  if (t.getDate() < b.getDate()) m--;
+  const from = new Date(b); from.setMonth(b.getMonth() + m);
+  const dd = Math.round((t - from) / 864e5), y = Math.floor(m / 12), mm = m % 12;
+  return [y && `${y}y`, mm && `${mm}m`, dd && `${dd}d`].filter(Boolean).join(' ') || '0d';
+}
+// A typed age ("3 y 8 m 12 d", "3 years", "6 months", "1y6m") -> the date of birth it means on that day, so the age keeps counting
+// on later days and the next admission. Returns '' when the age can't be read.
+function dobFromAge(age, onDate) {
+  const t = String(age || '').trim().toLowerCase();
+  const m = t.match(/^(?:(\d+)\s*y(?:rs?|ears?)?\s*,?\s*)?(?:(\d+)\s*m(?:o|on|ons|onths?)?\s*,?\s*)?(?:(\d+)\s*d(?:ays?)?)?$/);
+  if (!t || !m || (!m[1] && !m[2] && !m[3]) || !onDate) return '';
+  const b = new Date(onDate + 'T12:00:00');
+  b.setFullYear(b.getFullYear() - (+m[1] || 0)); b.setMonth(b.getMonth() - (+m[2] || 0)); b.setDate(b.getDate() - (+m[3] || 0));
+  return b.toISOString().slice(0, 10);
+}
 function ageText(a, date) {
-  if (a.dob) { const d = daysBetween(a.dob, date); return d >= 0 ? `${d} day${d === 1 ? '' : 's'}` : ''; }
+  if (a.dob) return ageYMD(a.dob, date);
   return a.age || '';
 }
 const ageSex = (a, date) => [ageText(a, date), a.sex].filter(Boolean).join(' / ');
@@ -1405,13 +1428,44 @@ function admitModal(bed, a, opts = {}) {
 
   // A UHID seen before (earlier admission or an OT list) fills the empty boxes; nothing typed is overwritten.
   const uhidNote = h('small', { class: 'muted' });
+  // Top right of the pop-up: age today from the date of birth (years, months, days) and which admission this is for the child.
+  let prior = [];
+  const corner = h('div', { class: 'agecorner' });
+  const drawCorner = (form) => {
+    const f = (n) => (form.elements.namedItem(n) ? form.elements.namedItem(n).value.trim() : '');
+    const on = f('admit_date') || S.date;
+    const dob = f('dob') || dobFromAge(f('age'), on);
+    const age = dob ? ageYMD(dob, on) : f('age');
+    const earlier = prior.filter((x) => !editing || (x.admit_date || '') < (a.admit_date || '9'));
+    const last = earlier[earlier.length - 1];
+    corner.replaceChildren(
+      h('div', {}, h('span', {}, 'Age'), h('b', {}, age || '—')),
+      h('div', {}, h('span', {}, 'Admission'), h('b', {}, `No. ${earlier.length + 1}`)),
+      last ? h('small', { class: 'muted' }, `Last: ${last.admit_date ? fmtDate(last.admit_date) : '?'}${last.discharge_date ? ` to ${fmtDate(last.discharge_date)}` : ' (still admitted)'}`) : null);
+  };
+  // 📷 Face sheet: fills name, UHID, CR No., date of birth (from the printed age) and sex; asks before replacing anything typed.
+  const faceSheet = async (form) => {
+    const text = await readPhoto('Face sheet', 'Drag across the top box of the face sheet (CR No. down to the UHID).');
+    if (text == null) return;
+    const got = parseFaceSheet(text);
+    const fields = [['name', 'Name'], ['ip_no', 'UHID'], ['cr_no', 'CR No.'], ['dob', 'Date of birth'], ['sex', 'Sex']].filter(([k]) => got[k] && form.elements.namedItem(k));
+    if (!fields.length) return toast('Could not read the face sheet. Try a closer, straighter photo of the top box.', true);
+    const clash = fields.filter(([k]) => { const v = form.elements.namedItem(k).value.trim(); return v && v !== got[k]; });
+    const replace = !clash.length || confirm(`Replace what is already typed in ${clash.map(([, l]) => l).join(', ')} with what was read?`);
+    for (const [k] of fields) { const el = form.elements.namedItem(k); if (!el.value.trim() || replace) { el.value = got[k]; el.classList.add('ocrfilled'); } }
+    if (got.dob && form.elements.namedItem('age')) form.elements.namedItem('age').value = ageYMD(got.dob, form.admit_date.value || S.date);
+    toast(`Read: ${fields.map(([, l]) => l).join(', ')}. Check them before saving.`);
+    if (got.ip_no && !editing) await uhidPrefill(form); else drawCorner(form);
+  };
   const uhidPrefill = async (form) => {
     const u = form.ip_no.value.trim();
     if (!u) return;
     const r = await api('GET', `/api/uhid/${encodeURIComponent(u)}?date=${form.admit_date.value || S.date}`).catch(() => ({}));
-    if (!r || !r.name) { uhidNote.textContent = 'New UHID.'; return; }
+    if (!r || !r.name) { uhidNote.textContent = 'New UHID.'; prior = []; drawCorner(form); return; }
     const set = (n, val) => { const el = form.elements.namedItem(n); if (el && val && !el.value.trim()) el.value = val; };
-    set('name', r.name); set('age', r.age); set('sex', r.sex); set('diagnosis', r.diagnosis);
+    set('name', r.name); set('dob', r.dob); set('cr_no', r.cr_no); set('age', r.dob ? ageYMD(form.dob.value || r.dob, form.admit_date.value || S.date) : r.age); set('sex', r.sex); set('diagnosis', r.diagnosis);
+    prior = (r.admissions || []).filter((x) => x.id !== a.id);
+    drawCorner(form);
     const first = (r.consultant || '').split('/')[0].trim();
     const ini = (SURGEONS.find(([i, n]) => n === first || i === first) || [])[0];
     if (ini && S.meta.units.some((x) => x.name === ini)) set('unit', ini);
@@ -1420,8 +1474,10 @@ function admitModal(bed, a, opts = {}) {
   };
 
   const body = h('div', { class: 'grid2' },
+    canEdit() ? h('div', { class: 'span2 facesheetrow' }, h('button', { type: 'button', class: 'ghost facesheetbtn', onclick: (ev) => faceSheet(ev.target.closest('form')) }, '📷 Read face sheet'),
+      h('small', { class: 'muted' }, 'Fills name, UHID, CR No., date of birth and sex.')) : null,
     editing ? h('label', {}, 'Bed', h('input', { value: a.bed, disabled: true })) : h('label', {}, 'Bed', bedSelect('bed', bed, (b) => isIcu(b) === icu)),
-    input('Admission date', 'admit_date', { type: 'date' }),
+    input('Admission date', 'admit_date', { type: 'date', oninput: (ev) => drawCorner(ev.target.form) }),
     input('Patient name / initials', 'name', { required: true }, 'span2'),
     editing ? input('UHID', 'ip_no') : h('label', {}, 'UHID', h('input', { name: 'ip_no', value: a.ip_no || '', inputmode: 'numeric', autocomplete: 'off',
       onchange: (ev) => uhidPrefill(ev.target.form), onkeydown: (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); uhidPrefill(ev.target.form); } } }), uhidNote),
@@ -1435,21 +1491,24 @@ function admitModal(bed, a, opts = {}) {
       input('Gestation (weeks + days)', 'gestation', { placeholder: 'e.g. 34+2' }),
       input('Current weight (g)', 'current_weight', { inputmode: 'decimal' }),
     ] : [
-      input('Age', 'age', { placeholder: 'e.g. 3 y, 8 m, 12 d' }),
+      input('Date of birth', 'dob', { type: 'date', max: S.meta.today, oninput: (ev) => { const f = ev.target.form; if (ev.target.value) f.age.value = ageYMD(ev.target.value, f.admit_date.value || S.date); drawCorner(f); } }),
+      input('Age (or date of birth)', 'age', { placeholder: 'e.g. 3y 8m 12d', oninput: (ev) => drawCorner(ev.target.form) }),
       sexSel,
       input('Weight (kg)', 'weight', { inputmode: 'decimal' }),
     ],
+    input('CR No.', 'cr_no', { placeholder: 'H-000000-26', autocomplete: 'off' }),
     input('Diagnosis', 'diagnosis', {}, 'span2'),
     input('Procedure done', 'procedure_done'),
     chooser,
     h('label', { class: 'span2' }, 'Short notes', h('textarea', { name: 'instructions', rows: 3 }, a.instructions || '')));
 
-  modal(editing ? `Edit ${a.name}` : icu ? 'Admit baby to ICU' : 'Admit patient', body, async (form) => {
+  const theForm = modal(editing ? `Edit ${a.name}` : icu ? 'Admit baby to ICU' : 'Admit patient', body, async (form) => {
     const v = (n) => (form.elements.namedItem(n) ? form.elements.namedItem(n).value : '');
     const payload = {
       bed: v('bed') || a.bed,
-      name: v('name'), ip_no: v('ip_no'), unit: v('unit'), age: v('age'), sex: v('sex'), weight: v('weight'),
-      dob: v('dob'), birth_weight: v('birth_weight'), gestation: v('gestation'), current_weight: v('current_weight'),
+      name: v('name'), ip_no: v('ip_no'), cr_no: v('cr_no'), unit: v('unit'), age: v('age'), sex: v('sex'), weight: v('weight'),
+      // No date of birth typed: work it out from the age, so the age counts on (and is right at the next admission).
+      dob: v('dob') || dobFromAge(v('age'), v('admit_date') || S.date), birth_weight: v('birth_weight'), gestation: v('gestation'), current_weight: v('current_weight'),
       diagnosis: v('diagnosis'), procedure_done: v('procedure_done'),
       admit_date: v('admit_date'), instructions: v('instructions'),
     };
@@ -1474,6 +1533,11 @@ function admitModal(bed, a, opts = {}) {
     toast(editing ? 'Patient updated' : 'Patient admitted');
     render();
   }, editing ? 'Save' : 'Admit');
+  const head = theForm.querySelector('.mhead');
+  head.insertBefore(corner, head.lastChild);
+  drawCorner(theForm);
+  // Editing, or a UHID already filled in: count this child's earlier admissions.
+  if ((a.ip_no || '').trim()) api('GET', `/api/uhid/${encodeURIComponent(a.ip_no.trim())}?date=${a.admit_date || S.date}`).then((r) => { prior = ((r && r.admissions) || []).filter((x) => x.id !== a.id); drawCorner(theForm); }).catch(() => {});
 }
 
 function transferModal(a) {
@@ -2249,6 +2313,7 @@ function admitFromOt(e, onDone) {
 }
 
 // ---------- OT Log: each person's logbook from the scrub teams added on OT lists ----------
+const outcomeClass = (o) => (/death/i.test(o || '') ? 'bad' : /admitted/i.test(o || '') ? 'open' : '');
 async function otLogView(main, who) {
   // Everyone sees only their own logbook; admins can open anyone's.
   const own = S.user.role !== 'admin';
@@ -2268,23 +2333,25 @@ async function otLogView(main, who) {
   const sel = h('select', { onchange: (ev) => { location.hash = 'otlog/' + encodeURIComponent(ev.target.value); } },
     h('optgroup', { label: 'Consultants' }, SURGEONS.map(opt)), h('optgroup', { label: 'Residents' }, SR_INITIALS.map(opt)),
     others.length ? h('optgroup', { label: 'Others' }, others.map((o) => opt([o]))) : null);
-  const byRole = {};
-  for (const r of rows) byRole[r.role] = (byRole[r.role] || 0) + 1;
+  const byRole = {}, byOutcome = {};
+  for (const r of rows) { byRole[r.role] = (byRole[r.role] || 0) + 1; if (r.outcome) byOutcome[r.outcome] = (byOutcome[r.outcome] || 0) + 1; }
   const title = `Logbook · ${personName(who)}${personName(who) !== who ? ` (${who})` : ''}`;
   main.append(
     h('div', { class: 'toolbar' }, h('a', { class: 'button ghost noprint', href: '#ot' }, '‹ OT Lists'), h('h2', {}, 'Logbook'),
       h('div', { class: 'actions' }, own ? h('span', {}, `Your logbook · ${personName(who)}`) : h('label', { class: 'inline' }, 'Logbook of ', sel), h('button', { class: 'ghost', onclick: () => window.print() }, 'Print'))),
     h('h2', { class: 'printonly' }, title),
+    Object.keys(byOutcome).length ? h('p', { class: 'muted small' }, 'Outcomes: ' + Object.entries(byOutcome).map(([o, n]) => `${o} ${n}`).join(' · ')) : null,
     h('p', { class: 'muted' }, rows.length ? `${rows.length} operation${rows.length === 1 ? '' : 's'}: ` + Object.keys(byRole).sort((a, b) => a - b).map((k) => `${roleName(+k).toLowerCase()} ${byRole[k]}`).join(', ') : `No operations logged for ${who} yet. A log fills when ${who} is in a scrub team on an OT list.`),
     rows.length ? h('input', { type: 'search', class: 'otlogsearch noprint', placeholder: 'Search name, UHID, diagnosis or surgery', oninput: (ev) => {
       const q = ev.target.value.trim().toLowerCase();
       main.querySelectorAll('table.otlog tbody tr').forEach((tr) => { tr.hidden = !!q && !tr.textContent.toLowerCase().includes(q); });
     } }) : null,
     rows.length ? h('div', { class: 'tablewrap' }, h('table', { class: 'list print otlog' },
-      h('thead', {}, h('tr', {}, ['#', 'Date', 'Name', 'UHID', 'Age / Sex', 'Diagnosis', 'Surgery', 'Role', 'Team'].map((t) => h('th', {}, t)))),
+      h('thead', {}, h('tr', {}, ['#', 'Date', 'Name', 'UHID', 'CR No.', 'Age / Sex', 'Diagnosis', 'Surgery', 'Role', 'Team', 'Outcome'].map((t) => h('th', {}, t)))),
       h('tbody', {}, rows.map((r, i) => h('tr', { class: 'clickable', onclick: () => { location.hash = r.list_id ? 'otlist/' + encodeURIComponent(r.list_id) : 'patient/' + r.admission_id; } },
-        h('td', {}, i + 1), h('td', {}, fmtDate(r.date)), h('td', {}, h('b', {}, r.name)), h('td', {}, r.uhid || ''), h('td', {}, ageSex(r, r.date)),
-        h('td', {}, r.diagnosis), h('td', {}, r.surgery), h('td', {}, roleName(r.role)), h('td', { class: 'muted' }, r.team.join('/'))))))) : null);
+        h('td', {}, i + 1), h('td', {}, fmtDate(r.date)), h('td', {}, h('b', {}, r.name)), h('td', {}, r.uhid || ''), h('td', {}, r.cr_no || ''), h('td', {}, ageSex(r, r.date)),
+        h('td', {}, r.diagnosis), h('td', {}, r.surgery), h('td', {}, roleName(r.role)), h('td', { class: 'muted' }, r.team.join('/')),
+        h('td', { class: 'outcome ' + outcomeClass(r.outcome) }, r.outcome || '—')))))) : null);
 }
 
 // Add or edit one patient on a list. Typing a UHID that has been seen before fills in the rest (all of it can still be changed).
@@ -3074,6 +3141,7 @@ function clinicalPopup(a, onSaved, draft) {
   const close = () => root.replaceChildren();
   const ro = !canEdit();
   const v = draft ? draft.v : { ...(a.clinical || {}) };
+  if (!draft && !v.cr_no && a.cr_no) v.cr_no = a.cr_no;
   // Name, date of birth, UHID, birth weight and gestation live on the patient record itself (the register and Rounds use them).
   const top = draft ? draft.top : { name: a.name || '', dob: a.dob || '', ip_no: a.ip_no || '', birth_weight: a.birth_weight || '' };
   const marked = draft ? draft.marked : new Set();
@@ -3742,11 +3810,16 @@ function parseFaceSheet(text) {
   if (nm) { const rest = caps(nm[2]); if (rest) out.name = (/^(BABY OF|B\/O)$/.test(nm[1]) ? 'B/o ' : '') + title(rest); }
   const fa = text.match(/\b[SDW]\s*[\/'’|]\s*[O0]\s+([A-Z].*)/);
   if (fa) { const f = caps(fa[1]); if (f) out.father = title(f); }
+  const sx = text.match(/\b(?:Sex|Gender)\s*[:\-]?\s*(Male|Female|M|F)\b/i) || text.match(/(?:\b|(?<=\d))(?:D(?:ays?)?|Y(?:rs?|ears?)?|M(?:on\w*)?)\s*[\/|]\s*(M|F)\b/) || text.match(/\b(MALE|FEMALE)\b/);
+  if (sx) out.sex = /^f/i.test(sx[1]) ? 'F' : 'M';
   const seen = dateInText(text);
   let ag = text.match(/(\d{1,2})\s*years?\s*(\d{1,2})\s*mon\w*\s*(\d{1,2})\s*days?/i) || text.match(/(\d{1,2})\s*Y\s*(\d{1,2})\s*M\s*(\d{1,2})\s*D\b/);
   let y = 0, mo = 0, d = 0;
   if (ag) [y, mo, d] = [+ag[1], +ag[2], +ag[3]];
   else if ((ag = text.match(/(\d{1,2})\s*mon\w*\s*(\d{1,2})\s*days?/i))) [mo, d] = [+ag[1], +ag[2]];
+  // A printed date of birth wins over working it out from the age.
+  const db = text.match(/\b(?:DOB|D\.O\.B\.?|Date of Birth)\s*[:\-]?\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/i);
+  if (db) { out.dob = `${db[3]}-${db[2].padStart(2, '0')}-${db[1].padStart(2, '0')}`; return out; }
   if (ag && seen) {
     const b = new Date(seen + 'T12:00:00');
     b.setFullYear(b.getFullYear() - y); b.setMonth(b.getMonth() - mo); b.setDate(b.getDate() - d);
