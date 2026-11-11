@@ -1844,7 +1844,14 @@ const BLOCK_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" s
 const DAY_CARE = 'MCH2/PAR';
 const otName = (ot) => `OT ${ot}`;
 const bedLabel = (bed) => (!bed ? 'Bed not yet allotted' : bed.toUpperCase() === DAY_CARE ? 'Day care (MCH2/PAR)' : bed);
-const wardCol = (bed) => (!bed ? '' : /^MCH/i.test(bed) ? bed.toUpperCase() : 'MCH ' + bed);
+// "MCH" goes only before the register's own beds (6A/24, 6B/PO3, 6C/05). A bed typed by hand (NPW ground floor 20, PVT 3 - 107)
+// can be in another building, so it prints exactly as typed (Nidhi, 2026-11-11).
+const wardCol = (bed) => {
+  if (!bed) return '';
+  if (/^MCH/i.test(bed)) return bed.toUpperCase();
+  const ours = (S.meta && S.meta.sections ? S.meta.sections.flatMap((x) => x.beds) : []).some((b) => b.toLowerCase() === bed.trim().toLowerCase()) || /^6[ABC]\s*\/\s*\w+$/i.test(bed.trim());
+  return ours ? 'MCH ' + bed : bed;
+};
 // Surgeons as printed on OT lists: always the formal name, never initials ("SN" is Dr Sachit Anand's unit in the ward).
 const SURGEONS = [['VJ', 'Dr Vishesh Jain'], ['SA', 'Dr Sandeep Agarwala'], ['AD', 'Dr Anjan Dhua'], ['DKY', 'Dr Devendra K Yadav'], ['PG', 'Dr Prabudh Goel'], ['AV', 'Dr Ajay Verma'], ['GD', 'Dr G Divya'], ['SN', 'Dr Sachit Anand']];
 const squash = (x) => x.toLowerCase().replace(/[^a-z]/g, '');
