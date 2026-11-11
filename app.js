@@ -1445,15 +1445,15 @@ function admitModal(bed, a, opts = {}) {
   };
   // 📷 Face sheet: fills name, UHID, CR No., date of birth (from the printed age) and sex; asks before replacing anything typed.
   const faceSheet = async (form) => {
-    const text = await readPhoto('Face sheet', 'Drag across the top box of the face sheet (CR No. down to the UHID).');
+    const text = await readPhoto('Face sheet', 'Drag across the whole top box of the face sheet: CR No., UHID, name, age, sex and admission date.');
     if (text == null) return;
-    const got = parseFaceSheet(text);
-    const fields = [['name', 'Name'], ['ip_no', 'UHID'], ['cr_no', 'CR No.'], ['dob', 'Date of birth'], ['sex', 'Sex']].filter(([k]) => got[k] && form.elements.namedItem(k));
+    const got = parseFaceSheet(text, form.admit_date.value || S.date);
+    if (got.dob && form.elements.namedItem('age')) got.age = ageYMD(got.dob, form.admit_date.value || S.date);
+    const fields = [['name', 'Name'], ['ip_no', 'UHID'], ['cr_no', 'CR No.'], ['dob', 'Date of birth'], ['age', 'Age'], ['sex', 'Sex']].filter(([k]) => got[k] && form.elements.namedItem(k));
     if (!fields.length) return toast('Could not read the face sheet. Try a closer, straighter photo of the top box.', true);
     const clash = fields.filter(([k]) => { const v = form.elements.namedItem(k).value.trim(); return v && v !== got[k]; });
     const replace = !clash.length || confirm(`Replace what is already typed in ${clash.map(([, l]) => l).join(', ')} with what was read?`);
     for (const [k] of fields) { const el = form.elements.namedItem(k); if (!el.value.trim() || replace) { el.value = got[k]; el.classList.add('ocrfilled'); } }
-    if (got.dob && form.elements.namedItem('age')) form.elements.namedItem('age').value = ageYMD(got.dob, form.admit_date.value || S.date);
     toast(`Read: ${fields.map(([, l]) => l).join(', ')}. Check them before saving.`);
     if (got.ip_no && !editing) await uhidPrefill(form); else drawCorner(form);
   };
@@ -1475,7 +1475,7 @@ function admitModal(bed, a, opts = {}) {
 
   const body = h('div', { class: 'grid2' },
     canEdit() ? h('div', { class: 'span2 facesheetrow' }, h('button', { type: 'button', class: 'ghost facesheetbtn', onclick: (ev) => faceSheet(ev.target.closest('form')) }, '📷 Read face sheet'),
-      h('small', { class: 'muted' }, 'Fills name, UHID, CR No., date of birth and sex.')) : null,
+      h('small', { class: 'muted' }, 'Fills name, UHID, CR No., age, date of birth and sex.')) : null,
     editing ? h('label', {}, 'Bed', h('input', { value: a.bed, disabled: true })) : h('label', {}, 'Bed', bedSelect('bed', bed, (b) => isIcu(b) === icu)),
     input('Admission date', 'admit_date', { type: 'date', oninput: (ev) => drawCorner(ev.target.form) }),
     input('Patient name / initials', 'name', { required: true }, 'span2'),
@@ -3147,10 +3147,10 @@ function clinicalPopup(a, onSaved, draft) {
   const marked = draft ? draft.marked : new Set();
   // 📷 Face sheet: fills CR No., UHID, name, father's name and date of birth (worked out from the printed age); asks before replacing what is already typed.
   const faceSheet = async () => {
-    const text = await readPhoto('Face sheet', 'Drag across the top box of the face sheet (CR No. down to the UHID).');
+    const text = await readPhoto('Face sheet', 'Drag across the whole top box of the face sheet: CR No., UHID, name, age, sex and admission date.');
     if (text == null) return;
     v.phones = phones.map((x) => x.trim()).filter(Boolean).join('\n');
-    const got = parseFaceSheet(text);
+    const got = parseFaceSheet(text, a.admit_date || S.date);
     const where = { name: top, ip_no: top, dob: top, cr_no: v, father: v };
     const labels = { name: 'Name', ip_no: 'UHID', cr_no: 'CR No.', father: "Father's name", dob: 'Date of birth' };
     const keys = Object.keys(where).filter((k) => got[k] && got[k] !== where[k][k]);
@@ -3557,7 +3557,7 @@ async function dischargeSummaryPopup(a) {
     // 📷 Face sheet: name, father's name, CR No., UHID, date of birth and age; boxes it fills turn orange until checked.
     const faceSheet = async () => {
       syncInv();
-      const text = await readPhoto('Face sheet', 'Drag across the top box of the face sheet (CR No. down to the UHID).');
+      const text = await readPhoto('Face sheet', 'Drag across the whole top box of the face sheet: CR No., UHID, name, age, sex and admission date.');
       if (text == null) return;
       const got = parseFaceSheet(text), map = { name: 'name', father: 'father', cr_no: 'cr_no', ip_no: 'uhid' };
       const keys = Object.keys(map).filter((k) => got[k]);
@@ -3798,29 +3798,38 @@ function parseReport(text) {
   return { type, findings, impression, date: dateInText(text) };
 }
 // Face sheet (AIIMS eHospital, printed): CR No., UHID, name, father's name (S/O, D/O, W/O line), age, and the admission date the age was printed on.
-function parseFaceSheet(text) {
+function parseFaceSheet(text, onDate) {
   const out = {};
-  const caps = (s) => { const w = []; for (const x of s.trim().split(/\s+/)) { if (!/^[A-Z][A-Z.']*$/.test(x) || (x.length < 2 && w.length)) break; w.push(x); } return w.join(' '); };
+  // Name words: capitalised words (OCR sometimes gives Title Case), stopping at the first word that is not one.
+  const caps = (s) => { const w = []; for (const x of s.trim().split(/\s+/)) { if (!/^[A-Z][A-Za-z.']*$/.test(x) || /^((S|D|W|B)\/O|Age|Sex|Gender|UHID|CR|Ward|Bed|Dept|Department|Male|Female)$/i.test(x) || (x.length < 2 && w.length)) break; w.push(x); } return w.join(' '); };
   const cr = text.match(/\b[H1Il|][-–—.]?\s?(\d{6})\s?[-–—]\s?(\d{2})\b/);
   if (cr) out.cr_no = `H-${cr[1]}-${cr[2]}`;
-  const uh = text.match(/UHID[^\d\n]{0,10}(\d{8,10})/i) || text.match(/\b(10\d{7})\b/);
+  const uh = text.match(/UHID[^\d\n]{0,12}(\d{8,10})/i) || text.match(/\b(10\d{7})\b/);
   if (uh) out.ip_no = uh[1];
-  const nm = text.match(/\b(MR|MRS|MISS|MS|MASTER|BABY OF|B\/O)\.?\s+([A-Z].*)/);
-  const title = (s) => s.replace(/\b([A-Z])([A-Z.']+)/g, (x, a, b) => a + b.toLowerCase());
-  if (nm) { const rest = caps(nm[2]); if (rest) out.name = (/^(BABY OF|B\/O)$/.test(nm[1]) ? 'B/o ' : '') + title(rest); }
-  const fa = text.match(/\b[SDW]\s*[\/'’|]\s*[O0]\s+([A-Z].*)/);
+  const nm = text.match(/\b(MR|MRS|MISS|MS|MASTER|MSTR|BABY OF|BABY|B\/O)\b\.?\s+([A-Za-z].*)/i) || text.match(/\b(?:Patient\s*)?Name\s*[:\-]\s*()([A-Za-z].*)/i);
+  const title = (s) => s.replace(/\b([A-Za-z])([A-Za-z.']+)/g, (x, a, b) => a.toUpperCase() + b.toLowerCase());
+  if (nm) { const rest = caps(nm[2]); if (rest) out.name = (/^(BABY OF|B\/O)$/i.test(nm[1] || '') ? 'B/o ' : /^BABY$/i.test(nm[1] || '') ? 'Baby ' : '') + title(rest); }
+  const fa = text.match(/\b[SDW]\s*[\/'’|]\s*[O0]\s+([A-Za-z].*)/);
   if (fa) { const f = caps(fa[1]); if (f) out.father = title(f); }
-  const sx = text.match(/\b(?:Sex|Gender)\s*[:\-]?\s*(Male|Female|M|F)\b/i) || text.match(/(?:\b|(?<=\d))(?:D(?:ays?)?|Y(?:rs?|ears?)?|M(?:on\w*)?)\s*[\/|]\s*(M|F)\b/) || text.match(/\b(MALE|FEMALE)\b/);
+  const sx = text.match(/\b(?:Sex|Gender)\s*[:\-]?\s*(Male|Female|M|F)\b/i) || text.match(/(?:\b|(?<=\d))(?:D(?:ays?)?|Y(?:rs?|ears?)?|M(?:on\w*)?)\s*[\/|]\s*(M|F)\b/) || text.match(/\b(MALE|FEMALE|Male|Female)\b/);
   if (sx) out.sex = /^f/i.test(sx[1]) ? 'F' : 'M';
-  const seen = dateInText(text);
-  let ag = text.match(/(\d{1,2})\s*years?\s*(\d{1,2})\s*mon\w*\s*(\d{1,2})\s*days?/i) || text.match(/(\d{1,2})\s*Y\s*(\d{1,2})\s*M\s*(\d{1,2})\s*D\b/);
-  let y = 0, mo = 0, d = 0;
-  if (ag) [y, mo, d] = [+ag[1], +ag[2], +ag[3]];
-  else if ((ag = text.match(/(\d{1,2})\s*mon\w*\s*(\d{1,2})\s*days?/i))) [mo, d] = [+ag[1], +ag[2]];
+  // Age as printed: "4 years 9 mons 4 days", "10 mons 21 days", "0 Y 0 M 27 D", "3 years", "6 mons", "15 days".
+  const Y = '(\\d{1,2})\\s*(?:years?|yrs?|y)\\b', M = '(\\d{1,2})\\s*(?:mon\\w*|m)\\b', D = '(\\d{1,2})\\s*(?:days?|d)\\b';
+  const tries = [[`${Y}\\s*${M}\\s*${D}`, 'ymd'], [`${Y}\\s*${M}`, 'ym'], [`${M}\\s*${D}`, 'md'], [`${Y}\\s*${D}`, 'yd'], [`Age[^\\d\\n]{0,8}${Y}`, 'y'], [`Age[^\\d\\n]{0,8}${M}`, 'm'], [`Age[^\\d\\n]{0,8}${D}`, 'd'], [Y, 'y'], [M.replace('|m)', ')'), 'm'], [D.replace('|d)', ')'), 'd']];
+  let y = 0, mo = 0, d = 0, got = false;
+  for (const [re, parts] of tries) {
+    const m = text.match(new RegExp(re, 'i'));
+    if (!m) continue;
+    [...parts].forEach((c, k) => { const n = +m[k + 1]; if (c === 'y') y = n; else if (c === 'm') mo = n; else d = n; });
+    got = true; break;
+  }
+  if (got) out.age = [y && `${y}y`, mo && `${mo}m`, d && `${d}d`].filter(Boolean).join(' ') || '0d';
   // A printed date of birth wins over working it out from the age.
   const db = text.match(/\b(?:DOB|D\.O\.B\.?|Date of Birth)\s*[:\-]?\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/i);
   if (db) { out.dob = `${db[3]}-${db[2].padStart(2, '0')}-${db[1].padStart(2, '0')}`; return out; }
-  if (ag && seen) {
+  // Age is as on the admission date printed on the sheet; without one, as on the date given (the admission date in the form).
+  const seen = dateInText(text) || onDate;
+  if (got && seen) {
     const b = new Date(seen + 'T12:00:00');
     b.setFullYear(b.getFullYear() - y); b.setMonth(b.getMonth() - mo); b.setDate(b.getDate() - d);
     out.dob = b.toISOString().slice(0, 10);
