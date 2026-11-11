@@ -974,3 +974,14 @@ input.ocrfilled { border-color: #d97706; background: rgba(217,119,6,.08); }
 table.otlog td.outcome.bad { color: #b91c1c; font-weight: 600; }
 table.otlog td.outcome.open { color: var(--accent, #1f6f78); }
 table.otlog td:nth-child(5) { white-space: nowrap; }
+.sharedbar { background: #fff4c2; border: 2px solid #e0a800; color: #3d2f00; border-radius: 12px; padding: 10px 12px; margin: 0 0 12px; }
+.sharedhead { margin: 0 0 8px; }
+.sharedrow { display: flex; gap: 12px; align-items: flex-start; padding: 6px 0; border-top: 1px solid rgba(224,168,0,.4); }
+.sharedbed { min-width: 4.5em; }
+.sharedpts { flex: 1; display: grid; gap: 6px; }
+.sharedpt { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sharedbtns { display: flex; gap: 6px; }
+.sharedbar .muted { color: #6b5600; }
+.bschip.shared { background: #ffe066; border-color: #e0a800; color: #3d2f00; }
+.bschip.shared.on { background: #e0a800; color: #000; }
+.bschip.bskey { display: inline-block; min-width: 0; width: 1.2em; height: 1em; padding: 0; vertical-align: middle; cursor: default; }

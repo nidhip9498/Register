@@ -467,6 +467,27 @@ function wardTitle(w) {
   return sec ? sec.name : `${w} Ward`;
 }
 
+// Two or more patients in one bed: listed first on the register, to sort out before anything else (Nidhi, 2026-11-11).
+function sharedBedBanner(icuMode) {
+  const box = h('div', { class: 'sharedbar', hidden: true });
+  api('GET', '/api/sharedbeds').then((groups) => {
+    groups = groups.filter((g) => !!isIcu(g.bed) === !!icuMode);
+    if (!groups.length) return;
+    box.hidden = false;
+    const act = (id, fn) => async () => { try { fn(await api('GET', '/api/admissions/' + id)); } catch (x) { toast(x.message, true); } };
+    box.replaceChildren(
+      h('p', { class: 'sharedhead' }, h('b', {}, `⚠ ${groups.length} bed${groups.length === 1 ? ' has' : 's have'} two patients. Sort ${groups.length === 1 ? 'it' : 'these'} out first.`),
+        ' Discharge whoever has left, or move a patient to their real bed. Nothing is deleted.'),
+      ...groups.map((g) => h('div', { class: 'sharedrow' }, h('b', { class: 'sharedbed' }, g.bed),
+        h('div', { class: 'sharedpts' }, g.patients.map((p) => h('div', { class: 'sharedpt' },
+          h('span', {}, h('b', {}, p.name), h('span', { class: 'muted small' }, `${p.uhid ? ` · UHID ${p.uhid}` : ''}${p.admit_date ? ` · admitted ${fmtDate(p.admit_date)}` : ''}`)),
+          canEdit() ? h('span', { class: 'sharedbtns' },
+            h('button', { type: 'button', class: 'ghost small', onclick: act(p.id, transferModal) }, 'Move'),
+            h('button', { type: 'button', class: 'ghost small', onclick: act(p.id, dischargeModal) }, 'Discharge')) : null))))));
+  }).catch(() => {});
+  return box;
+}
+
 // mode 'ward' = Ward Register (6B and 6A), mode 'icu' = ICU Register (6C).
 // The same UHID admitted twice: pick the entry to keep; the other's rounds, notes and OT findings move into it.
 function dupBanner() {
@@ -502,6 +523,7 @@ async function registerView(main, mode) {
   const search = h('input', { type: 'search', placeholder: 'Find bed, name, UHID…', value: S.filters.q, oninput: (e) => { S.filters.q = e.target.value; drawGrid(); } });
 
   main.append(
+    sharedBedBanner(icuMode),
     h('div', { class: 'toolbar' },
       h('div', { class: 'datenav' },
         h('button', { class: 'ghost', onclick: () => go(addDays(date, -1)), 'aria-label': 'Previous day' }, '‹'),
@@ -1270,14 +1292,17 @@ async function roundsView(main, focus, icuTab) {
     const icuNo = (a) => +String(a.bed_on_date).split('/')[1];
     const groups = icuTab ? [['ICU A', (a) => icuNo(a) <= 10, '6C'], ['ICU B', (a) => icuNo(a) > 10, '6C']]
       : [['6B', (a) => wardOf(a.bed_on_date) === '6B', '6B'], ['6A', (a) => wardOf(a.bed_on_date) === '6A', '6A']];
+    const perBed = {};
+    for (const a of here) perBed[a.bed_on_date] = (perBed[a.bed_on_date] || 0) + 1;
+    const anyShared = Object.values(perBed).some((n) => n > 1);
     strips.replaceChildren(...groups.map(([label, test, w]) => {
       const pts = here.filter(test);
       if (!pts.length) return null;
       const row = h('div', { class: 'bedstrip' }, h('span', { class: 'bswho' }, label),
-        h('div', { class: 'bsrow' }, pts.map((a) => h('button', { type: 'button', class: 'bschip' + (a.id === S.roundsSel ? ' on' : '') + (morningDone(a.round, date) ? ' done' : ''), title: a.name, onclick: () => pick(a.id) },
+        h('div', { class: 'bsrow' }, pts.map((a) => h('button', { type: 'button', class: 'bschip' + (a.id === S.roundsSel ? ' on' : '') + (morningDone(a.round, date) ? ' done' : '') + (perBed[a.bed_on_date] > 1 ? ' shared' : ''), title: a.name + (perBed[a.bed_on_date] > 1 ? ' (shares this bed)' : ''), onclick: () => pick(a.id) },
           a.bed_on_date.replace(new RegExp('^' + w + '/', 'i'), '')))));
       return row;
-    }).filter(Boolean), h('div', { class: 'bsfoot' }, h('span', { class: 'muted bslegend' }, 'Green border = morning round saved (4 am to 11:30 am)'),
+    }).filter(Boolean), h('div', { class: 'bsfoot' }, h('span', { class: 'muted bslegend' }, 'Green border = morning round saved (4 am to 11:30 am)', anyShared ? h('span', {}, ' · ', h('span', { class: 'bschip shared bskey' }, ' '), ' Yellow = two patients in one bed (sort out on the Ward Register)') : ''),
       S.roundsSel ? h('button', { type: 'button', class: 'ghost small bsall', onclick: () => pick(null) }, 'Show all patients') : ''));
     const on = strips.querySelector('.bschip.on');
     if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
@@ -1523,11 +1548,7 @@ function admitModal(bed, a, opts = {}) {
     if (editing) await api('PUT', '/api/admissions/' + a.id, payload);
     else {
       let res;
-      try { res = await api('POST', '/api/admissions', payload); }
-      catch (e) {
-        if (e.status !== 409 || !confirm(e.message + '. Admit to the same bed anyway?')) throw e;
-        res = await api('POST', '/api/admissions', { ...payload, force: true });
-      }
+      res = await api('POST', '/api/admissions', payload);
       if (opts.onAdmitted) await opts.onAdmitted(res, payload);
     }
     toast(editing ? 'Patient updated' : 'Patient admitted');
@@ -1553,10 +1574,10 @@ function transferModal(a) {
       if (confirm(`${e.message}.\n\nOK = swap the two patients' beds\nCancel = more options`)) {
         await api('POST', `/api/admissions/${a.id}/transfer`, { ...payload, swap: true });
         toast('Beds swapped');
-      } else if (confirm('Put both patients in the same bed?')) {
-        await api('POST', `/api/admissions/${a.id}/transfer`, { ...payload, force: true });
-        toast('Bed changed');
-      } else return false;
+      } else {
+        alert(`${payload.bed} is occupied, and a bed takes only one patient.\n\nTo move ${a.name} there after that patient is discharged, add it to Bed shifts on the Ward Register. It happens by itself at the discharge.`);
+        return false;
+      }
     }
     render();
   }, 'Move');

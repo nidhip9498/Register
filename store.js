@@ -403,13 +403,23 @@ const Store = (() => {
     const dup = activeByUhid(body.ip_no);
     if (dup) throw new HttpError(400, `UHID ${dup.ip_no} is already admitted: ${dup.name} in ${dup.bed}`);
     const occ = occupants(bed);
-    if (occ.length && !body.force) throw new HttpError(409, `Bed ${bed} already has ${occ.map((o) => o.name).join(', ')}`);
+    // One patient per bed: never admit into an occupied bed (Nidhi, 2026-11-11). Discharge or move the patient there first.
+    if (occ.length) throw new HttpError(409, `Bed ${bed} already has ${occ.map((o) => o.name).join(', ')}. Discharge or move them first, or pick an empty bed.`);
     const f = admissionFields(body);
     const id = 'adm:' + uuid();
     put(id, 'admission', { ...f, bed, discharge_date: null, outcome: '', created_by: currentUser.id, updated_at: stamp() });
     audit('admit', `${f.name} to ${bed}`);
     linkOtEntries(id);
     return { id };
+  });
+
+  // Beds holding more than one patient (from before the one-per-bed rule, or two phones admitting offline at the same time).
+  route('GET', '/api/sharedbeds', ANY, () => {
+    const by = new Map();
+    for (const a of all('admission')) if (!a.discharge_date && a.bed) { if (!by.has(a.bed)) by.set(a.bed, []); by.get(a.bed).push(a); }
+    const order = allBeds();
+    return [...by].filter(([, l]) => l.length > 1).sort((x, y) => order.indexOf(x[0]) - order.indexOf(y[0]))
+      .map(([bed, l]) => ({ bed, patients: l.sort((x, y) => ((x.admit_date || '') < (y.admit_date || '') ? -1 : 1)).map((a) => ({ id: a.id, name: a.name, uhid: a.ip_no || '', admit_date: a.admit_date || '' })) }));
   });
 
   // The same child entered twice: keep one admission and bring the other's rounds, notes, OT findings and details into it.
@@ -505,7 +515,8 @@ const Store = (() => {
     if (!allBeds().includes(to)) throw new HttpError(400, 'Unknown bed');
     if (to === a.bed) throw new HttpError(400, 'Patient is already in that bed');
     const occ = occupants(to, a.id);
-    if (occ.length && !body.force && !body.swap) throw new HttpError(409, `Bed ${to} already has ${occ.map((o) => o.name).join(', ')}`);
+    // One patient per bed: an occupied bed takes a swap only (Nidhi, 2026-11-11). To move after that patient goes home, use Bed shifts.
+    if (occ.length && !body.swap) throw new HttpError(409, `Bed ${to} already has ${occ.map((o) => o.name).join(', ')}`);
     const date = isDate(body.date) ? body.date : today();
     const move = (adm, from, dest) => {
       put('move:' + uuid(), 'move', { admission_id: adm.id, from_bed: from, to_bed: dest, move_date: date, moved_by: currentUser.id, at: now() });
