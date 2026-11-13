@@ -2759,6 +2759,9 @@ async function downloadBackup() {
 // ---------- Duty roster strip on the Ward Register ----------
 // Rows: WIC, ICU · SR on call, Consultant on call · OT 11/14, OT 12/15, SR Assist. Initials become full names.
 const ROSTER_ROWS = [[['wic', 'WIC'], ['icu', 'ICU']], [['call', 'SR on call'], ['cons_call', 'Consultant on call']], [['ot1', 'OT 11/14'], ['ot2', 'OT 12/15'], ['assist', 'SR Assist']], [['opd', 'OPD']]];
+// OPD 1 to 5 (rooms 31, 33, 29 as per the roster), shown together in one tile, each with its number.
+const OPD_KEYS = [1, 2, 3, 4, 5].map((n) => ['opd' + n, 'OPD ' + n]);
+const opdText = (day, names) => OPD_KEYS.filter(([k]) => (day[k] || '').trim()).map(([k, l]) => `${l}: ${rosterName(day[k], names)}`);
 const WEEKDAY_KEYS = [['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday']];
 function rosterName(x, names) {
   x = (x || '').trim();
@@ -2798,7 +2801,8 @@ function rosterStrip(regDate) {
     box.hidden = false;
     box.replaceChildren(head(names), classLine(), day
       ? h('div', { class: 'rosterrows' }, ...ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow', style: `grid-template-columns: repeat(${row.length}, minmax(0, 1fr))` },
-        row.map(([k, label]) => h('div', { class: 'rcell' }, h('span', { class: 'rlabel' }, label), h('b', {}, rosterName(day[k], names) || '—'))))))
+        row.map(([k, label]) => h('div', { class: 'rcell' + (k === 'opd' ? ' opdcell' : '') }, h('span', { class: 'rlabel' }, label),
+          k === 'opd' && opdText(day, names).length ? h('div', { class: 'opdlist' }, opdText(day, names).map((t) => h('b', {}, t))) : h('b', {}, rosterName(day[k], names) || '—'))))))
       : h('p', { class: 'muted small' }, canEdit() ? 'No duty roster for this day. Import the month in Admin > Import, or tap the pencil to fill it in.' : 'No duty roster for this day.'));
   };
   const edit = (day, names) => {
@@ -2806,7 +2810,7 @@ function rosterStrip(regDate) {
     const inputs = {};
     box.replaceChildren(h('div', { class: 'grow' },
       h('p', { class: 'small muted' }, h('b', {}, fmtDay(view)), ' · Type initials (NP, PG/SN) or names. For leave or swaps.'),
-      h('div', { class: 'rosteredit' }, ROSTER_ROWS.flat().map(([k, label]) => h('label', {}, label, (inputs[k] = h('input', { value: d[k] || '', autocapitalize: 'characters' }))))),
+      h('div', { class: 'rosteredit' }, ROSTER_ROWS.flat().flatMap((x) => (x[0] === 'opd' ? OPD_KEYS : [x])).map(([k, label]) => h('label', {}, label, (inputs[k] = h('input', { value: d[k] || '', autocapitalize: 'characters' }))))),
       h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: () => draw(day, names) }, 'Cancel'),
         h('button', { type: 'button', class: 'primary small', onclick: async () => {
           const out = {}; for (const k in inputs) out[k] = inputs[k].value.trim();
@@ -2846,9 +2850,11 @@ async function rosterMonth(month, today, pick) {
     const used = new Set();
     const days = []; for (let d = m + '-01'; d.slice(0, 7) === m; d = addDays(d, 1)) days.push(d);
     const cell = (v) => { v = (v || '').trim(); v.split('/').map((x) => x.trim().toUpperCase()).filter(Boolean).forEach((x) => used.add(x)); return h('td', { title: rosterName(v, r.names) }, v || '—'); };
+    const opdCell = (x) => { OPD_KEYS.forEach(([o]) => (x[o] || '').split('/').map((y) => y.trim().toUpperCase()).filter(Boolean).forEach((y) => used.add(y)));
+      return h('td', { title: opdText(x, r.names).join('\n') }, OPD_KEYS.filter(([o]) => x[o]).map(([o, l]) => `${l.slice(4)} ${x[o]}`).join(' · ')); };
     const rows = days.map((d) => { const x = byDate[d]; const wd = new Date(d + 'T00:00').toLocaleDateString('en-GB', { weekday: 'short' });
       return h('tr', { class: (d === today ? 'today ' : '') + (wd === 'Sun' || wd === 'Sat' ? 'wkend' : ''), onclick: () => { close(); pick(d); } },
-        h('th', {}, `${+d.slice(8)} ${wd}`), x ? cols.map(([k]) => cell(x[k])) : h('td', { colspan: cols.length, class: 'muted' }, 'No roster')); });
+        h('th', {}, `${+d.slice(8)} ${wd}`), x ? cols.map(([k]) => (k === 'opd' && OPD_KEYS.some(([o]) => x[o]) ? opdCell(x) : cell(x[k]))) : h('td', { colspan: cols.length, class: 'muted' }, 'No roster')); });
     const legend = [...used].sort().map((i) => [i, rosterName(i, r.names)]).filter(([i, n]) => n && n.replace(/^Dr\s*/, '').toUpperCase() !== i);
     const monthName = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
     card.replaceChildren(

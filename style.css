@@ -989,3 +989,6 @@ table.otlog td:nth-child(5) { white-space: nowrap; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .classline { background: #4a3d0a; color: #fff4c2; } }
 :root[data-theme="dark"] .classline { background: #4a3d0a; color: #fff4c2; }
 @media (min-width: 900px) { .rosterrows > .rosterrow:nth-child(4) { grid-column: 1 / -1; } }
+.opdlist { display: flex; flex-wrap: wrap; gap: 2px 18px; }
+.opdlist b { white-space: nowrap; }
+@media (max-width: 600px) { .opdlist { flex-direction: column; } .opdlist b { white-space: normal; } }

@@ -1436,7 +1436,7 @@ const Store = (() => {
   });
 
   // Duty roster: one record per day (WIC, ICU, SR on call, consultant on call, OT 11/14, OT 12/15, SR Assist), as initials or names.
-  const ROSTER_KEYS = ['wic', 'icu', 'call', 'cons_call', 'ot1', 'ot2', 'assist', 'opd'];
+  const ROSTER_KEYS = ['wic', 'icu', 'call', 'cons_call', 'ot1', 'ot2', 'assist', 'opd', 'opd1', 'opd2', 'opd3', 'opd4', 'opd5'];
   // Class schedule by weekday (mon … sun), shown as a line above the roster (Nidhi, 2026-11-13).
   const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
   const classSchedule = () => { const r = get('setting:class_schedule'); return (r && r.value && typeof r.value === 'object') ? r.value : {}; };
