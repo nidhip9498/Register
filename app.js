@@ -2758,7 +2758,8 @@ async function downloadBackup() {
 
 // ---------- Duty roster strip on the Ward Register ----------
 // Rows: WIC, ICU · SR on call, Consultant on call · OT 11/14, OT 12/15, SR Assist. Initials become full names.
-const ROSTER_ROWS = [[['wic', 'WIC'], ['icu', 'ICU']], [['call', 'SR on call'], ['cons_call', 'Consultant on call']], [['ot1', 'OT 11/14'], ['ot2', 'OT 12/15'], ['assist', 'SR Assist']]];
+const ROSTER_ROWS = [[['wic', 'WIC'], ['icu', 'ICU']], [['call', 'SR on call'], ['cons_call', 'Consultant on call']], [['ot1', 'OT 11/14'], ['ot2', 'OT 12/15'], ['assist', 'SR Assist']], [['opd', 'OPD']]];
+const WEEKDAY_KEYS = [['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday']];
 function rosterName(x, names) {
   x = (x || '').trim();
   if (!x) return '';
@@ -2789,12 +2790,13 @@ function rosterStrip(regDate) {
     h('span', { class: 'grow' }),
     iconBtn(GRID_SVG, 'Whole month', () => rosterMonth(view.slice(0, 7), date, (d) => { view = d; load(); })),
     canEdit() && iconBtn(PENCIL_SVG, 'Edit duties for this day', () => edit(cur, names)));
-  let cur = null;
+  let cur = null, cls = '';
+  const classLine = () => cls ? h('p', { class: 'classline' }, h('b', {}, '📚 Class: '), cls) : null;
   const draw = (day, names) => {
     cur = day;
-    if (!day && view === date && !canEdit()) { box.hidden = true; return; }
+    if (!day && !cls && view === date && !canEdit()) { box.hidden = true; return; }
     box.hidden = false;
-    box.replaceChildren(head(names), day
+    box.replaceChildren(head(names), classLine(), day
       ? h('div', { class: 'rosterrows' }, ...ROSTER_ROWS.map((row) => h('div', { class: 'rosterrow', style: `grid-template-columns: repeat(${row.length}, minmax(0, 1fr))` },
         row.map(([k, label]) => h('div', { class: 'rcell' }, h('span', { class: 'rlabel' }, label), h('b', {}, rosterName(day[k], names) || '—'))))))
       : h('p', { class: 'muted small' }, canEdit() ? 'No duty roster for this day. Import the month in Admin > Import, or tap the pencil to fill it in.' : 'No duty roster for this day.'));
@@ -2809,13 +2811,27 @@ function rosterStrip(regDate) {
         h('button', { type: 'button', class: 'primary small', onclick: async () => {
           const out = {}; for (const k in inputs) out[k] = inputs[k].value.trim();
           try { await api('PUT', '/api/roster/' + view, out); toast('Duties saved'); load(); } catch (e) { toast(e.message, true); }
-        } }, 'Save'))));
+        } }, 'Save'),
+        h('button', { type: 'button', class: 'ghost small', onclick: () => classesModal(load) }, '📚 Class schedule'))));
   };
-  const load = () => api('GET', '/api/roster/' + view).then((r) => draw(r.day, r.names)).catch(() => { box.hidden = true; });
+  const load = () => api('GET', '/api/roster/' + view).then((r) => { cls = r.class || ''; draw(r.day, r.names); }).catch(() => { box.hidden = true; });
   box.hidden = true;
   load();
   return box;
 }
+// The weekly class schedule: one line per weekday, shown above the roster on that day.
+async function classesModal(done) {
+  const v = await api('GET', '/api/classes').catch(() => ({}));
+  const body = h('div', { class: 'grid1' }, h('p', { class: 'muted small' }, 'What is on each day (for example: 8 am Journal club, Seminar room). Leave a day empty if there is no class.'),
+    WEEKDAY_KEYS.map(([k, label]) => h('label', {}, label, h('input', { name: k, value: v[k] || '' }))));
+  modal('Class schedule', body, async (form) => {
+    const out = {}; for (const [k] of WEEKDAY_KEYS) out[k] = form.elements.namedItem(k).value.trim();
+    await api('PUT', '/api/classes', out);
+    toast('Class schedule saved');
+    if (done) done();
+  }, 'Save');
+}
+
 // The whole month's roster as a table (initials; full names listed underneath). Tapping a day shows it on the strip.
 async function rosterMonth(month, today, pick) {
   const root = document.getElementById('modal-root');

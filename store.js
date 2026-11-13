@@ -1436,12 +1436,24 @@ const Store = (() => {
   });
 
   // Duty roster: one record per day (WIC, ICU, SR on call, consultant on call, OT 11/14, OT 12/15, SR Assist), as initials or names.
-  const ROSTER_KEYS = ['wic', 'icu', 'call', 'cons_call', 'ot1', 'ot2', 'assist'];
+  const ROSTER_KEYS = ['wic', 'icu', 'call', 'cons_call', 'ot1', 'ot2', 'assist', 'opd'];
+  // Class schedule by weekday (mon … sun), shown as a line above the roster (Nidhi, 2026-11-13).
+  const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const classSchedule = () => { const r = get('setting:class_schedule'); return (r && r.value && typeof r.value === 'object') ? r.value : {}; };
+  const classOn = (date) => classSchedule()[WEEKDAYS[new Date(date + 'T12:00:00').getDay()]] || '';
+  route('PUT', '/api/classes', EDITORS, ({ body }) => {
+    const v = { ...classSchedule() };
+    for (const d of WEEKDAYS) if (body[d] !== undefined) v[d] = str(body[d], 300);
+    put('setting:class_schedule', 'setting', { value: v });
+    audit('edit class schedule', '');
+    return { ok: true };
+  });
+  route('GET', '/api/classes', ANY, () => classSchedule());
   const rosterNames = () => { const r = get('setting:roster_names'); return (r && r.value && typeof r.value === 'object') ? r.value : {}; };
   route('GET', '/api/roster/:date', ANY, ({ params: p }) => {
     if (!isDate(p.date)) throw new HttpError(400, 'Bad date');
     const r = get('roster:' + p.date);
-    return { day: r ? { ...strip(r), edited_by: r.edited_by ? userName(r.edited_by) : '' } : null, names: rosterNames() };
+    return { day: r ? { ...strip(r), edited_by: r.edited_by ? userName(r.edited_by) : '' } : null, names: rosterNames(), class: classOn(p.date) };
   });
   route('GET', '/api/rostermonth/:month', ANY, ({ params: p }) => {
     if (!/^\d{4}-\d{2}$/.test(p.month)) throw new HttpError(400, 'Bad month');
@@ -1471,6 +1483,11 @@ const Store = (() => {
     const names = { ...rosterNames() };
     for (const [k, v] of Object.entries(body.names || {})) { const i = str(k, 6).toUpperCase(), nm = str(v, 80); if (i && nm) names[i] = nm; }
     put('setting:roster_names', 'setting', { value: names });
+    if (body.classes && typeof body.classes === 'object') {
+      const v = { ...classSchedule() };
+      for (const d of WEEKDAYS) if (body.classes[d] !== undefined) v[d] = str(body.classes[d], 300);
+      put('setting:class_schedule', 'setting', { value: v });
+    }
     audit('import duty roster', `${n} days`);
     return { days: n };
   });

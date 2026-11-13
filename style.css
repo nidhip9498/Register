@@ -985,3 +985,7 @@ table.otlog td:nth-child(5) { white-space: nowrap; }
 .bschip.shared { background: #ffe066; border-color: #e0a800; color: #3d2f00; }
 .bschip.shared.on { background: #e0a800; color: #000; }
 .bschip.bskey { display: inline-block; min-width: 0; width: 1.2em; height: 1em; padding: 0; vertical-align: middle; cursor: default; }
+.classline { margin: 2px 0 0; padding: .45rem .65rem; border-radius: 10px; background: #fff4c2; color: #3d2f00; font-size: .95rem; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .classline { background: #4a3d0a; color: #fff4c2; } }
+:root[data-theme="dark"] .classline { background: #4a3d0a; color: #fff4c2; }
+@media (min-width: 900px) { .rosterrows > .rosterrow:nth-child(4) { grid-column: 1 / -1; } }
