@@ -301,12 +301,16 @@ function render() {
   if (S.setupNeeded) return app.append(setupView());
   if (!S.user) return app.append(loginView());
   const [route, arg] = location.hash.replace(/^#\/?/, '').split('/');
+  // A patient opened from a Bed Occupancy list: going back (button, browser back or swipe) reopens that list.
+  const prevRoute = S.curRoute; S.curRoute = route;
+  if (route !== 'patient' && route !== 'census') S.occBack = null;
+  const reopen = route === 'census' && prevRoute === 'patient' && S.occBack;
   app.append(topBar(route || 'register'));
   drawSyncChip(Sync.status());
   const main = h('main', {});
   app.append(main);
   if (keep) { main.style.minHeight = height + 'px'; window.scrollTo(0, keep); }
-  Promise.resolve(repairPod()).then(() => view(route, arg, main)).catch(() => {}).then(() => { if (keep) { window.scrollTo(0, keep); main.style.minHeight = ''; } });
+  Promise.resolve(repairPod()).then(() => view(route, arg, main)).catch(() => {}).then(() => { if (keep) { window.scrollTo(0, keep); main.style.minHeight = ''; } if (reopen && S.occBack) S.occBack.open(); });
 }
 // Put back any surgery date that went missing although the patient has a scrub team (POD then shows). At most every 10 s,
 // and again whenever changes arrive from other devices.
@@ -1616,6 +1620,10 @@ function changePasswordModal() {
 
 // ---------- Patient history ----------
 
+// Back to the Bed Occupancy list the patient was opened from.
+function occGoBack() {
+  if (S.curRoute === 'patient' && history.length > 1) history.back(); else location.hash = 'census';
+}
 async function patientView(main, id) {
   let a;
   try { a = await api('GET', '/api/admissions/' + id); } catch (e) { main.append(h('p', { class: 'error' }, e.message)); return; }
@@ -1625,9 +1633,11 @@ async function patientView(main, id) {
   const end = a.discharge_date || S.meta.today;
   const rows = [...new Set([...a.rounds.map((r) => r.date), ...a.notes.map((n) => n.date)])].sort()
     .map((d) => a.rounds.find((r) => r.date === d) || { date: d, vals: {}, remarks: '', filled_by: '' });
+  if (S.occBack) main.append(h('button', { type: 'button', class: 'backcorner', onclick: occGoBack, title: 'Back to the list' }, `‹ Back to ${S.occBack.title} patients`));
   main.append(
     h('div', { class: 'toolbar' },
-      h('a', { href: isIcu(a.bed) ? '#icu' : '#register', class: 'button ghost' }, '‹ Register'),
+      S.occBack ? h('button', { type: 'button', class: 'ghost', onclick: occGoBack }, `‹ ${S.occBack.title} patients`)
+        : h('a', { href: isIcu(a.bed) ? '#icu' : '#register', class: 'button ghost' }, '‹ Register'),
       h('div', { class: 'actions' },
         canEdit() && canUndoDischarge(a) && h('button', { class: 'ghost', onclick: async () => {
           if (!confirm('Bring this patient back into the ward register?')) return;
@@ -1647,7 +1657,7 @@ async function patientView(main, id) {
         !icu && fact('Weight', a.weight && `${a.weight} kg`),
         fact('Short notes', a.instructions)),
       canEdit() && !a.discharge_date && h('button', { class: 'ghost small', onclick: () => admitModal(null, a) }, 'Edit details')),
-    a.ot.length ? [h('h3', {}, 'OT findings & instructions'), h('div', { class: 'card ot' }, otList(a.ot, () => render()))] : null,
+    a.ot.length ? [h('h3', {}, 'OT findings & instructions'), h('div', { class: 'card ot' }, otList(a.ot, () => render()))] : '',
     h('h3', {}, 'Daily rounds'),
     rows.length ? h('div', { class: 'tablewrap' }, h('table', { class: 'hist' },
       h('thead', {}, h('tr', {}, h('th', {}, 'Date'), a.surgery_date && h('th', {}, 'POD'), keys.map((k) => h('th', {}, fieldLabel(k) + (unitOf(k, a) ? ` (${unitOf(k, a)})` : ''))), h('th', {}, 'Remarks'), h('th', {}, `${a.unit || 'Consultant'} notes`), h('th', {}, 'By'))),
@@ -2557,7 +2567,7 @@ function occupancyPanel(title, pts, icuPts, date, isUnit) {
   const close = () => root.replaceChildren();
   const table = (rows, icuTable) => rows.length ? h('div', { class: 'tablewrap' }, h('table', { class: 'list' },
     h('thead', {}, h('tr', {}, ['Bed', 'Name', 'UHID', 'Age / Sex', !isUnit && 'Consultant', 'Diagnosis', 'Surgery', 'POD', 'Day'].filter(Boolean).map((t) => h('th', {}, t)))),
-    h('tbody', {}, rows.map((a) => h('tr', { class: 'clickable', onclick: () => { close(); location.hash = 'patient/' + a.id; } },
+    h('tbody', {}, rows.map((a) => h('tr', { class: 'clickable', onclick: () => { close(); S.occBack = { title, open: () => occupancyPanel(title, pts, icuPts, date, isUnit) }; location.hash = 'patient/' + a.id; } },
       h('td', {}, h('span', { class: 'bedno' }, a.bed_on_date)), h('td', {}, h('b', {}, a.name)), h('td', {}, a.ip_no),
       h('td', {}, ageSex(a, date)), !isUnit && h('td', {}, a.unit), h('td', {}, a.diagnosis), h('td', {}, procText(a)),
       h('td', {}, podText(a, date).replace('POD ', '')), h('td', {}, dayNo(a, date))))))) :

@@ -992,3 +992,5 @@ table.otlog td:nth-child(5) { white-space: nowrap; }
 .opdlist { display: flex; flex-wrap: wrap; gap: 2px 18px; }
 .opdlist b { white-space: nowrap; }
 @media (max-width: 600px) { .opdlist { flex-direction: column; } .opdlist b { white-space: normal; } }
+.backcorner { position: fixed; left: 12px; bottom: 16px; z-index: 30; padding: .6rem 1rem; border-radius: 999px; border: 0; background: var(--accent, #1f6f78); color: #fff; font-weight: 700; box-shadow: 0 3px 10px rgba(0,0,0,.25); cursor: pointer; }
+@media print { .backcorner { display: none; } }
