@@ -463,7 +463,7 @@ const Store = (() => {
     next.instructions = [keep.instructions, other.instructions].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
     next.ot_findings = [keep.ot_findings, other.ot_findings].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
     next.ot_overs = [keep.ot_overs, other.ot_overs].filter((x, i, l) => x && l.indexOf(x) === i).join('\n');
-    put(keep.id, 'admission', { ...next, updated_at: stamp() });
+    put(keep.id, 'admission', { ...next, bed_set_at: now(), updated_at: stamp() });
     put(other.id, 'admission', null);
     audit('merge duplicate', `${other.name} (${other.bed}) into ${keep.name} (${keep.bed})`);
     return { ok: true };
@@ -519,8 +519,9 @@ const Store = (() => {
     if (occ.length && !body.swap) throw new HttpError(409, `Bed ${to} already has ${occ.map((o) => o.name).join(', ')}`);
     const date = isDate(body.date) ? body.date : today();
     const move = (adm, from, dest) => {
-      put('move:' + uuid(), 'move', { admission_id: adm.id, from_bed: from, to_bed: dest, move_date: date, moved_by: currentUser.id, at: now() });
-      put(adm.id, 'admission', { ...strip(adm), bed: dest });
+      const at = now();
+      put('move:' + uuid(), 'move', { admission_id: adm.id, from_bed: from, to_bed: dest, move_date: date, moved_by: currentUser.id, at });
+      put(adm.id, 'admission', { ...strip(adm), bed: dest, bed_set_at: at });
     };
     move(a, a.bed, to);
     // Swap: whoever was in the target bed takes this patient's old bed, like the old sheet did.
@@ -588,8 +589,9 @@ const Store = (() => {
   function doMoves(moves, skip, date) {
     for (const m of moves) {
       if (skip(m.i)) continue;
-      put('move:' + uuid(), 'move', { admission_id: m.adm.id, from_bed: m.from, to_bed: m.to, move_date: date, moved_by: currentUser.id, at: now() });
-      put(m.adm.id, 'admission', { ...strip(m.adm), bed: m.to });
+      const at = now();
+      put('move:' + uuid(), 'move', { admission_id: m.adm.id, from_bed: m.from, to_bed: m.to, move_date: date, moved_by: currentUser.id, at });
+      put(m.adm.id, 'admission', { ...strip(m.adm), bed: m.to, bed_set_at: at });
     }
   }
   const nameIn = (moves, i, bed) => { const m = moves.find((x) => x.i === i && x.from === bed); return m && m.adm ? m.adm.name : ''; };
@@ -1360,7 +1362,21 @@ const Store = (() => {
   // POD comes from scrub teams. If a surgery date went missing (a device saved the patient with an older copy, or the
   // OT entry was linked to the patient later), put back every day this patient had a scrub team, up to three.
   // A patient whose surgery dates were typed in by hand (surgery_manual) is left as typed.
+  // The bed is the one the latest bed move sent the patient to. A phone that had not yet received that move could save the
+  // patient (scrub team, surgery date, procedure done) with the old bed and put them back there (Nidhi, 2026-11-16).
+  // Move records are never overwritten, so the newest move wins over an older copy of the patient's record.
+  function fixBedsFromMoves() {
+    const latest = new Map();
+    for (const m of all('move')) { const l = latest.get(m.admission_id); if (!l || (m.at || 0) > (l.at || 0)) latest.set(m.admission_id, m); }
+    for (const [id, m] of latest) {
+      const a = get(id);
+      if (!a || a.discharge_date || !m.to_bed || m.to_bed === a.bed || (m.at || 0) <= (a.bed_set_at || 0)) continue;
+      put(a.id, 'admission', { ...strip(a), bed: m.to_bed, bed_set_at: m.at });
+      audit('bed kept after an older copy', `${a.name}: ${a.bed} -> ${m.to_bed}`);
+    }
+  }
   route('POST', '/api/surgerydates/repair', EDITORS, () => {
+    fixBedsFromMoves();
     let fixed = 0;
     const t = today(), keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
     for (const a0 of all('admission')) {

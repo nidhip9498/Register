@@ -1060,9 +1060,12 @@ function procedureBox(a, surgeries, onDates) {
           return out;
         } };
     },
-    save: (v, dates) => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { procedure_done: v, ...(dates || {}) }).then(() => { a.procedure_done = v; Object.assign(a, dates || {}); if (dates && onDates) onDates(); }),
+    save: (v, dates) => freshen().then(() => api('PUT', '/api/admissions/' + encodeURIComponent(a.id), { procedure_done: v, ...(dates || {}) })).then(() => { a.procedure_done = v; Object.assign(a, dates || {}); if (dates && onDates) onDates(); }),
   });
 }
+// Before saving onto a patient's record: fetch the other phones' latest changes first (a few seconds at most),
+// so an old copy here does not undo a bed move or discharge made elsewhere.
+const freshen = () => Promise.race([Promise.resolve().then(() => Sync.syncNow()).catch(() => {}), new Promise((r) => setTimeout(r, 4000))]);
 // Rounds: change the scrub team of an earlier operation without going to the OT list.
 async function editScrubFromRounds(x, done) {
   try {
@@ -1999,7 +2002,7 @@ function scrubPopup(e, done, listDate) {
       scrubPicker(e.scrub, async (team) => {
         // A team saved after the OT day (e.g. two days later) is confirmed first: it sets that day as the surgery date.
         if (team.length && !(e.scrub || []).length && listDate && listDate < S.meta.today && !confirm(`This OT list was on ${fmtDay(listDate)}. Save the scrub team for that day? ${fmtDate(listDate)} becomes the surgery date (POD 0).`)) return;
-        try { const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team, done: doneIn.value.trim() }); close(); toast((res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved') + (res.removed ? ` · ${res.removed} duplicate posting removed` : '')); done(); } catch (x) { toast(x.message, true); }
+        try { await freshen(); const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team, done: doneIn.value.trim() }); close(); toast((res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved') + (res.removed ? ` · ${res.removed} duplicate posting removed` : '')); done(); } catch (x) { toast(x.message, true); }
       }),
       caseCancelForm(e, () => { close(); done(); }))));
 }
