@@ -522,6 +522,7 @@ const Store = (() => {
       const at = now();
       put('move:' + uuid(), 'move', { admission_id: adm.id, from_bed: from, to_bed: dest, move_date: date, moved_by: currentUser.id, at });
       put(adm.id, 'admission', { ...strip(adm), bed: dest, bed_set_at: at });
+      bedToOtLists(adm.id, dest);
     };
     move(a, a.bed, to);
     // Swap: whoever was in the target bed takes this patient's old bed, like the old sheet did.
@@ -592,6 +593,7 @@ const Store = (() => {
       const at = now();
       put('move:' + uuid(), 'move', { admission_id: m.adm.id, from_bed: m.from, to_bed: m.to, move_date: date, moved_by: currentUser.id, at });
       put(m.adm.id, 'admission', { ...strip(m.adm), bed: m.to, bed_set_at: at });
+      bedToOtLists(m.adm.id, m.to);
     }
   }
   const nameIn = (moves, i, bed) => { const m = moves.find((x) => x.i === i && x.from === bed); return m && m.adm ? m.adm.name : ''; };
@@ -1137,7 +1139,7 @@ const Store = (() => {
   }
   // On today's and coming lists an admitted child shows the bed they are in now (after any bed move); earlier lists keep what was printed.
   function liveBed(e, l) {
-    if (e.cancelled || !e.admission_id || l.date < today() || e.bed_fixed) return e.bed;
+    if (e.cancelled || !e.admission_id || l.date < today()) return e.bed;
     const a = get(e.admission_id);
     return a && !a.discharge_date ? a.bed : e.bed;
   }
@@ -1367,6 +1369,15 @@ const Store = (() => {
   // The bed is the one the latest bed move sent the patient to. A phone that had not yet received that move could save the
   // patient (scrub team, surgery date, procedure done) with the old bed and put them back there (Nidhi, 2026-11-16).
   // Move records are never overwritten, so the newest move wins over an older copy of the patient's record.
+  // A bed move also changes the bed on the patient's OT list entries for today and coming days, so the list (and its print
+  // after the day) shows where the child is now. Lists of earlier days keep their bed.
+  function bedToOtLists(admId, bed) {
+    for (const e of all('otentry')) {
+      if (e.admission_id !== admId || e.cancelled || e.bed === bed) continue;
+      const l = get(e.list_id);
+      if (l && l.date >= today()) put(e.id, 'otentry', { ...strip(e), bed });
+    }
+  }
   function fixBedsFromMoves() {
     const latest = new Map();
     for (const m of all('move')) { const l = latest.get(m.admission_id); if (!l || (m.at || 0) > (l.at || 0)) latest.set(m.admission_id, m); }
@@ -1420,9 +1431,8 @@ const Store = (() => {
     if (opDate && l0 && opDate === l0.date) opDate = null;
     if (opDate && opDate > today()) throw new HttpError(400, 'The date of surgery cannot be after today');
     const oldDay = e.op_date || (l0 && l0.date);
-    // Once the team is in, the bed on the OT list stays as it was shown at that moment; a later bed move doesn't change it (Nidhi, 2026-11-18).
-    const bedFix = scrub.length ? (e.bed_fixed ? { bed: e.bed, bed_fixed: true } : { bed: l0 ? liveBed(e, l0) : e.bed, bed_fixed: true }) : { bed_fixed: false };
-    put(e.id, 'otentry', { ...strip(e), scrub, done, op_date: opDate, ...bedFix, updated_by: currentUser.id, updated_at: stamp() });
+    // The OT list shows the bed the patient is in now (shifted that morning, for example); saving the team never puts back an older bed (Nidhi, 2026-11-18).
+    put(e.id, 'otentry', { ...strip(e), scrub, done, op_date: opDate, bed: l0 ? liveBed(e, l0) : e.bed, updated_by: currentUser.id, updated_at: stamp() });
     touchOtList(e.list_id, `set the scrub team for ${e.name}`);
     // A scrub team means the operation happened: that list's day becomes a surgery date for an admitted patient (POD counts from it).
     const l = get(e.list_id);
