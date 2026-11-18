@@ -1106,7 +1106,9 @@ const Store = (() => {
       if (e.cancelled || !free || !match) continue;
       const l = get(e.list_id);
       if (!l || l.date < from) continue;
-      put(e.id, 'otentry', { ...strip(e), admission_id: a.id, bed: a.bed, ...(isDayCare(e.bed) ? { from_daycare: true } : {}) });
+      // A list from a past day keeps the bed it was made with (Nidhi, 2026-11-18); today's and coming lists show the current bed.
+      const keepBed = l.date < today() && (e.bed || '').trim();
+      put(e.id, 'otentry', { ...strip(e), admission_id: a.id, ...(keepBed ? {} : { bed: a.bed }), ...(isDayCare(e.bed) ? { from_daycare: true } : {}) });
       touchOtList(l.id, `linked ${e.name} to bed ${a.bed}`);
     }
   }
@@ -1135,7 +1137,7 @@ const Store = (() => {
   }
   // On today's and coming lists an admitted child shows the bed they are in now (after any bed move); earlier lists keep what was printed.
   function liveBed(e, l) {
-    if (e.cancelled || !e.admission_id || l.date < today()) return e.bed;
+    if (e.cancelled || !e.admission_id || l.date < today() || e.bed_fixed) return e.bed;
     const a = get(e.admission_id);
     return a && !a.discharge_date ? a.bed : e.bed;
   }
@@ -1418,7 +1420,9 @@ const Store = (() => {
     if (opDate && l0 && opDate === l0.date) opDate = null;
     if (opDate && opDate > today()) throw new HttpError(400, 'The date of surgery cannot be after today');
     const oldDay = e.op_date || (l0 && l0.date);
-    put(e.id, 'otentry', { ...strip(e), scrub, done, op_date: opDate, updated_by: currentUser.id, updated_at: stamp() });
+    // Once the team is in, the bed on the OT list stays as it was shown at that moment; a later bed move doesn't change it (Nidhi, 2026-11-18).
+    const bedFix = scrub.length ? (e.bed_fixed ? { bed: e.bed, bed_fixed: true } : { bed: l0 ? liveBed(e, l0) : e.bed, bed_fixed: true }) : { bed_fixed: false };
+    put(e.id, 'otentry', { ...strip(e), scrub, done, op_date: opDate, ...bedFix, updated_by: currentUser.id, updated_at: stamp() });
     touchOtList(e.list_id, `set the scrub team for ${e.name}`);
     // A scrub team means the operation happened: that list's day becomes a surgery date for an admitted patient (POD counts from it).
     const l = get(e.list_id);
@@ -1428,7 +1432,8 @@ const Store = (() => {
     if (!e.cancelled && l && l.date <= today()) {
       const linked = e.admission_id && get(e.admission_id);
       const a = (linked && !linked.discharge_date ? linked : null) || (e.uhid && all('admission').find((x) => !x.discharge_date && sameUhid(x.ip_no, e.uhid))) || linked;
-      if (a && !a.discharge_date && e.admission_id !== a.id) put(e.id, 'otentry', { ...strip(get(e.id)), admission_id: a.id, bed: a.bed });
+      // Linked to the patient's current stay; the bed written on the OT list stays as it was (Nidhi, 2026-11-18).
+      if (a && !a.discharge_date && e.admission_id !== a.id) put(e.id, 'otentry', { ...strip(get(e.id)), admission_id: a.id });
       if (a && scrub.length) {
         const ops = scrubbedEntries(a.id), latest = !ops.length || ops[ops.length - 1].id === e.id;
         // The pop-up and Rounds show the same Procedure done: one operation replaces it, a later one is added after the earlier.
