@@ -673,7 +673,7 @@ const Store = (() => {
       const l = get(e.list_id);
       // scrub_by: who saved the scrub team, with their role (the discharge summary's Managing SR when no SR is in the team).
       const by = e.updated_by ? get(e.updated_by) : null;
-      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, done: e.done || e.surgery || '', surgery: e.surgery || '', kind: l.kind || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id,
+      if (l) (out[e.admission_id] = out[e.admission_id] || []).push({ date: e.op_date || l.date, ot: l.ot, done: e.done || e.surgery || '', surgery: e.surgery || '', kind: l.kind || '', scrub: e.scrub || [], list_id: l.id, entry_id: e.id,
         scrub_by: by ? by.name : '', scrub_by_role: by ? by.role : '' });
     }
     for (const k in out) out[k].sort((x, y) => (x.date < y.date ? -1 : 1));
@@ -692,7 +692,7 @@ const Store = (() => {
   // The patient's OT entries that have a scrub team, oldest first.
   function scrubbedEntries(admId) {
     return all('otentry').filter((e) => e.admission_id === admId && !e.cancelled && !e.case_cancelled && (e.scrub || []).length && get(e.list_id))
-      .sort((x, y) => (get(x.list_id).date < get(y.list_id).date ? -1 : 1));
+      .sort((x, y) => ((x.op_date || get(x.list_id).date) < (y.op_date || get(y.list_id).date) ? -1 : 1));
   }
   function otByAdmission() {
     const out = {};
@@ -1390,8 +1390,9 @@ const Store = (() => {
         if (e.cancelled || e.case_cancelled || !(e.scrub || []).length) continue;
         const l = get(e.list_id);
         if (!l || !l.date || l.date > t) continue;
-        const mine = e.admission_id === a.id || (!e.admission_id && u && sameUhid(e.uhid, a.ip_no) && (!a.admit_date || l.date >= a.admit_date));
-        if (mine) days.add(l.date);
+        const day = e.op_date || l.date;
+        const mine = e.admission_id === a.id || (!e.admission_id && u && sameUhid(e.uhid, a.ip_no) && (!a.admit_date || day >= a.admit_date));
+        if (mine) days.add(day);
       }
       const missing = [...days].filter((d) => !have.includes(d));
       if (!missing.length || have.length >= 3) continue;
@@ -1411,7 +1412,13 @@ const Store = (() => {
     const e = getEntry(p.id);
     const scrub = (Array.isArray(body.scrub) ? body.scrub : []).map((x) => str(x, 60)).filter((x, i, l) => x && l.indexOf(x) === i).slice(0, 10);
     const done = body.done != null ? str(body.done, 300) : (e.done || '');
-    put(e.id, 'otentry', { ...strip(e), scrub, done, updated_by: currentUser.id, updated_at: stamp() });
+    const l0 = get(e.list_id);
+    // Scrub team after the OT day: the date of surgery is asked for and POD counts from it (Nidhi, 2026-11-18).
+    let opDate = body.op_date !== undefined ? (isDate(body.op_date) ? body.op_date : null) : (e.op_date || null);
+    if (opDate && l0 && opDate === l0.date) opDate = null;
+    if (opDate && opDate > today()) throw new HttpError(400, 'The date of surgery cannot be after today');
+    const oldDay = e.op_date || (l0 && l0.date);
+    put(e.id, 'otentry', { ...strip(e), scrub, done, op_date: opDate, updated_by: currentUser.id, updated_at: stamp() });
     touchOtList(e.list_id, `set the scrub team for ${e.name}`);
     // A scrub team means the operation happened: that list's day becomes a surgery date for an admitted patient (POD counts from it).
     const l = get(e.list_id);
@@ -1427,12 +1434,19 @@ const Store = (() => {
         // The pop-up and Rounds show the same Procedure done: one operation replaces it, a later one is added after the earlier.
         if (latest && ops.length <= 1 && done) put(a.id, 'admission', { ...strip(get(a.id)), procedure_done: done, updated_at: stamp() });
         else noteProcedure(get(a.id), done, e.done || '');
-        surgery = surgeryFromOtList(get(a.id), l.date);
+        const day = opDate || l.date;
+        // The date of surgery changed: the old day stops being a surgery date.
+        if ((e.scrub || []).length && oldDay && oldDay !== day) {
+          const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'], cur = get(a.id);
+          const left = keys.map((k) => cur[k]).filter((d) => d && d !== oldDay).sort();
+          put(a.id, 'admission', { ...strip(cur), ...Object.fromEntries(keys.map((k, i) => [k, left[i] || null])), updated_at: stamp() });
+        }
+        surgery = surgeryFromOtList(get(a.id), day, true);
       }
       // Team cleared: that day is no longer a surgery date.
       else if (a && !scrub.length && (e.scrub || []).length) {
         const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'], cur = get(a.id);
-        const left = keys.map((k) => cur[k]).filter((d) => d && d !== l.date).sort();
+        const left = keys.map((k) => cur[k]).filter((d) => d && d !== oldDay).sort();
         put(a.id, 'admission', { ...strip(cur), ...Object.fromEntries(keys.map((k, i) => [k, left[i] || null])), updated_at: stamp() });
       }
     }
@@ -1599,7 +1613,7 @@ const Store = (() => {
       const l = i >= 0 && get(e.list_id);
       if (!l) continue;
       const a = e.admission_id && get(e.admission_id);
-      rows.push({ id: e.id, list_id: l.id, admission_id: a ? a.id : '', date: l.date, ot: l.ot, name: e.name, uhid: e.uhid, age: e.age, dob: a && a.dob, sex: e.sex, diagnosis: e.diagnosis, surgery: e.done || e.surgery, role: i + 1, team: e.scrub,
+      rows.push({ id: e.id, list_id: l.id, admission_id: a ? a.id : '', date: e.op_date || l.date, ot: l.ot, name: e.name, uhid: e.uhid, age: e.age, dob: a && a.dob, sex: e.sex, diagnosis: e.diagnosis, surgery: e.done || e.surgery, role: i + 1, team: e.scrub,
         cr_no: (a && (a.cr_no || (a.clinical && a.clinical.cr_no))) || e.cr_no || '', outcome: logOutcome(a, e) });
     }
     // …and any posted with findings from Rounds earlier.

@@ -1990,8 +1990,12 @@ async function otHomeView(main) {
 const PENCIL_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 const pencilLink = (href, title) => { const a = h('a', { class: 'pencil', href, title, 'aria-label': title }); a.innerHTML = PENCIL_SVG; return a; };
 // Scrub team in a pop-up (tap the initials in order, Save team).
+// The scrub team is added on the OT day itself (until midnight). Later, the date of surgery is asked for and POD counts from it
+// (Nidhi, 2026-11-18). Saving a team changes only the procedure done and the surgery date (POD), nothing else of the patient.
 function scrubPopup(e, done, listDate) {
   const root = document.getElementById('modal-root');
+  const late = !!listDate && listDate < S.meta.today;
+  const dateIn = h('input', { type: 'date', max: S.meta.today, value: e.op_date || ((e.scrub || []).length ? listDate : '') });
   const doneIn = h('textarea', { rows: 2, placeholder: 'Procedure actually done' }, e.done || e.surgery || '');
   const close = () => root.replaceChildren();
   root.replaceChildren(h('div', { class: 'backdrop', onclick: (ev) => ev.target === ev.currentTarget && close() },
@@ -1999,10 +2003,16 @@ function scrubPopup(e, done, listDate) {
       h('div', { class: 'mhead' }, h('h2', {}, `Scrub team · ${e.name}`), h('div', { class: 'btns' }, h('button', { type: 'button', class: 'ghost small', onclick: close }, 'Close'))),
       // First: the procedure actually done (starts as the planned surgery). It goes to the Logbook, Rounds and the Ward Register.
       h('label', { class: 'field donefield' }, h('span', { class: 'flabel' }, 'Procedure done'), doneIn),
+      late ? h('label', { class: 'field donefield latedate' }, h('span', { class: 'flabel' }, 'Date of surgery'), dateIn,
+        h('small', { class: 'warntext' }, `The OT day (${fmtDate(listDate)}) is over. Enter the date the operation was done: POD counts from it.`)) : null,
       scrubPicker(e.scrub, async (team) => {
-        // A team saved after the OT day (e.g. two days later) is confirmed first: it sets that day as the surgery date.
-        if (team.length && !(e.scrub || []).length && listDate && listDate < S.meta.today && !confirm(`This OT list was on ${fmtDay(listDate)}. Save the scrub team for that day? ${fmtDate(listDate)} becomes the surgery date (POD 0).`)) return;
-        try { await freshen(); const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, { scrub: team, done: doneIn.value.trim() }); close(); toast((res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved') + (res.removed ? ` · ${res.removed} duplicate posting removed` : '')); done(); } catch (x) { toast(x.message, true); }
+        const body = { scrub: team, done: doneIn.value.trim() };
+        if (late && team.length) {
+          if (!dateIn.value) { toast('Enter the date of surgery first', true); dateIn.focus(); return; }
+          if (dateIn.value > S.meta.today) { toast('The date of surgery cannot be after today', true); return; }
+          body.op_date = dateIn.value;
+        }
+        try { await freshen(); const res = await api('PUT', `/api/otentries/${encodeURIComponent(e.id)}/scrub`, body); close(); toast((res.surgery ? postedText(res).replace('Posted', 'Scrub team saved') : 'Scrub team saved') + (res.removed ? ` · ${res.removed} duplicate posting removed` : '')); done(); } catch (x) { toast(x.message, true); }
       }),
       caseCancelForm(e, () => { close(); done(); }))));
 }
