@@ -2103,7 +2103,7 @@ function otRow(e, i, listId, date) {
         : date === S.meta.today ? h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render, date) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team')
         // After midnight the scrub team is added (with the date of surgery) from the patient's Rounds box only (Nidhi, 2026-11-19).
         : date < S.meta.today ? h('span', { class: 'small muted' }, (e.scrub || []).length ? e.scrub.join('/') : 'No scrub team') : null,
-      !e.cancelled && !e.case_cancelled ? oversBtn(e) : null,
+      date === S.meta.today && !e.cancelled && !e.case_cancelled ? oversBtn(e) : null,
       pencilLink(listHref + '/' + encodeURIComponent(e.id), `Edit ${e.name}`))));
 }
 function todayDrop(l) {
@@ -2381,7 +2381,7 @@ function otExtras(l, e, reload) {
   return h('div', { class: 'ottiles' },
     l.date === S.meta.today && !e.case_cancelled && h('button', { class: 'ottile', onclick: () => scrubPopup(e, reload, l.date) }, (e.scrub || []).length ? `Scrub team: ${e.scrub.join('/')}` : '+ Add scrub team'),
     l.date < S.meta.today && !e.case_cancelled && !e.cancelled && h('span', { class: 'small muted latescrub' }, (e.scrub || []).length ? `Scrub team: ${e.scrub.join('/')}` : (e.admission_id ? 'No scrub team. Add it from the patient\'s Rounds box (Procedure done).' : 'No scrub team')),
-    oversBtn(e, reload));
+    l.date === S.meta.today ? oversBtn(e, reload) : null);
 }
 
 // OT cancelled for the day: put the patient on another day's (or another OT's) list.
