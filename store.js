@@ -57,8 +57,34 @@ const Store = (() => {
   function all(type) { const out = []; for (const r of R.values()) if (r.type === type && r.data) out.push({ id: r.id, ...r.data }); return out; }
 
   const pending = [];
+  // Patient records keep a time per field (_ft), so two phones' changes are merged field by field: a phone saving an old
+  // copy of the patient (old bed, not yet discharged…) no longer undoes newer changes made on another phone (Nidhi, 2026-11-19).
+  const MERGED = new Set(['admission']);
+  const same = (x, y) => JSON.stringify(x ?? null) === JSON.stringify(y ?? null);
+  function fieldTimes(data, prevRec, t) {
+    const prev = prevRec && prevRec.data, pft = (prev && prev._ft) || {}, ft = {};
+    for (const k of Object.keys(data)) {
+      if (k === '_ft') continue;
+      ft[k] = !prev || !same(data[k], prev[k]) ? t : (pft[k] ?? prevRec.ts ?? t);
+    }
+    return ft;
+  }
+  function mergeFields(mine, rr) {
+    const md = mine.data, rd = rr.data, mft = md._ft || {}, rft = rd._ft || {};
+    const out = { ...rd }, ft = { ...rft };
+    let keptMine = false;
+    for (const k of new Set([...Object.keys(md), ...Object.keys(rd)])) {
+      if (k === '_ft') continue;
+      const mt = mft[k] ?? mine.ts, rt = rd._ft ? (rft[k] ?? rr.ts) : rr.ts;
+      if (!same(md[k], rd[k]) && mt > rt) { out[k] = md[k]; ft[k] = mt; keptMine = true; } else ft[k] = Math.max(rt, mft[k] ?? 0);
+    }
+    out._ft = ft;
+    return { data: out, keptMine };
+  }
   function put(id, type, data) {
-    const rec = { id, type, data, ts: now(), by: currentUser ? currentUser.id : null, dirty: true };
+    const t = now();
+    if (data && MERGED.has(type)) data = { ...data, _ft: fieldTimes(data, R.get(id), t) };
+    const rec = { id, type, data, ts: t, by: currentUser ? currentUser.id : null, dirty: true };
     R.set(id, rec);
     pending.push(rec);
     return rec;
@@ -73,6 +99,14 @@ const Store = (() => {
     for (const rr of recs) {
       const mine = R.get(rr.id);
       if (mine && mine.ts >= rr.ts) continue;
+      if (mine && mine.data && rr.data && MERGED.has(rr.type)) {
+        const m = mergeFields(mine, rr);
+        // Something of ours was newer: keep it and send the merged record back, so every phone ends up the same.
+        const rec = m.keptMine ? { ...rr, data: m.data, ts: Math.max(now(), rr.ts + 1), dirty: true } : { ...rr, data: m.data, dirty: false };
+        R.set(rr.id, rec);
+        changed.push(rec);
+        continue;
+      }
       const rec = { ...rr, dirty: false };
       R.set(rr.id, rec);
       changed.push(rec);

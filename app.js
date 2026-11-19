@@ -317,6 +317,9 @@ function render() {
 let podCheckedAt = 0;
 async function repairPod() {
   if (!canEdit() || Date.now() - podCheckedAt < 10e3) return;
+  // Only on a phone that has just fetched everything from the others: an old copy must not be saved back (Nidhi, 2026-11-19).
+  const st = Sync.status();
+  if (st.state !== 'ok' || Date.now() - (st.lastOk || 0) > 120e3) return;
   podCheckedAt = Date.now();
   try { await api('POST', '/api/surgerydates/repair'); } catch (e) { /* older data or offline: nothing to do */ }
 }
