@@ -1048,7 +1048,10 @@ function procedureBox(a, surgeries, onDates) {
     extra: () => [surgeries.length ? h('small', {}, ' on ' + surgeries.map(fmtDate).join(', ')) : null,
       (a.otprocs || []).map((x) => h('div', { class: 'small muted otprocrow' }, `${otName(x.ot)} · ${fmtDate(x.date)}${x.done ? `: ${x.done}` : ''} · ${x.scrub.join('/')} `,
         canEdit() && x.list_id ? h('button', { type: 'button', class: 'ghost small teamedit', title: 'Edit the scrub team', onclick: () => editScrubFromRounds(x, onDates) }, 'Edit team') : null,
-        canEdit() && x.list_id ? pencilLink(`#otlist/${x.list_id}/${x.entry_id}`, 'Edit on the OT list') : null))],
+        canEdit() && x.list_id ? pencilLink(`#otlist/${x.list_id}/${x.entry_id}`, 'Edit on the OT list') : null)),
+      // An OT day that is over with no scrub team: add it here, with the date of surgery (POD counts from that date).
+      (a.otpending || []).map((x) => h('div', { class: 'small otprocrow otpend' }, `${otName(x.ot)} · ${fmtDate(x.date)}${x.surgery ? `: ${x.surgery} (planned)` : ''} · no scrub team `,
+        canEdit() ? h('button', { type: 'button', class: 'ghost small teamedit', title: 'Add the scrub team and date of surgery', onclick: () => editScrubFromRounds(x, onDates) }, '+ Add scrub team') : null))],
     // Surgery dates can be corrected here, for ward and ICU, on any day after the operation (Nidhi, 2026-11-06).
     // ICU babies admitted before the app often had surgery already: their dates are typed in here too.
     editExtra: () => {
@@ -1057,6 +1060,12 @@ function procedureBox(a, surgeries, onDates) {
       return { nodes: h('div', { class: 'sxdates' }, h('small', { class: 'muted block' }, 'Date of surgery (POD counts from it). Add a 2nd or 3rd if operated again.'), h('div', { class: 'sxdaterow' }, ins)),
         values: () => {
           const d = [...new Set(ins.map((i) => i.value).filter(Boolean))].sort();
+          // Ward patients: a new surgery date comes only with a scrub team (Nidhi, 2026-11-19). ICU babies may have been operated before admission.
+          if (!isIcu(a.bed)) {
+            const had = new Set(keys.map((k) => a[k]).filter(Boolean)), teamDays = new Set((a.otprocs || []).map((x) => x.date));
+            const bad = d.filter((x) => !had.has(x) && !teamDays.has(x));
+            if (bad.length) throw new Error(`Add the scrub team with the date (${fmtDate(bad[0])}): use + Add scrub team in this box or on the OT list that day`);
+          }
           const out = { surgery_date: d[0] || null, surgery_date2: d[1] || null, surgery_date3: d[2] || null };
           // Typed by hand: keep them as typed (the scrub-team check won't add dates back).
           if (keys.some((k) => (out[k] || null) !== (a[k] || null))) out.surgery_manual = true;
@@ -2009,6 +2018,10 @@ function scrubPopup(e, done, listDate) {
       late ? h('label', { class: 'field donefield latedate' }, h('span', { class: 'flabel' }, 'Date of surgery'), dateIn,
         h('small', { class: 'warntext' }, `The OT day (${fmtDate(listDate)}) is over. Enter the date the operation was done: POD counts from it.`)) : null,
       scrubPicker(e.scrub, async (team) => {
+        if (!team.length) {
+          if (!(e.scrub || []).length) { toast('Add the scrub team before saving: tap the names in order', true); return; }
+          if (!confirm('Remove the scrub team for this operation? Its surgery date and POD will be removed too.')) return;
+        }
         const body = { scrub: team, done: doneIn.value.trim() };
         if (late && team.length) {
           if (!dateIn.value) { toast('Enter the date of surgery first', true); dateIn.focus(); return; }
@@ -2046,7 +2059,9 @@ function otRow(e, i, listId, date) {
     h('div', { class: 'otrowbtns' },
       e.cancelled ? null
         : e.case_cancelled ? h('button', { type: 'button', class: 'ghost small', onclick: () => undoCaseCancel(e, render) }, 'Undo')
-        : date <= S.meta.today ? h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render, date) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team') : null,
+        : date === S.meta.today ? h('button', { type: 'button', class: 'ottile small', onclick: () => scrubPopup(e, render, date) }, (e.scrub || []).length ? e.scrub.join('/') : '+ Add scrub team')
+        // After midnight the scrub team is added (with the date of surgery) from the patient's Rounds box only (Nidhi, 2026-11-19).
+        : date < S.meta.today ? h('span', { class: 'small muted' }, (e.scrub || []).length ? e.scrub.join('/') : 'No scrub team') : null,
       !e.cancelled && !e.case_cancelled ? oversBtn(e) : null,
       pencilLink(listHref + '/' + encodeURIComponent(e.id), `Edit ${e.name}`))));
 }
@@ -2323,7 +2338,8 @@ function entryOversPopup(e, done) {
 // Scrub team (with the procedure done) and OT Overs for one patient on the list.
 function otExtras(l, e, reload) {
   return h('div', { class: 'ottiles' },
-    l.date <= S.meta.today && !e.case_cancelled && h('button', { class: 'ottile', onclick: () => scrubPopup(e, reload, l.date) }, (e.scrub || []).length ? `Scrub team: ${e.scrub.join('/')}` : '+ Add scrub team'),
+    l.date === S.meta.today && !e.case_cancelled && h('button', { class: 'ottile', onclick: () => scrubPopup(e, reload, l.date) }, (e.scrub || []).length ? `Scrub team: ${e.scrub.join('/')}` : '+ Add scrub team'),
+    l.date < S.meta.today && !e.case_cancelled && !e.cancelled && h('span', { class: 'small muted latescrub' }, (e.scrub || []).length ? `Scrub team: ${e.scrub.join('/')}` : (e.admission_id ? 'No scrub team. Add it from the patient\'s Rounds box (Procedure done).' : 'No scrub team')),
     oversBtn(e, reload));
 }
 

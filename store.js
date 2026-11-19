@@ -413,14 +413,14 @@ const Store = (() => {
     const adms = all('admission').filter((a) => (!a.admit_date || a.admit_date <= date) && (!a.discharge_date || a.discharge_date >= date))
       .sort((a, b) => ((a.admit_date || '') < (b.admit_date || '') ? -1 : (a.admit_date || '') > (b.admit_date || '') ? 1 : 0));
     const moves = all('move');
-    const ot = otByAdmission(), procs = otProcs(), inv = invByAdmission(), planned = plannedByAdmission();
+    const ot = otByAdmission(), procs = otProcs(), inv = invByAdmission(), planned = plannedByAdmission(), pend = otPending();
     return {
       date,
       admissions: adms.map((a) => {
         const r = get(`round:${a.id}:${date}`), p = get(`round:${a.id}:${prev}`);
         const n = get(`note:${a.id}:${date}`), pn = get(`note:${a.id}:${prev}`);
         return {
-          ...a, bed_on_date: bedOnDate(a, date, moves), ot: ot[a.id] || [], otprocs: procs[a.id] || [], planned_surgery: planned[a.id] || '', inv: inv[a.id] || [],
+          ...a, bed_on_date: bedOnDate(a, date, moves), ot: ot[a.id] || [], otprocs: procs[a.id] || [], otpending: pend[a.id] || [], planned_surgery: planned[a.id] || '', inv: inv[a.id] || [],
           round: r ? { vals: r.vals, remarks: r.remarks, filled_by: userName(r.filled_by), filled_at: r.filled_at } : null,
           prev_round: p ? { vals: p.vals, remarks: p.remarks } : null,
           unit_note: n ? n.note : '', unit_note_by: n ? userName(n.updated_by) : '', prev_unit_note: pn ? pn.note : '',
@@ -702,6 +702,16 @@ const Store = (() => {
 
   // OT findings and instructions: short posts anyone can add, like the WhatsApp group.
   // Per admitted patient: each OT day with the procedure done and the scrub team, from the OT lists.
+  // Operations on an OT day that is over, still without a scrub team: added later from the Rounds box (Nidhi, 2026-11-19).
+  function otPending() {
+    const out = {}, t = today();
+    for (const e of all('otentry')) {
+      if (e.cancelled || e.case_cancelled || !e.admission_id || (e.scrub || []).length) continue;
+      const l = get(e.list_id);
+      if (l && l.date < t) (out[e.admission_id] = out[e.admission_id] || []).push({ date: l.date, ot: l.ot, surgery: e.done || e.surgery || '', list_id: l.id, entry_id: e.id });
+    }
+    return out;
+  }
   function otProcs() {
     const out = {};
     for (const e of all('otentry')) {
@@ -944,7 +954,7 @@ const Store = (() => {
     const notes = all('note').filter((n) => n.admission_id === a.id).map((n) => ({ date: n.date, note: n.note }));
     const moves = all('move').filter((m) => m.admission_id === a.id).sort((x, y) => (x.move_date < y.move_date ? -1 : x.move_date > y.move_date ? 1 : x.at - y.at));
     // admitted_by: who admitted the patient (the discharge summary's Admission SR).
-    return { ...a, rounds, notes, moves, ot: otByAdmission()[a.id] || [], otprocs: otProcs()[a.id] || [], planned_surgery: plannedByAdmission()[a.id] || '', admitted_by: userName(a.created_by) };
+    return { ...a, rounds, notes, moves, ot: otByAdmission()[a.id] || [], otprocs: otProcs()[a.id] || [], otpending: otPending()[a.id] || [], planned_surgery: plannedByAdmission()[a.id] || '', admitted_by: userName(a.created_by) };
   });
 
   route('GET', '/api/patients', ANY, ({ query }) => {
@@ -1476,6 +1486,7 @@ const Store = (() => {
     let opDate = body.op_date !== undefined ? (isDate(body.op_date) ? body.op_date : null) : (e.op_date || null);
     if (opDate && l0 && opDate === l0.date) opDate = null;
     if (opDate && opDate > today()) throw new HttpError(400, 'The date of surgery cannot be after today');
+    if (scrub.length && l0 && l0.date < today() && !opDate && body.op_date === undefined) throw new HttpError(400, 'The OT day is over: enter the date of surgery with the scrub team');
     const oldDay = e.op_date || (l0 && l0.date);
     // The OT list shows the bed the patient is in now (shifted that morning, for example); saving the team never puts back an older bed (Nidhi, 2026-11-18).
     put(e.id, 'otentry', { ...strip(e), scrub, done, op_date: opDate, bed: l0 ? liveBed(e, l0) : e.bed, updated_by: currentUser.id, updated_at: stamp() });

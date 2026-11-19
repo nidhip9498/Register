@@ -996,3 +996,5 @@ table.otlog td:nth-child(5) { white-space: nowrap; }
 @media print { .backcorner { display: none; } }
 .latedate input { max-width: 14rem; }
 .latedate small { display: block; margin-top: 4px; }
+.otprocrow.otpend { color: var(--warn, #b45309); }
+.latescrub { display: block; margin-top: 4px; }
