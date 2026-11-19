@@ -1378,18 +1378,30 @@ const Store = (() => {
       if (l && l.date >= today()) put(e.id, 'otentry', { ...strip(e), bed });
     }
   }
-  function fixBedsFromMoves() {
-    const latest = new Map();
-    for (const m of all('move')) { const l = latest.get(m.admission_id); if (!l || (m.at || 0) > (l.at || 0)) latest.set(m.admission_id, m); }
-    for (const [id, m] of latest) {
-      const a = get(id);
-      if (!a || a.discharge_date || !m.to_bed || m.to_bed === a.bed || (m.at || 0) <= (a.bed_set_at || 0)) continue;
-      put(a.id, 'admission', { ...strip(a), bed: m.to_bed, bed_set_at: m.at });
-      audit('bed kept after an older copy', `${a.name}: ${a.bed} -> ${m.to_bed}`);
+  // v127 tried to put patients back in the bed of their latest move. With older records (merged duplicates, moves made before
+  // v127) it moved several patients into the wrong bed (Nidhi, 2026-11-19). It is switched off, and each move it made is
+  // undone once: the patient goes back to the bed they were in, if they are still in the bed it put them in.
+  function undoBedFixes() {
+    for (const au of all('audit')) {
+      if (au.action !== 'bed kept after an older copy' || au.undone) continue;
+      const d = au.detail || '', k = d.lastIndexOf(': ');
+      const m = k > 0 && d.slice(k + 2).match(/^(.+?) -> (.+)$/);
+      if (m) {
+        const name = d.slice(0, k), [, from, to] = m;
+        const a = all('admission').find((x) => !x.discharge_date && x.name === name && x.bed === to);
+        if (a) {
+          const at = now();
+          put('move:' + uuid(), 'move', { admission_id: a.id, from_bed: to, to_bed: from, move_date: today(), moved_by: currentUser.id, at, undo_fix: true });
+          put(a.id, 'admission', { ...strip(a), bed: from, bed_set_at: at });
+          bedToOtLists(a.id, from);
+        }
+      }
+      put(au.id, 'audit', { ...strip(au), undone: true });
     }
   }
+
   route('POST', '/api/surgerydates/repair', EDITORS, () => {
-    fixBedsFromMoves();
+    undoBedFixes();
     let fixed = 0;
     const t = today(), keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
     for (const a0 of all('admission')) {
