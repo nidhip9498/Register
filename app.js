@@ -2223,7 +2223,10 @@ async function allOtListsPopup() {
       h('tbody', {}, shown.map((r) => h('tr', { class: r.case_cancelled ? 'casecancelled' : '', onclick: () => { close(); location.hash = `otlist/${encodeURIComponent(r.list_id)}/${encodeURIComponent(r.entry_id)}`; } },
         h('td', { class: 'nowrap' }, fmtDate(r.date)), h('td', {}, r.uhid), h('td', {}, h('b', {}, r.name)), h('td', { class: 'nowrap' }, [r.age, r.sex].filter(Boolean).join(' / ')),
         h('td', {}, r.diagnosis), h('td', {}, r.procedure, r.case_cancelled ? h('div', { class: 'small cctag' }, 'Case cancelled') : ''), h('td', {}, fullNames(r.consultant)),
-        h('td', { class: 'nowrap' }, otName(r.ot), r.kind === 'Emergency' ? h('div', { class: 'small emtag' }, 'Emergency') : ''), h('td', {}, r.scrub.join('/')))))) : h('p', { class: 'muted' }, 'No OT lists match these filters.'));
+        h('td', { class: 'nowrap' }, otName(r.ot), r.kind === 'Emergency' ? h('div', { class: 'small emtag' }, 'Emergency') : ''), h('td', {}, r.date <= S.meta.today && !r.case_cancelled
+          // Scrub team can be added or changed here for any past day (asks for the date of surgery) (Nidhi, 2026-11-21).
+          ? h('button', { type: 'button', class: 'ghost small allotscrub', onclick: (ev) => { ev.stopPropagation(); editScrubFromRounds(r, () => allOtListsPopup()); } }, r.scrub.length ? r.scrub.join('/') : '+ Add')
+          : r.scrub.join('/')))))) : h('p', { class: 'muted' }, 'No OT lists match these filters.'));
   }
   draw();
 }

@@ -998,3 +998,4 @@ table.otlog td:nth-child(5) { white-space: nowrap; }
 .latedate small { display: block; margin-top: 4px; }
 .otprocrow.otpend { color: var(--warn, #b45309); }
 .latescrub { display: block; margin-top: 4px; }
+.allotscrub { white-space: nowrap; }
