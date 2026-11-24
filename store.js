@@ -340,13 +340,6 @@ const Store = (() => {
     return currentUser;
   }
 
-  // Usernames: lowercase letters, numbers, . _ - ; unique (Nidhi, 2026-11-24: users and admins can change them).
-  function cleanUsername(v, selfId) {
-    const username = str(v, 50).toLowerCase().trim();
-    if (!/^[a-z0-9._-]{3,50}$/.test(username)) throw new HttpError(400, 'Username: 3+ letters/numbers, no spaces');
-    if (all('user').some((u) => u.id !== selfId && u.username === username)) throw new HttpError(400, 'That username is taken');
-    return username;
-  }
   function validatePassword(p) { if (typeof p !== 'string' || p.length < 6) throw new HttpError(400, 'Password must be at least 6 characters'); }
   async function createUser(body) {
     const username = str(body.username, 50).toLowerCase();
@@ -398,16 +391,6 @@ const Store = (() => {
 
   route('POST', '/api/logout', ANY, async () => { currentUser = null; await delMeta('session'); return { ok: true }; });
 
-  // Change your own username (asks for the password).
-  route('POST', '/api/me/username', ANY, async ({ body }) => {
-    const u = get(currentUser.id);
-    if (!(await checkPassword(String(body.current || ''), u.pass_hash))) throw new HttpError(400, 'Password is wrong');
-    const username = cleanUsername(body.username, u.id);
-    put(u.id, 'user', { ...strip(u), username });
-    currentUser = { ...currentUser, username };
-    audit('change own username', `${u.username} → ${username}`);
-    return publicUser(get(u.id));
-  });
   route('POST', '/api/me/password', ANY, async ({ body }) => {
     const u = get(currentUser.id);
     if (!(await checkPassword(String(body.current || ''), u.pass_hash))) throw new HttpError(400, 'Current password is wrong');
@@ -996,7 +979,6 @@ const Store = (() => {
     if (u.id === currentUser.id && (role !== 'admin' || !active)) throw new HttpError(400, "You can't remove your own admin access");
     const next = { ...strip(u), name: str(body.name, 80) || u.name, role, active };
     if (body.initials !== undefined) next.initials = cleanInitials(body.initials, u.id);
-    if (body.username !== undefined) next.username = cleanUsername(body.username, u.id);
     if (body.password) { validatePassword(body.password); next.pass_hash = await hashPassword(body.password); }
     put(u.id, 'user', next);
     audit('edit user', u.username);
