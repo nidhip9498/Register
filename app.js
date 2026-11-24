@@ -398,7 +398,7 @@ function loginView() {
   const err = h('p', { class: 'error' });
   const help = h('div', {});
   const btn = h('button', { class: 'primary', type: 'submit' }, 'Sign in');
-  const form = h('form', { class: 'card auth', method: 'post', action: '#', id: 'login-form', onsubmit: async (e) => {
+  const form = h('form', { class: 'auth authform', method: 'post', action: '#', id: 'login-form', autocomplete: 'on', onsubmit: async (e) => {
     e.preventDefault();
     err.textContent = ''; help.replaceChildren();
     const creds = { username: form.username.value, password: form.password.value };
@@ -421,13 +421,16 @@ function loginView() {
       render();
     } catch (x) { err.textContent = x.message; btn.disabled = false; btn.textContent = 'Sign in'; }
   } },
-  h('img', { src: 'icon.svg', alt: '', class: 'logo' }),
-  h('h1', {}, 'Register'), h('p', { class: 'muted subtitle' }, 'Department of Pediatric Surgery'),
-  // Marked for the phone's saved passwords (iPhone Passwords, Google Password Manager) so they offer the saved username (Nidhi, 2026-11-24).
-  h('label', { for: 'login-username' }, 'Username', h('input', { id: 'login-username', name: 'username', type: 'text', autocomplete: 'username', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', required: true })),
-  h('label', { for: 'login-password' }, 'Password', h('input', { id: 'login-password', name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
+  // Marked for the phone's saved passwords (iPhone Passwords, Google Password Manager) so they offer the saved login (Nidhi, 2026-11-24).
+  h('label', { for: 'login-username' }, 'Username'), h('input', { id: 'login-username', name: 'username', type: 'text', autocomplete: 'username', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', required: true }),
+  h('label', { for: 'login-password' }, 'Password'), h('input', { id: 'login-password', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
   err, help, btn);
-  return h('div', { class: 'center' }, form);
+  // The app's name "Register" sits outside the form: inside it, iPhone took the form for a sign-up form ("Suggested User Name")
+  // and filled the saved password into the Username box.
+  return h('div', { class: 'center' }, h('div', { class: 'card auth' },
+    h('img', { src: 'icon.svg', alt: '', class: 'logo' }),
+    h('h1', {}, 'Register'), h('p', { class: 'muted subtitle' }, 'Department of Pediatric Surgery'),
+    form));
 }
 
 // Shown on the sign-in screen when this device can't fetch the ward's latest entries.
