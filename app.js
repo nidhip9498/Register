@@ -208,6 +208,7 @@ function lockScreen() {
   h('img', { src: 'icon.svg', alt: '', class: 'logo' }),
   h('h1', {}, 'Locked'),
   h('p', { class: 'muted subtitle' }, `The app locked after ${LOCK_MINUTES} minutes without use. Anything you were typing is kept.`),
+  h('input', { type: 'text', name: 'username', autocomplete: 'username', value: S.user.username, readonly: true, hidden: true }),
   h('label', {}, `Password for ${S.user.name}`, pass),
   err,
   h('button', { class: 'primary', type: 'submit' }, 'Unlock'),
@@ -397,7 +398,7 @@ function loginView() {
   const err = h('p', { class: 'error' });
   const help = h('div', {});
   const btn = h('button', { class: 'primary', type: 'submit' }, 'Sign in');
-  const form = h('form', { class: 'card auth', onsubmit: async (e) => {
+  const form = h('form', { class: 'card auth', method: 'post', action: '#', id: 'login-form', onsubmit: async (e) => {
     e.preventDefault();
     err.textContent = ''; help.replaceChildren();
     const creds = { username: form.username.value, password: form.password.value };
@@ -422,8 +423,9 @@ function loginView() {
   } },
   h('img', { src: 'icon.svg', alt: '', class: 'logo' }),
   h('h1', {}, 'Register'), h('p', { class: 'muted subtitle' }, 'Department of Pediatric Surgery'),
-  h('label', {}, 'Username', h('input', { name: 'username', autocomplete: 'username', autocapitalize: 'none', required: true })),
-  h('label', {}, 'Password', h('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
+  // Marked for the phone's saved passwords (iPhone Passwords, Google Password Manager) so they offer the saved username (Nidhi, 2026-11-24).
+  h('label', { for: 'login-username' }, 'Username', h('input', { id: 'login-username', name: 'username', type: 'text', autocomplete: 'username', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', required: true })),
+  h('label', { for: 'login-password' }, 'Password', h('input', { id: 'login-password', name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
   err, help, btn);
   return h('div', { class: 'center' }, form);
 }
