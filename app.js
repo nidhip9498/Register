@@ -1665,7 +1665,7 @@ function changePasswordModal() {
     h('label', {}, 'Current password', h('input', { type: 'password', name: 'current', required: true })),
     h('label', {}, 'New password', h('input', { type: 'password', name: 'password', minlength: 6, required: true })),
     h('label', {}, 'Repeat new password', h('input', { type: 'password', name: 'password2', minlength: 6, required: true })));
-  modal('Change your password', body, async (form, err) => {
+  modal('Your account: password and username', body, async (form, err) => {
     if (form.password.value !== form.password2.value) { err.textContent = 'The two passwords do not match'; return false; }
     await api('POST', '/api/me/password', { current: form.current.value, password: form.password.value });
     toast('Password changed');
@@ -1677,6 +1677,21 @@ function changePasswordModal() {
       await Store.wipe();
       location.reload();
     } }, 'Remove ward data from this device')));
+  // Change your own username, here in the same pop-up.
+  const uIn = h('input', { value: S.user.username, autocapitalize: 'none', autocomplete: 'off', spellcheck: 'false' });
+  const uPass = h('input', { type: 'password', placeholder: 'Your password', autocomplete: 'off' });
+  const uErr = h('p', { class: 'error' });
+  document.querySelector('#modal-root .modal').insertBefore(h('div', { class: 'device userbox' },
+    h('h3', {}, 'Change your username'),
+    h('label', {}, 'New username', uIn), h('label', {}, 'Password', uPass), uErr,
+    h('button', { type: 'button', class: 'ghost small', onclick: async () => {
+      uErr.textContent = '';
+      try {
+        const r = await api('POST', '/api/me/username', { username: uIn.value, current: uPass.value });
+        S.user.username = r.username; uPass.value = '';
+        toast(`Username changed to ${r.username}. Use it next time you sign in.`);
+      } catch (x) { uErr.textContent = x.message; }
+    } }, 'Save username')), document.querySelector('#modal-root .modal .device'));
 }
 
 // ---------- Patient history ----------
@@ -2768,7 +2783,7 @@ async function adminUsers(body) {
         return h('tr', { class: u.active ? '' : 'inactive' },
           h('td', {}, u.name),
           h('td', {}, h('input', { class: 'initin', value: u.initials || '', maxlength: 4, placeholder: '—', style: 'text-transform: uppercase', onchange: async (e) => { await update(u, { initials: e.target.value }); S.meta = await api('GET', '/api/meta'); } })),
-          h('td', {}, u.username), h('td', {}, role),
+          h('td', {}, h('input', { class: 'userin', value: u.username, autocapitalize: 'none', autocomplete: 'off', onchange: async (e) => { await update(u, { username: e.target.value }); if (u.id === S.user.id) S.user.username = e.target.value.trim().toLowerCase(); } })), h('td', {}, role),
           h('td', {}, h('input', { type: 'checkbox', checked: !!u.active, onchange: (e) => update(u, { active: e.target.checked }) })),
           h('td', {}, h('button', { class: 'ghost small', onclick: async () => {
             const p = prompt(`New password for ${u.name} (at least 6 characters):`);

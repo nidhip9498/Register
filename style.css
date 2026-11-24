@@ -1002,3 +1002,4 @@ table.otlog td:nth-child(5) { white-space: nowrap; }
 .auth .authform { max-width: none; gap: .35rem; }
 .authform label { margin-top: .45rem; }
 .authform button[type=submit] { margin-top: .6rem; }
+.userin { width: 9rem; }
