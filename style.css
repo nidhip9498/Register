@@ -999,3 +999,6 @@ table.otlog td:nth-child(5) { white-space: nowrap; }
 .otprocrow.otpend { color: var(--warn, #b45309); }
 .latescrub { display: block; margin-top: 4px; }
 .allotscrub { white-space: nowrap; }
+.sxdate { display: flex; gap: 4px; flex: 1; min-width: 180px; align-items: center; }
+.sxdate input { flex: 1; min-width: 0; }
+.sxclear { flex: none; }

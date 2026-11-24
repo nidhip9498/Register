@@ -1062,7 +1062,9 @@ function procedureBox(a, surgeries, onDates) {
     editExtra: () => {
       const keys = ['surgery_date', 'surgery_date2', 'surgery_date3'];
       const ins = keys.map((k) => h('input', { type: 'date', value: a[k] || '', max: S.meta.today }));
-      return { nodes: h('div', { class: 'sxdates' }, h('small', { class: 'muted block' }, 'Date of surgery (POD counts from it). Add a 2nd or 3rd if operated again.'), h('div', { class: 'sxdaterow' }, ins)),
+      return { nodes: h('div', { class: 'sxdates' }, h('small', { class: 'muted block' }, 'Date of surgery (POD counts from it). Add a 2nd or 3rd if operated again.'), h('div', { class: 'sxdaterow' }, ins.map((i, k) => h('span', { class: 'sxdate' }, i,
+        // Phones' date pickers have no clear button: this empties the box (Nidhi, 2026-11-24). Saved only with Save.
+        h('button', { type: 'button', class: 'ghost small sxclear', title: 'Clear this date', onclick: () => { i.value = ''; } }, 'Clear'))))),
         values: () => {
           const d = [...new Set(ins.map((i) => i.value).filter(Boolean))].sort();
           // Ward patients: a new surgery date comes only with a scrub team (Nidhi, 2026-11-19). ICU babies may have been operated before admission.
