@@ -93,7 +93,7 @@ function dobFromAge(age, onDate) {
   return b.toISOString().slice(0, 10);
 }
 function ageText(a, date) {
-  if (a.dob) return ageYMD(a.dob, date);
+  if (a.dob && (!a.admit_date || a.dob <= a.admit_date)) return ageYMD(a.dob, date);
   return a.age || '';
 }
 const ageSex = (a, date) => [ageText(a, date), a.sex].filter(Boolean).join(' / ');
@@ -1593,6 +1593,17 @@ function admitModal(bed, a, opts = {}) {
 
   const theForm = modal(editing ? `Edit ${a.name}` : icu ? 'Admit baby to ICU' : 'Admit patient', body, async (form) => {
     const v = (n) => (form.elements.namedItem(n) ? form.elements.namedItem(n).value : '');
+    // A date of birth after admission (an iPhone date box fills in today when only tapped) shows the age as 0 days (Nidhi, 2026-11-27).
+    const onDay = v('admit_date') || S.date, dobIn = form.elements.namedItem('dob');
+    if (dobIn && dobIn.value) {
+      const fromAge = dobFromAge(v('age'), onDay);
+      if (dobIn.value > onDay) {
+        if (fromAge && confirm(`The date of birth (${fmtDate(dobIn.value)}) is after the admission date. Use the age typed (${v('age')}) instead?`)) dobIn.value = fromAge;
+        else throw new Error(`The date of birth (${fmtDate(dobIn.value)}) is after the admission date. Fix it or clear it.`);
+      } else if (fromAge && Math.abs(daysBetween(fromAge, dobIn.value)) > 7 && form.elements.namedItem('age').value.trim() !== ageYMD(dobIn.value, onDay)) {
+        if (confirm(`Date of birth ${fmtDate(dobIn.value)} means ${ageYMD(dobIn.value, onDay)}, but the age typed is ${v('age')}. OK: go by the age typed. Cancel: go by the date of birth.`)) dobIn.value = fromAge;
+      }
+    }
     const payload = {
       bed: v('bed') || a.bed,
       name: v('name'), ip_no: v('ip_no'), cr_no: v('cr_no'), unit: v('unit'), age: v('age'), sex: v('sex'), weight: v('weight'),
