@@ -1530,16 +1530,26 @@ function admitModal(bed, a, opts = {}) {
     corner.replaceChildren(
       h('div', {}, h('span', {}, 'Age'), h('b', {}, age || '—')),
       h('div', {}, h('span', {}, 'Admission'), h('b', {}, `No. ${earlier.length + 1}`)),
-      last ? h('small', { class: 'muted' }, `Last: ${last.admit_date ? fmtDate(last.admit_date) : '?'}${last.discharge_date ? ` to ${fmtDate(last.discharge_date)}` : ' (still admitted)'}`) : null);
+      last ? h('small', { class: 'muted' }, `Last: ${last.admit_date ? fmtDate(last.admit_date) : '?'}${last.discharge_date ? ` to ${fmtDate(last.discharge_date)}` : ' (still admitted)'}`) : '');
   };
   // 📷 Face sheet: fills name, UHID, CR No., date of birth (from the printed age) and sex; asks before replacing anything typed.
   const faceSheet = async (form) => {
     const text = await readPhoto('Face sheet', 'Drag across the whole top box of the face sheet: CR No., UHID, name, age, sex and admission date.');
     if (text == null) return;
-    const got = parseFaceSheet(text, form.admit_date.value || S.date);
-    if (got.dob && form.elements.namedItem('age')) got.age = ageYMD(got.dob, form.admit_date.value || S.date);
+    fillRead(form, parseFaceSheet(text, form.admit_date.value || S.date), 'Could not read the face sheet. Try a closer, straighter photo of the top box.');
+  };
+  // 📷 OPD card: the sticker at the top left (UHID, name, S/O or D/O, age / sex) (Nidhi, 2026-11-27).
+  const opdCard = async (form) => {
+    const text = await readPhoto('OPD card', 'Zoom in and drag across the sticker at the top left: UHID, name, age / sex and the Reporting date.');
+    if (text == null) return;
+    fillRead(form, parseOpdCard(text, form.admit_date.value || S.date), 'Could not read the sticker. Zoom in closer so it fills the box, and hold the phone straight.');
+  };
+  const fillRead = async (form, got, fail) => {
+    const on = form.admit_date.value || S.date;
+    if (got.dob && form.elements.namedItem('age')) got.age = ageYMD(got.dob, on);
+    else if (got.calcDob && form.elements.namedItem('age')) got.age = ageYMD(got.calcDob, on) || got.age;
     const fields = [['name', 'Name'], ['ip_no', 'UHID'], ['cr_no', 'CR No.'], ['dob', 'Date of birth'], ['age', 'Age'], ['sex', 'Sex']].filter(([k]) => got[k] && form.elements.namedItem(k));
-    if (!fields.length) return toast('Could not read the face sheet. Try a closer, straighter photo of the top box.', true);
+    if (!fields.length) return toast(fail, true);
     const clash = fields.filter(([k]) => { const v = form.elements.namedItem(k).value.trim(); return v && v !== got[k]; });
     const replace = !clash.length || confirm(`Replace what is already typed in ${clash.map(([, l]) => l).join(', ')} with what was read?`);
     for (const [k] of fields) { const el = form.elements.namedItem(k); if (!el.value.trim() || replace) { el.value = got[k]; el.classList.add('ocrfilled'); } }
@@ -1564,7 +1574,8 @@ function admitModal(bed, a, opts = {}) {
 
   const body = h('div', { class: 'grid2' },
     canEdit() ? h('div', { class: 'span2 facesheetrow' }, h('button', { type: 'button', class: 'ghost facesheetbtn', onclick: (ev) => faceSheet(ev.target.closest('form')) }, '📷 Read face sheet'),
-      h('small', { class: 'muted' }, 'Fills name, UHID, CR No., age, date of birth and sex.')) : null,
+      h('button', { type: 'button', class: 'ghost facesheetbtn', onclick: (ev) => opdCard(ev.target.closest('form')) }, '📷 Read OPD card'),
+      h('small', { class: 'muted' }, 'Fills name, UHID, age and sex (face sheet: CR No. too). Date of birth only if printed.')) : null,
     editing ? h('label', {}, 'Bed', h('input', { value: a.bed, disabled: true })) : h('label', {}, 'Bed', bedSelect('bed', bed, (b) => isIcu(b) === icu)),
     input('Admission date', 'admit_date', { type: 'date', oninput: (ev) => drawCorner(ev.target.form) }),
     input('Patient name / initials', 'name', { required: true }, 'span2'),
@@ -1596,19 +1607,13 @@ function admitModal(bed, a, opts = {}) {
     // A date of birth after admission (an iPhone date box fills in today when only tapped) shows the age as 0 days (Nidhi, 2026-11-27).
     const onDay = v('admit_date') || S.date, dobIn = form.elements.namedItem('dob');
     if (dobIn && dobIn.value) {
-      const fromAge = dobFromAge(v('age'), onDay);
-      if (dobIn.value > onDay) {
-        if (fromAge && confirm(`The date of birth (${fmtDate(dobIn.value)}) is after the admission date. Use the age typed (${v('age')}) instead?`)) dobIn.value = fromAge;
-        else throw new Error(`The date of birth (${fmtDate(dobIn.value)}) is after the admission date. Fix it or clear it.`);
-      } else if (fromAge && Math.abs(daysBetween(fromAge, dobIn.value)) > 7 && form.elements.namedItem('age').value.trim() !== ageYMD(dobIn.value, onDay)) {
-        if (confirm(`Date of birth ${fmtDate(dobIn.value)} means ${ageYMD(dobIn.value, onDay)}, but the age typed is ${v('age')}. OK: go by the age typed. Cancel: go by the date of birth.`)) dobIn.value = fromAge;
-      }
+      if (dobIn.value > onDay) throw new Error(`The date of birth (${fmtDate(dobIn.value)}) is after the admission date. Fix it or clear it.`);
     }
     const payload = {
       bed: v('bed') || a.bed,
       name: v('name'), ip_no: v('ip_no'), cr_no: v('cr_no'), unit: v('unit'), age: v('age'), sex: v('sex'), weight: v('weight'),
-      // No date of birth typed: work it out from the age, so the age counts on (and is right at the next admission).
-      dob: v('dob') || dobFromAge(v('age'), v('admit_date') || S.date), birth_weight: v('birth_weight'), gestation: v('gestation'), current_weight: v('current_weight'),
+      // Date of birth only as typed: never worked out from the age (Nidhi, 2026-11-27).
+      dob: v('dob') || null, birth_weight: v('birth_weight'), gestation: v('gestation'), current_weight: v('current_weight'),
       diagnosis: v('diagnosis'), procedure_done: v('procedure_done'),
       admit_date: v('admit_date'), instructions: v('instructions'),
     };
@@ -3714,6 +3719,7 @@ async function dischargeSummaryPopup(a) {
       const keys = Object.keys(map).filter((k) => got[k]);
       keys.forEach((k) => { v[map[k]] = got[k]; marked.add(map[k]); });
       if (got.dob) { v.dob = dmy(got.dob); v.age = ageFromBirth(got.dob, v.dod ? v.dod.split('/').reverse().join('-') : S.meta.today); marked.add('dob'); marked.add('age'); }
+      else if (got.calcDob) { v.age = ageFromBirth(got.calcDob, v.dod ? v.dod.split('/').reverse().join('-') : S.meta.today); marked.add('age'); }
       if (!marked.size) return toast('Could not read the face sheet. Try again, cropping to the top box.', true);
       toast('Filled from the face sheet. Check the orange boxes.');
       draw(v, signed, marked);
@@ -3979,12 +3985,65 @@ function parseFaceSheet(text, onDate) {
   const db = text.match(/\b(?:DOB|D\.O\.B\.?|Date of Birth)\s*[:\-]?\s*(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/i);
   if (db) { out.dob = `${db[3]}-${db[2].padStart(2, '0')}-${db[1].padStart(2, '0')}`; return out; }
   // Age is as on the admission date printed on the sheet; without one, as on the date given (the admission date in the form).
+  // calcDob only works the age out on another day: the Date of birth box is left empty unless printed (Nidhi, 2026-11-27).
   const seen = dateInText(text) || onDate;
   if (got && seen) {
     const b = new Date(seen + 'T12:00:00');
     b.setFullYear(b.getFullYear() - y); b.setMonth(b.getMonth() - mo); b.setDate(b.getDate() - d);
-    out.dob = b.toISOString().slice(0, 10);
+    out.calcDob = b.toISOString().slice(0, 10);
   }
+  // A photo of an OPD card sticker read with this button: take what the sticker gives for anything still missing.
+  const opd = parseOpdCard(text, onDate);
+  for (const k of ['name', 'ip_no', 'father', 'sex', 'age', 'calcDob']) if (!out[k] && opd[k]) out[k] = opd[k];
+  if (opd.age && opd.calcDob && !db) { out.age = opd.age; out.calcDob = opd.calcDob; }
+  return out;
+}
+// OPD card sticker (top left of the AIIMS OPD card): UHID, name (English after any "/"), S/O or D/O line, "3Y 7M 10D / M", and the Reporting date
+// the age was printed on. The age is moved on to the admission date. No date of birth is filled (Nidhi, 2026-11-27).
+function parseOpdCard(text, onDate) {
+  const out = {}, lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const uh = text.match(/U\s?[HN]\s?[I1lB|]\s?[DB0]\s*[:;.]?\s*(\d{8,10})/i) || text.match(/\b(1\d{8})\b/);
+  if (uh) out.ip_no = uh[1];
+  const title = (s) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  const capsWords = (s) => (s.match(/\b[A-Z][A-Z.']+(?:\s+[A-Z][A-Z.']*)*/g) || []).sort((a, b) => b.length - a.length)[0] || '';
+  const rel = lines.findIndex((l) => /^\W{0,3}[SDWB]\s*[\/|]\s*[O0]\b/i.test(l));
+  if (rel >= 0) {
+    const f = lines[rel].replace(/^\W{0,3}[SDWB]\s*[\/|]\s*[O0]\s*/i, '').replace(/\s+\S{1,3}$/, '').trim();
+    if (/[A-Za-z]{2}/.test(f)) out.father = title(f.replace(/[^A-Za-z.' ]/g, ' ').replace(/\s+/g, ' ').trim());
+    // The name is on the line above, in capitals (after the Hindi spelling and "/", if any).
+    for (let i = rel - 1; i >= Math.max(0, rel - 2) && !out.name; i--) {
+      const cand = capsWords(lines[i].split('/').pop());
+      if (cand.replace(/[^A-Z]/g, '').length >= 3 && !/^(DEPT|UHID|QUEUE|UNIT|ROOM)/.test(cand)) out.name = title(cand);
+    }
+    // Age / sex on the next line: "3Y 7M 10D / M", OCR reads 0 as O and 7 as T at times.
+    const ag = (lines[rel + 1] || '') + ' ' + (lines[rel + 2] || '');
+    const m = ag.replace(/\b[Oo](?=\s*Y)/, '0').match(/(\d{1,2})\s*Y\W*\s*([\dT]{1,2})\s*M\W*\s*(\d{1,3})\s*D?\b[^\n]*?[\/|]\s*([MF])/i)
+      || ag.replace(/\b[Oo](?=\s*Y)/, '0').match(/(\d{1,2})\s*Y\W*\s*([\dT]{1,2})\s*M\W*\s*(\d{1,3})\s*D?\b()/i);
+    if (m) {
+      const y = +m[1], mo = +m[2].replace(/T/gi, '7');
+      let d = +m[3]; if (d > 31 && /0$/.test(m[3])) d = +m[3].slice(0, -1); // "18D" read as "180"
+      if (mo < 12 && d <= 31) {
+        if (m[4]) out.sex = m[4].toUpperCase();
+        else { const sx = ag.slice(ag.indexOf(m[0]) + m[0].length).match(/^\s*D?\s*[\/|]?\s*([MF])(?![a-z])/i); if (sx) out.sex = sx[1].toUpperCase(); }
+        // The age is as on the Reporting date (the year is often misread: keep it within today).
+        let seen = '';
+        const rd = text.match(/Reporting[\s\S]{0,60}?(\d{1,2})\/(\d{1,2})\/(\d{4})/i) || text.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
+        if (rd) {
+          const nowY = +(onDate || S.meta.today).slice(0, 4);
+          let yr = +rd[3]; if (yr > nowY) yr = nowY;
+          seen = `${yr}-${String(+rd[2]).padStart(2, '0')}-${String(+rd[1]).padStart(2, '0')}`;
+          if (onDate && seen > onDate) seen = `${yr - 1}${seen.slice(4)}`;
+          if (!/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(seen)) seen = '';
+        }
+        const on = onDate || S.meta.today, from = seen || on;
+        const b = new Date(from + 'T12:00:00');
+        b.setFullYear(b.getFullYear() - y); b.setMonth(b.getMonth() - mo); b.setDate(b.getDate() - d);
+        out.calcDob = b.toISOString().slice(0, 10);
+        out.age = ageYMD(out.calcDob, on) || [y && `${y}y`, mo && `${mo}m`, d && `${d}d`].filter(Boolean).join(' ');
+      }
+    }
+  }
+  if (!out.sex) { const sx = text.match(/\d\s*D\s*[\/|]\s*([MF])\b/i); if (sx) out.sex = sx[1].toUpperCase(); }
   return out;
 }
 
